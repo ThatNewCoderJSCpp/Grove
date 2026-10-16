@@ -1,0 +1,16 @@
+extern "C" {
+    function grove_get_integer_by_id(string: id) -> long int;
+    function grove_set_integer_by_id(string: id, long int: value) -> bool;
+    function grove_get_float_by_id(string: id) -> short float;
+    function grove_get_bool_by_id(string: id) -> bool;
+    function grove_get_string_by_id(string: id) -> string;
+    function grove_get_choice(string: group) -> string;
+} end extern
+
+long int: count = grove_get_integer_by_id("count");
+short float: volume = grove_get_float_by_id("volume");
+bool: dark = grove_get_bool_by_id("dark");
+string: name = grove_get_string_by_id("name");
+string: size = grove_get_choice("size");
+
+grove_set_integer_by_id("count", count + 1l);

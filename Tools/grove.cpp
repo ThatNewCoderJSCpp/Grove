@@ -20,11 +20,13 @@ void print_usage(std::ostream& os) {
           "  computed print the computed style of every element\n"
           "  scripts  list the scripts the document uses\n"
           "  math     print every <math> block in brace form\n"
-          "  run      open the document's window (needs the fizmo runtime)\n"
+          "  inputs   list every input with its type and current value\n"
+          "  run      open the document's <body> as a window (needs the fizmo runtime)\n"
           "  version  print the Grove version\n"
           "\n"
           "options:\n"
-          "  --window <id>   which <window> to open with run\n"
+          "  --window <id>   open the <window> with this id instead of <body>\n"
+          "  --viewport WxH  window size used for vwidth/vheight/vmin/vmax/vdiag (default 800x600)\n"
           "  -q, --quiet     only print errors\n";
 }
 
@@ -67,11 +69,23 @@ int main(int argc, char** argv) {
 
     std::string file;
     std::string window_id;
+    grove::bark::Viewport viewport{ 800, 600 };
     bool quiet = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-q" || a == "--quiet") quiet = true;
         else if (a == "--window" && i + 1 < argc) window_id = argv[++i];
+        else if (a == "--viewport" && i + 1 < argc) {
+            const std::string v = argv[++i];
+            const std::size_t x = v.find('x');
+            const auto w = x == std::string::npos ? std::nullopt : grove::parse_integer(v.substr(0, x));
+            const auto h = x == std::string::npos ? std::nullopt : grove::parse_integer(v.substr(x + 1));
+            if (!w || !h || *w <= 0 || *h <= 0) {
+                std::cerr << "grove: --viewport expects WIDTHxHEIGHT, like 1280x720\n";
+                return 2;
+            }
+            viewport = grove::bark::Viewport{ static_cast<double>(*w), static_cast<double>(*h) };
+        }
         else if (!a.empty() && a[0] == '-') {
             std::cerr << "grove: unknown option '" << a << "'\n";
             return 2;
@@ -87,6 +101,7 @@ int main(int argc, char** argv) {
     }
 
     grove::Project project = grove::load_project(file);
+    project.styles.set_viewport(viewport);
 
     if (command == "check") {
         print_diagnostics(project.diagnostics, quiet);
@@ -127,6 +142,19 @@ int main(int argc, char** argv) {
         for (const grove::MathBlock& m : project.math) {
             std::cout << "line " << m.element->span().begin.line << ": " << grove::to_brace_form(m) << '\n';
         }
+        return project.diagnostics.ok() ? 0 : 1;
+    }
+    if (command == "inputs") {
+        print_diagnostics(project.diagnostics, true);
+        project.document.root().walk([&project](const grove::Node& n) {
+            const std::optional<grove::InputKind> kind = grove::input_kind_of(n);
+            if (!kind) return;
+            const bool toggle = grove::is_switch(n, project.styles.style_of(n, project.diagnostics).text("appearance"));
+            std::cout << "line " << n.span().begin.line << "  " << grove::to_string(*kind) << (toggle ? " (switch)" : "");
+            if (!n.id().empty()) std::cout << "  #" << n.id();
+            if (*kind == grove::InputKind::Radio) std::cout << "  " << n.attribute_or("name", "") << "=" << n.attribute_or("value", "");
+            std::cout << "  = " << grove::input_text(n) << '\n';
+        });
         return project.diagnostics.ok() ? 0 : 1;
     }
     if (command == "run") {

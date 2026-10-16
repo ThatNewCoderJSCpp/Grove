@@ -51,8 +51,8 @@ void check_structure(Project& project) {
         }
     }
     if (bodies > 1) project.diagnostics.error(project.path, root.span(), "a document can only have one <body>");
-    if (project.document.elements_by_tag("window").empty()) {
-        project.diagnostics.note(project.path, Span{}, "document has no <window>; the runtime will make one from <body>");
+    if (project.document.elements_by_tag("body").empty() && project.document.elements_by_tag("window").empty()) {
+        project.diagnostics.note(project.path, Span{}, "document has no <body>; the whole document is drawn in the window");
     }
 }
 

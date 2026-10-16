@@ -1,0 +1,43 @@
+$background = #1e1e2e;
+$surface = #313244;
+$text = #cdd6f4;
+$muted = #9399b2;
+
+body {
+    size: 60vwidth 80vheight;
+    background: $background;
+    color: $text;
+    accent-color: #a6e3a1;
+    font-size: 15px;
+    padding: 3vmin 4vmin;
+}
+
+h2 {
+    margin: 0 0 1.5vmin 0;
+}
+
+panel.card {
+    background: $surface;
+    border-radius: 10px;
+    padding: 2vmin 2.5vmin;
+    margin: 0 0 2vmin 0;
+
+    label {
+        color: $muted;
+        font-size: 13px;
+        margin: 0 0 4px 0;
+    }
+
+    input_integer, input_float, input_string, input_color {
+        width: 40vwidth;
+        margin: 0 0 12px 0;
+    }
+
+    input_slider {
+        width: 30vwidth;
+    }
+}
+
+.toggle {
+    appearance: switch;
+}

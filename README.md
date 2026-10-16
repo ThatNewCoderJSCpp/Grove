@@ -16,13 +16,11 @@ A walnut grows on a tree, a grove is where the trees are, and bark is how a tree
         <style src="theme.bark" />
         <script lang="walnut" src="app.wal"></script>
     </head>
-    <body>
-        <window id="main" title="Hello">
-            <h1 id="greeting">Hello from Grove</h1>
-            <math display="block">
-                x = (-b \pm\ sqrt(b^2 - 4*a*c)) / (2*a)
-            </math>
-        </window>
+    <body title="Hello">
+        <h1 id="greeting">Hello from Grove</h1>
+        <math display="block">
+            x = (-b \pm\ sqrt(b^2 - 4*a*c)) / (2*a)
+        </math>
     </body>
 </grove>
 ```
@@ -30,7 +28,7 @@ A walnut grows on a tree, a grove is where the trees are, and bark is how a tree
 ```
 $accent = #89b4fa;
 
-window {
+body {
     size: 900px 640px;
     background: #1e1e2e;
     padding: 32px;
@@ -74,8 +72,11 @@ Without the runtime, `grove_core` only needs Fizmo's headers (MathText is header
 | `grove styles doc.grove` | the merged Bark stylesheet |
 | `grove computed doc.grove` | the computed style of every element |
 | `grove math doc.grove` | every `<math>` block converted to brace form |
+| `grove inputs doc.grove` | every input with its type and current value |
 | `grove scripts doc.grove` | the scripts the document uses |
-| `grove run doc.grove [--window id]` | open the document in a Fizmo window |
+| `grove run doc.grove [--window id]` | open the document's `<body>` as a Fizmo window |
+
+`--viewport WxH` sets the window size the other commands use for viewport units (default 800x600).
 
 ## Layout
 
@@ -86,14 +87,20 @@ Include/grove/
     bark/       Bark: values, selectors, parser, cascade
     math/       <math> blocks through fizmo::mathtext
     script/     <script> collection (walnut, c++, c)
+    input/      typed inputs: kinds, values, typing rules, validation
     api/        grove_api.h, the C API scripts use to touch the document
     runtime/    the Fizmo-backed window and renderer
     project.hpp loads a .grove file with all of its styles, scripts and math
 Source/         implementations, same layout
 Tools/grove.cpp the command-line tool
 Tests/          grove_tests
-Examples/hello  a small document using all of the above
+Examples/hello  a small document using markup, Bark, math and scripts
+Examples/inputs every input type, sized with viewport units
 Documentation/  the language references
 ```
+
+## Releases
+
+Pushing a tag `vX.Y.Z` that matches `project(grove VERSION X.Y.Z)` runs `.github/workflows/release.yml`. It builds, tests and packages `grove` for Linux x86_64, arm64 and i686 (`.tar.gz`) and Windows MinGW64, UCRT64 and ARM64 (`.zip`), then attaches them to the GitHub release. Each package has `bin/grove`, the headers, `grove_core`/`grove_runtime`, the docs and the examples. Locally, `-DGROVE_PACKAGE=ON` and `cpack` make the same package.
 
 See [Documentation/grove.md](Documentation/grove.md) for the markup and [Documentation/bark.md](Documentation/bark.md) for styles.

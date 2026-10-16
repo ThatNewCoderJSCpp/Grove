@@ -50,6 +50,18 @@ struct Value {
 
 using ValueList = std::vector<Value>;
 
+struct Viewport {
+    double width = 0.0;
+    double height = 0.0;
+
+    bool known() const noexcept { return width > 0.0 && height > 0.0; }
+    bool operator==(const Viewport& o) const noexcept { return width == o.width && height == o.height; }
+    bool operator!=(const Viewport& o) const noexcept { return !(*this == o); }
+};
+
+bool is_viewport_unit(const std::string& unit) noexcept;
+std::optional<double> viewport_unit_size(const std::string& unit, const Viewport& viewport) noexcept;
+
 std::string to_string(const Value& value);
 std::string to_string(const ValueList& values);
 
@@ -57,6 +69,8 @@ std::optional<Rgba> parse_hex_color(const std::string& hex) noexcept;
 std::optional<Rgba> named_color(const std::string& name) noexcept;
 std::optional<Rgba> as_color(const ValueList& values) noexcept;
 std::optional<double> as_length(const ValueList& values, double font_size = 16.0, std::size_t index = 0) noexcept;
+std::optional<double> as_length(const ValueList& values, double font_size, const Viewport& viewport, std::size_t index = 0) noexcept;
+std::optional<double> as_length(const Value& value, double font_size, const Viewport& viewport) noexcept;
 std::optional<std::string> as_text(const ValueList& values);
 
 } // namespace bark

@@ -1,0 +1,38 @@
+<grove>
+    <head>
+        <title>Grove inputs</title>
+        <style src="inputs.bark" />
+        <script lang="walnut" src="inputs.wal"></script>
+    </head>
+    <body>
+        <h2>Typed inputs</h2>
+
+        <panel class="card">
+            <label>Count (integer, 0 to 99)</label>
+            <input_integer id="count" value="3" min="0" max="99" />
+
+            <label>Temperature (float, any sign)</label>
+            <input_float id="temperature" value="21.5" step="0.5" />
+
+            <label>Name (string, up to 24 characters)</label>
+            <input_string id="name" maxlength="24" placeholder="Type your name" />
+
+            <label>Accent (color)</label>
+            <input_color id="accent" value="#89b4fa" />
+        </panel>
+
+        <panel class="card">
+            <input_bool id="dark" checked>Dark mode</input_bool>
+            <input_bool id="sound" switch>Sound effects</input_bool>
+            <input_bool id="notify" class="toggle" checked>Notifications</input_bool>
+
+            <label>Size</label>
+            <input_radio name="size" value="small">Small</input_radio>
+            <input_radio name="size" value="medium" checked>Medium</input_radio>
+            <input_radio name="size" value="large">Large</input_radio>
+
+            <label>Volume (slider, 0 to 1)</label>
+            <input_slider id="volume" min="0" max="1" step="0.05" value="0.6" />
+        </panel>
+    </body>
+</grove>

@@ -2,6 +2,7 @@
 #include "grove/api/grove_api.h"
 
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -123,12 +124,168 @@ void test_api() {
     grove_bind_document(nullptr);
 }
 
+void test_body_is_window() {
+    grove::Project project = grove::load_project_from_source(
+        "<body title=\"t\"><p>hi</p><window id=\"extra\"><p>later</p></window></body>", "t.grove", ".");
+    CHECK(project.diagnostics.empty());
+    const grove::Node* extra = project.document.find_by_id("extra");
+    CHECK(extra && project.styles.style_of(*extra, project.diagnostics).text("display").value_or("") == "none");
+    grove::Project bare = grove::load_project_from_source("<p>hi</p>", "t.grove", ".");
+    CHECK(bare.diagnostics.ok() && bare.diagnostics.items().size() == 1);
+}
+
+void test_viewport_units() {
+    grove::Diagnostics d;
+    grove::bark::Stylesheet sheet = grove::bark::parse_stylesheet(
+        "body { padding: 10vwidth 10vheight; font-size: 2vmin; width: 1vdiag; }\n"
+        "p { font-size: 1.5em; margin: 5vmax; }\n",
+        "t.bark", d);
+    CHECK(d.ok());
+    grove::Document doc = grove::parse_markup("<body><p id=\"p\">x</p></body>", "t.grove", d);
+    grove::bark::StyleEngine engine;
+    engine.add(sheet);
+    engine.set_viewport(grove::bark::Viewport{ 800, 600 });
+    const auto& body = engine.style_of(*doc.first_by_tag("body"), d);
+    CHECK(body.length("padding", 0) && *body.length("padding", 0) == 80.0);
+    CHECK(body.length("padding", 1) && *body.length("padding", 1) == 60.0);
+    CHECK(body.font_size() == 12.0);
+    CHECK(body.length("width") && *body.length("width") == 10.0);
+    const auto& p = engine.style_of(*doc.find_by_id("p"), d);
+    CHECK(p.font_size() == 18.0);
+    CHECK(p.length("margin") && *p.length("margin") == 40.0);
+    engine.set_viewport(grove::bark::Viewport{ 400, 1000 });
+    CHECK(engine.style_of(*doc.first_by_tag("body"), d).font_size() == 8.0);
+    CHECK(grove::bark::as_length(grove::bark::ValueList{ grove::bark::Value::make_number(10, "vw") }, 16.0) == std::nullopt);
+}
+
+void test_inputs() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup(
+        "<body>"
+        "<input_integer id=\"i\" value=\"5\" min=\"0\" max=\"10\" />"
+        "<input_float id=\"f\" value=\"-1.5\" />"
+        "<input_string id=\"s\" maxlength=\"3\" />"
+        "<input_bool id=\"b\" checked>On</input_bool>"
+        "<input_radio id=\"r1\" name=\"g\" value=\"a\" checked>A</input_radio>"
+        "<input_radio id=\"r2\" name=\"g\" value=\"b\">B</input_radio>"
+        "<input_slider id=\"sl\" min=\"0\" max=\"1\" step=\"0.25\" />"
+        "<input_color id=\"c\" value=\"#ff8000\" />"
+        "<input type=\"integer\" id=\"gi\" value=\"7\" />"
+        "</body>",
+        "t.grove", d);
+    grove::check_inputs(doc, d);
+    CHECK(d.ok() && d.empty());
+    grove::Node& i = *doc.find_by_id("i");
+    grove::Node& f = *doc.find_by_id("f");
+    grove::Node& s = *doc.find_by_id("s");
+    grove::Node& sl = *doc.find_by_id("sl");
+
+    CHECK(grove::input_value<std::int64_t>(i) == std::int64_t(5));
+    CHECK(!grove::input_value<double>(i));
+    CHECK(!grove::input_value<std::string>(i));
+    CHECK(grove::input_value<double>(f) == -1.5);
+    CHECK(grove::input_value<bool>(*doc.find_by_id("b")) == true);
+    CHECK(grove::input_integer(*doc.find_by_id("gi")) == std::int64_t(7));
+    CHECK(grove::input_color(*doc.find_by_id("c"))->g == 0x80);
+
+    CHECK(grove::input_accepts(i, "", "7"));
+    CHECK(!grove::input_accepts(i, "", "a"));
+    CHECK(!grove::input_accepts(i, "", "-"));
+    CHECK(!grove::input_accepts(i, "1", "."));
+    CHECK(grove::input_accepts(f, "", "-"));
+    CHECK(grove::input_accepts(f, "1", "."));
+    CHECK(!grove::input_accepts(f, "1.2", "."));
+    CHECK(!grove::input_accepts(s, "abc", "d"));
+    CHECK(!grove::input_accepts(*doc.find_by_id("c"), "#", "g"));
+
+    CHECK(grove::commit_input_text(doc, i, "42"));
+    CHECK(grove::input_integer(i) == std::int64_t(10));
+    CHECK(!grove::commit_input_text(doc, i, ""));
+    CHECK(!grove::commit_input_text(doc, i, "99999999999999999999"));
+    CHECK(!grove::commit_input_text(doc, f, "1.2.3"));
+    CHECK(grove::set_input_value(doc, s, std::string("abcdef")) && grove::input_string(s) == std::string("abc"));
+    CHECK(!grove::set_input_integer(doc, f, 3));
+    CHECK(grove::set_input_float(doc, sl, 0.6) && grove::input_float(sl) == 0.5);
+    CHECK(grove::step_input(doc, i, -3) && grove::input_integer(i) == std::int64_t(7));
+
+    CHECK(grove::radio_choice(doc, "g") == std::string("a"));
+    CHECK(grove::set_radio_choice(doc, "g", "b"));
+    CHECK(grove::radio_choice(doc, "g") == std::string("b"));
+    CHECK(!doc.find_by_id("r1")->has_attribute("checked"));
+
+    CHECK(grove::parse_integer("-9223372036854775808") == std::numeric_limits<std::int64_t>::min());
+    CHECK(!grove::parse_integer("9223372036854775808"));
+    CHECK(!grove::parse_integer("1e3"));
+}
+
+void test_input_errors() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup(
+        "<input />"
+        "<input type=\"date\" />"
+        "<input_integer value=\"1.5\" min=\"5\" max=\"1\" />"
+        "<input_string min=\"3\" />"
+        "<input_radio value=\"x\">no name</input_radio>"
+        "<input_radio name=\"g\" value=\"a\" checked>a</input_radio>"
+        "<input_radio name=\"g\" value=\"b\" checked>b</input_radio>"
+        "<input_color value=\"red\" />",
+        "t.grove", d);
+    grove::check_inputs(doc, d);
+    CHECK(d.error_count() == 7);
+    CHECK(d.warning_count() == 1);
+}
+
+void test_input_api() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup(
+        "<input_integer id=\"n\" value=\"4\" max=\"10\" /><input_string id=\"s\" value=\"hi\" />"
+        "<input_radio name=\"g\" value=\"x\">x</input_radio><input_radio name=\"g\" value=\"y\" checked>y</input_radio>",
+        "t.grove", d);
+    grove_bind_document(reinterpret_cast<grove_document*>(&doc));
+    CHECK(grove_input_kind_by_id("n") == GROVE_INPUT_INTEGER);
+    CHECK(grove_get_integer_by_id("n") == 4);
+    CHECK(grove_set_integer_by_id("n", 50) && grove_get_integer_by_id("n") == 10);
+    CHECK(!grove_set_integer_by_id("s", 1));
+    CHECK(!grove_set_string_by_id("n", "x"));
+    CHECK(std::string(grove_get_string_by_id("s")) == "hi");
+    CHECK(std::string(grove_get_string_by_id("n")).empty());
+    CHECK(std::string(grove_get_choice("g")) == "y");
+    CHECK(grove_set_choice("g", "x") && std::string(grove_get_choice("g")) == "x");
+    int64_t out = 0;
+    CHECK(grove_input_integer(grove_find_by_id(reinterpret_cast<grove_document*>(&doc), "n"), &out) && out == 10);
+    double fout = 0;
+    CHECK(!grove_input_float(grove_find_by_id(reinterpret_cast<grove_document*>(&doc), "n"), &fout));
+    grove_bind_document(nullptr);
+}
+
+void test_switch() {
+    grove::Project project = grove::load_project_from_source(
+        "<style>.t { appearance: switch; }</style>"
+        "<body><input_bool id=\"a\">a</input_bool><input_bool id=\"b\" switch>b</input_bool>"
+        "<input_bool id=\"c\" class=\"t\">c</input_bool><input type=\"toggle\" id=\"d\" />"
+        "<input_integer id=\"e\" switch /></body>",
+        "t.grove", ".");
+    CHECK(project.diagnostics.error_count() == 0 && project.diagnostics.warning_count() == 1);
+    auto appearance = [&](const char* id) { return project.styles.style_of(*project.document.find_by_id(id), project.diagnostics).text("appearance"); };
+    CHECK(!grove::is_switch(*project.document.find_by_id("a"), appearance("a")));
+    CHECK(grove::is_switch(*project.document.find_by_id("b"), appearance("b")));
+    CHECK(grove::is_switch(*project.document.find_by_id("c"), appearance("c")));
+    CHECK(grove::is_switch(*project.document.find_by_id("d"), appearance("d")));
+    CHECK(!grove::is_switch(*project.document.find_by_id("e"), appearance("e")));
+}
+
 void test_example() {
     grove::Project project = grove::load_project(std::string(GROVE_EXAMPLES_DIR) + "/hello/hello.grove");
     if (!project.diagnostics.ok()) project.diagnostics.print(std::cerr);
     CHECK(project.diagnostics.ok());
     CHECK(project.math.size() == 2);
     CHECK(project.scripts.size() == 2);
+}
+
+void test_inputs_example() {
+    grove::Project project = grove::load_project(std::string(GROVE_EXAMPLES_DIR) + "/inputs/inputs.grove");
+    if (!project.diagnostics.ok()) project.diagnostics.print(std::cerr);
+    CHECK(project.diagnostics.ok() && project.diagnostics.warning_count() == 0);
 }
 
 } // namespace
@@ -141,7 +298,14 @@ int main() {
     test_math();
     test_scripts();
     test_api();
+    test_body_is_window();
+    test_viewport_units();
+    test_inputs();
+    test_input_errors();
+    test_input_api();
+    test_switch();
     test_example();
+    test_inputs_example();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

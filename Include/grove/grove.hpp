@@ -11,6 +11,7 @@
 #include "bark/cascade.hpp"
 #include "script/script.hpp"
 #include "math/math_block.hpp"
+#include "input/input.hpp"
 #include "project.hpp"
 #include <grove/version.hpp>
 

@@ -1,0 +1,561 @@
+#include "grove/input/input.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <map>
+#include <set>
+
+namespace grove {
+
+namespace {
+
+struct KindName {
+    const char* name;
+    InputKind kind;
+};
+
+constexpr KindName k_tags[] = {
+    { "input_integer", InputKind::Integer },
+    { "input_float",   InputKind::Float },
+    { "input_string",  InputKind::String },
+    { "input_bool",    InputKind::Bool },
+    { "input_radio",   InputKind::Radio },
+    { "input_slider",  InputKind::Slider },
+    { "input_color",   InputKind::Color },
+    { "checkbox",      InputKind::Bool },
+    { "slider",        InputKind::Slider },
+    { "color",         InputKind::Color },
+};
+
+constexpr KindName k_type_names[] = {
+    { "integer",  InputKind::Integer },
+    { "int",      InputKind::Integer },
+    { "float",    InputKind::Float },
+    { "number",   InputKind::Float },
+    { "string",   InputKind::String },
+    { "text",     InputKind::String },
+    { "bool",     InputKind::Bool },
+    { "boolean",  InputKind::Bool },
+    { "checkbox", InputKind::Bool },
+    { "toggle",   InputKind::Bool },
+    { "radio",    InputKind::Radio },
+    { "slider",   InputKind::Slider },
+    { "range",    InputKind::Slider },
+    { "color",    InputKind::Color },
+};
+
+bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
+bool is_hex(char c) noexcept { return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
+std::size_t code_points(std::string_view s) noexcept {
+    std::size_t n = 0;
+    for (char c : s) {
+        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) ++n;
+    }
+    return n;
+}
+
+std::string truncate_code_points(std::string s, std::size_t limit) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if ((static_cast<unsigned char>(s[i]) & 0xC0) != 0x80) {
+            if (n == limit) {
+                s.resize(i);
+                return s;
+            }
+            ++n;
+        }
+    }
+    return s;
+}
+
+std::optional<double> float_attribute(const Node& node, std::string_view name) {
+    const Attribute* a = node.find_attribute(name);
+    return a ? parse_float(a->value) : std::nullopt;
+}
+
+std::optional<InputKind> kind_if(const Node& node, std::initializer_list<InputKind> kinds) {
+    const std::optional<InputKind> k = input_kind_of(node);
+    if (!k) return std::nullopt;
+    for (InputKind want : kinds) {
+        if (*k == want) return k;
+    }
+    return std::nullopt;
+}
+
+std::string format_integer(std::int64_t value) { return std::to_string(value); }
+
+std::string describe(const Node& node) { return "<" + node.tag() + (node.id().empty() ? "" : " id=\"" + node.id() + "\"") + ">"; }
+
+bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
+    static const std::set<std::string> specific = { "value", "min", "max", "step", "maxlength", "placeholder", "checked", "name", "type", "switch" };
+    if (!specific.count(name)) return true;
+    if (name == "type") return generic;
+    switch (kind) {
+        case InputKind::Integer:
+        case InputKind::Float: return name == "value" || name == "min" || name == "max" || name == "step" || name == "placeholder";
+        case InputKind::Slider: return name == "value" || name == "min" || name == "max" || name == "step";
+        case InputKind::String: return name == "value" || name == "maxlength" || name == "placeholder";
+        case InputKind::Bool: return name == "checked" || name == "switch";
+        case InputKind::Radio: return name == "name" || name == "value" || name == "checked";
+        case InputKind::Color: return name == "value";
+    }
+    return false;
+}
+
+} // namespace
+
+const char* to_string(InputKind kind) noexcept {
+    switch (kind) {
+        case InputKind::Integer: return "integer";
+        case InputKind::Float: return "float";
+        case InputKind::String: return "string";
+        case InputKind::Bool: return "bool";
+        case InputKind::Radio: return "radio";
+        case InputKind::Slider: return "slider";
+        case InputKind::Color: return "color";
+    }
+    return "string";
+}
+
+const char* input_tag(InputKind kind) noexcept {
+    switch (kind) {
+        case InputKind::Integer: return "input_integer";
+        case InputKind::Float: return "input_float";
+        case InputKind::String: return "input_string";
+        case InputKind::Bool: return "input_bool";
+        case InputKind::Radio: return "input_radio";
+        case InputKind::Slider: return "input_slider";
+        case InputKind::Color: return "input_color";
+    }
+    return "input_string";
+}
+
+std::optional<InputKind> input_kind_from_name(std::string_view name) noexcept {
+    for (const KindName& k : k_type_names) {
+        if (name == k.name) return k.kind;
+    }
+    return std::nullopt;
+}
+
+std::optional<InputKind> input_kind_of(const Node& node) noexcept {
+    if (!node.is_element()) return std::nullopt;
+    for (const KindName& k : k_tags) {
+        if (node.tag() == k.name) return k.kind;
+    }
+    if (node.tag() == "input") {
+        const Attribute* type = node.find_attribute("type");
+        return type ? input_kind_from_name(type->value) : std::nullopt;
+    }
+    return std::nullopt;
+}
+
+bool is_input(const Node& node) noexcept { return input_kind_of(node).has_value(); }
+
+bool is_text_input(InputKind kind) noexcept {
+    return kind == InputKind::Integer || kind == InputKind::Float || kind == InputKind::String || kind == InputKind::Color;
+}
+
+bool is_switch(const Node& node, const std::optional<std::string>& appearance) noexcept {
+    if (input_kind_of(node) != InputKind::Bool) return false;
+    if (node.has_attribute("switch")) return true;
+    if (node.tag() == "input" && node.attribute_or("type", "") == "toggle") return true;
+    return appearance && *appearance == "switch";
+}
+
+std::optional<std::int64_t> parse_integer(std::string_view text) noexcept {
+    std::size_t i = 0;
+    bool negative = false;
+    if (i < text.size() && text[i] == '-') {
+        negative = true;
+        ++i;
+    }
+    if (i == text.size()) return std::nullopt;
+    std::uint64_t magnitude = 0;
+    const std::uint64_t limit = negative ? static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1 : static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    for (; i < text.size(); ++i) {
+        if (!is_digit(text[i])) return std::nullopt;
+        const std::uint64_t d = static_cast<std::uint64_t>(text[i] - '0');
+        if (magnitude > (limit - d) / 10) return std::nullopt;
+        magnitude = magnitude * 10 + d;
+    }
+    if (negative) return magnitude == limit ? std::numeric_limits<std::int64_t>::min() : -static_cast<std::int64_t>(magnitude);
+    return static_cast<std::int64_t>(magnitude);
+}
+
+std::optional<double> parse_float(std::string_view text) noexcept {
+    std::size_t i = 0;
+    if (i < text.size() && text[i] == '-') ++i;
+    std::size_t digits = 0;
+    while (i < text.size() && is_digit(text[i])) { ++i; ++digits; }
+    if (i < text.size() && text[i] == '.') {
+        ++i;
+        while (i < text.size() && is_digit(text[i])) { ++i; ++digits; }
+    }
+    if (digits == 0) return std::nullopt;
+    if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+        ++i;
+        if (i < text.size() && (text[i] == '-' || text[i] == '+')) ++i;
+        std::size_t exp_digits = 0;
+        while (i < text.size() && is_digit(text[i])) { ++i; ++exp_digits; }
+        if (exp_digits == 0) return std::nullopt;
+    }
+    if (i != text.size()) return std::nullopt;
+    const std::string s(text);
+    const double v = std::strtod(s.c_str(), nullptr);
+    if (!std::isfinite(v)) return std::nullopt;
+    return v;
+}
+
+std::string format_float(double value) {
+    char buf[40];
+    for (int precision = 1; precision <= 17; ++precision) {
+        std::snprintf(buf, sizeof(buf), "%.*g", precision, value);
+        if (std::strtod(buf, nullptr) == value) break;
+    }
+    return buf;
+}
+
+std::string format_color(const bark::Rgba& c) {
+    static const char* digits = "0123456789abcdef";
+    std::string s = "#";
+    auto put = [&](std::uint8_t v) {
+        s += digits[v >> 4];
+        s += digits[v & 15];
+    };
+    put(c.r);
+    put(c.g);
+    put(c.b);
+    if (c.a != 255) put(c.a);
+    return s;
+}
+
+double InputRange::clamp(double value) const noexcept {
+    if (has_min && value < min) value = min;
+    if (has_max && value > max) value = max;
+    return value;
+}
+
+InputRange input_range(const Node& node) {
+    InputRange r;
+    const std::optional<InputKind> kind = input_kind_of(node);
+    if (!kind) return r;
+    if (const auto v = float_attribute(node, "min")) { r.min = *v; r.has_min = true; }
+    if (const auto v = float_attribute(node, "max")) { r.max = *v; r.has_max = true; }
+    if (*kind == InputKind::Slider) {
+        if (!r.has_min) { r.min = 0.0; r.has_min = true; }
+        if (!r.has_max) { r.max = 100.0; r.has_max = true; }
+        r.step = 0.0;
+    }
+    if (const auto v = float_attribute(node, "step")) {
+        if (*v > 0.0) r.step = *v;
+    }
+    if (*kind == InputKind::Integer) {
+        if (r.has_min) r.min = std::ceil(r.min);
+        if (r.has_max) r.max = std::floor(r.max);
+        r.step = std::max(1.0, std::round(r.step));
+    }
+    return r;
+}
+
+std::optional<std::int64_t> input_integer(const Node& node) {
+    if (!kind_if(node, { InputKind::Integer })) return std::nullopt;
+    const InputRange range = input_range(node);
+    std::int64_t value = 0;
+    if (const Attribute* a = node.find_attribute("value")) {
+        if (const auto v = parse_integer(a->value)) value = *v;
+    }
+    if (range.has_min && static_cast<double>(value) < range.min) value = static_cast<std::int64_t>(range.min);
+    if (range.has_max && static_cast<double>(value) > range.max) value = static_cast<std::int64_t>(range.max);
+    return value;
+}
+
+std::optional<double> input_float(const Node& node) {
+    if (!kind_if(node, { InputKind::Float, InputKind::Slider })) return std::nullopt;
+    const InputRange range = input_range(node);
+    double value = range.has_min && range.min > 0.0 ? range.min : 0.0;
+    if (const auto v = float_attribute(node, "value")) value = *v;
+    return range.clamp(value);
+}
+
+std::optional<std::string> input_string(const Node& node) {
+    if (!kind_if(node, { InputKind::String })) return std::nullopt;
+    return node.attribute_or("value", "");
+}
+
+std::optional<bool> input_bool(const Node& node) {
+    if (!kind_if(node, { InputKind::Bool, InputKind::Radio })) return std::nullopt;
+    return node.has_attribute("checked");
+}
+
+std::optional<bark::Rgba> input_color(const Node& node) {
+    if (!kind_if(node, { InputKind::Color })) return std::nullopt;
+    if (const Attribute* a = node.find_attribute("value")) {
+        if (const auto c = bark::parse_hex_color(a->value)) return c;
+    }
+    return bark::Rgba{ 0, 0, 0, 255 };
+}
+
+std::optional<std::string> radio_choice(const Document& document, std::string_view group) {
+    std::optional<std::string> out;
+    document.root().walk([&](const Node& n) {
+        if (out || input_kind_of(n) != InputKind::Radio) return;
+        if (n.attribute_or("name", "") == group && n.has_attribute("checked")) out = n.attribute_or("value", "");
+    });
+    return out;
+}
+
+bool set_input_integer(Document& document, Node& node, std::int64_t value) {
+    if (!kind_if(node, { InputKind::Integer })) return false;
+    const InputRange range = input_range(node);
+    if (range.has_min && static_cast<double>(value) < range.min) value = static_cast<std::int64_t>(range.min);
+    if (range.has_max && static_cast<double>(value) > range.max) value = static_cast<std::int64_t>(range.max);
+    node.set_attribute("value", format_integer(value));
+    document.touch();
+    return true;
+}
+
+bool set_input_float(Document& document, Node& node, double value) {
+    if (!kind_if(node, { InputKind::Float, InputKind::Slider })) return false;
+    if (!std::isfinite(value)) return false;
+    const InputRange range = input_range(node);
+    value = range.clamp(value);
+    if (range.step > 0.0 && input_kind_of(node) == InputKind::Slider) {
+        const double base = range.has_min ? range.min : 0.0;
+        value = range.clamp(base + std::round((value - base) / range.step) * range.step);
+    }
+    node.set_attribute("value", format_float(value));
+    document.touch();
+    return true;
+}
+
+bool set_input_string(Document& document, Node& node, std::string value) {
+    if (!kind_if(node, { InputKind::String })) return false;
+    if (const Attribute* a = node.find_attribute("maxlength")) {
+        if (const auto limit = parse_integer(a->value)) {
+            if (*limit >= 0) value = truncate_code_points(std::move(value), static_cast<std::size_t>(*limit));
+        }
+    }
+    node.set_attribute("value", std::move(value));
+    document.touch();
+    return true;
+}
+
+bool set_input_bool(Document& document, Node& node, bool value) {
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::Bool, InputKind::Radio });
+    if (!kind) return false;
+    if (*kind == InputKind::Radio && value) {
+        const std::string group = node.attribute_or("name", "");
+        document.root().walk([&](Node& other) {
+            if (&other != &node && input_kind_of(other) == InputKind::Radio && other.attribute_or("name", "") == group) other.remove_attribute("checked");
+        });
+    }
+    if (value) node.set_attribute("checked", "");
+    else node.remove_attribute("checked");
+    document.touch();
+    return true;
+}
+
+bool set_input_color(Document& document, Node& node, const bark::Rgba& color) {
+    if (!kind_if(node, { InputKind::Color })) return false;
+    node.set_attribute("value", format_color(color));
+    document.touch();
+    return true;
+}
+
+bool set_radio_choice(Document& document, std::string_view group, std::string_view value) {
+    Node* target = nullptr;
+    document.root().walk([&](Node& n) {
+        if (!target && input_kind_of(n) == InputKind::Radio && n.attribute_or("name", "") == group && n.attribute_or("value", "") == value) target = &n;
+    });
+    return target && set_input_bool(document, *target, true);
+}
+
+bool step_input(Document& document, Node& node, int steps) {
+    const std::optional<InputKind> kind = input_kind_of(node);
+    if (!kind) return false;
+    const InputRange range = input_range(node);
+    if (*kind == InputKind::Integer) {
+        const std::int64_t v = *input_integer(node);
+        const double next = static_cast<double>(v) + static_cast<double>(steps) * range.step;
+        const double bounded = std::max(-9.2e18, std::min(9.2e18, next));
+        return set_input_integer(document, node, static_cast<std::int64_t>(bounded));
+    }
+    if (*kind == InputKind::Float || *kind == InputKind::Slider) {
+        double step = range.step;
+        if (step <= 0.0) step = (range.max - range.min) / 100.0;
+        if (step <= 0.0) step = 1.0;
+        return set_input_float(document, node, *input_float(node) + steps * step);
+    }
+    return false;
+}
+
+std::string input_text(const Node& node) {
+    const std::optional<InputKind> kind = input_kind_of(node);
+    if (!kind) return {};
+    switch (*kind) {
+        case InputKind::Integer: return format_integer(*input_integer(node));
+        case InputKind::Float:
+        case InputKind::Slider: return format_float(*input_float(node));
+        case InputKind::String: return *input_string(node);
+        case InputKind::Color: return format_color(*input_color(node));
+        case InputKind::Bool:
+        case InputKind::Radio: return *input_bool(node) ? "true" : "false";
+    }
+    return {};
+}
+
+bool input_accepts(const Node& node, std::string_view current, std::string_view ch) {
+    const std::optional<InputKind> kind = input_kind_of(node);
+    if (!kind || ch.empty()) return false;
+    const char c = ch.front();
+    switch (*kind) {
+        case InputKind::Integer: {
+            if (ch.size() != 1) return false;
+            if (is_digit(c)) return current.size() < 20;
+            return c == '-' && current.empty() && input_range(node).allows_negative();
+        }
+        case InputKind::Float: {
+            if (ch.size() != 1) return false;
+            if (is_digit(c)) return current.size() < 32;
+            if (c == '-') return current.empty() && input_range(node).allows_negative();
+            if (c == '.') return current.find('.') == std::string_view::npos;
+            return false;
+        }
+        case InputKind::Color: {
+            if (ch.size() != 1) return false;
+            if (c == '#') return current.empty();
+            const std::size_t hex = current.size() - (!current.empty() && current.front() == '#' ? 1 : 0);
+            return is_hex(c) && hex < 8;
+        }
+        case InputKind::String: {
+            if (ch.size() == 1 && (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)) return false;
+            if (const Attribute* a = node.find_attribute("maxlength")) {
+                if (const auto limit = parse_integer(a->value)) {
+                    if (*limit >= 0 && code_points(current) >= static_cast<std::size_t>(*limit)) return false;
+                }
+            }
+            return true;
+        }
+        default: return false;
+    }
+}
+
+bool commit_input_text(Document& document, Node& node, std::string_view text) {
+    const std::optional<InputKind> kind = input_kind_of(node);
+    if (!kind) return false;
+    switch (*kind) {
+        case InputKind::Integer: {
+            const auto v = parse_integer(text);
+            return v && set_input_integer(document, node, *v);
+        }
+        case InputKind::Float: {
+            const auto v = parse_float(text);
+            return v && set_input_float(document, node, *v);
+        }
+        case InputKind::String: return set_input_string(document, node, std::string(text));
+        case InputKind::Color: {
+            std::string hex(text);
+            if (hex.empty() || hex.front() != '#') hex.insert(hex.begin(), '#');
+            const auto c = bark::parse_hex_color(hex);
+            return c && set_input_color(document, node, *c);
+        }
+        default: return false;
+    }
+}
+
+void check_inputs(const Document& document, Diagnostics& diagnostics) {
+    const std::string& file = document.path();
+    std::map<std::string, std::vector<const Node*>> checked_radios;
+
+    document.root().walk([&](const Node& node) {
+        if (!node.is_element()) return;
+        const bool generic = node.tag() == "input";
+        if (generic) {
+            const Attribute* type = node.find_attribute("type");
+            if (!type) {
+                diagnostics.error(file, node.span(), "<input> needs a type (integer, float, string, bool, radio, slider or color), or use <input_integer>, <input_float>, ...");
+                return;
+            }
+            if (!input_kind_from_name(type->value)) {
+                diagnostics.error(file, type->span, "unknown input type '" + type->value + "' (use integer, float, string, bool, radio, slider or color)");
+                return;
+            }
+        }
+        const std::optional<InputKind> kind = input_kind_of(node);
+        if (!kind) return;
+
+        for (const Attribute& a : node.attributes()) {
+            if (!allowed_attribute(*kind, a.name, generic)) {
+                diagnostics.warning(file, a.span, "'" + a.name + "' has no meaning on a " + to_string(*kind) + " input");
+            }
+        }
+
+        auto number_attr = [&](const char* name, bool integer) -> std::optional<double> {
+            const Attribute* a = node.find_attribute(name);
+            if (!a) return std::nullopt;
+            if (integer) {
+                const auto v = parse_integer(a->value);
+                if (!v) {
+                    diagnostics.error(file, a->span, std::string(name) + "=\"" + a->value + "\" is not an integer");
+                    return std::nullopt;
+                }
+                return static_cast<double>(*v);
+            }
+            const auto v = parse_float(a->value);
+            if (!v) diagnostics.error(file, a->span, std::string(name) + "=\"" + a->value + "\" is not a number");
+            return v;
+        };
+
+        switch (*kind) {
+            case InputKind::Integer:
+            case InputKind::Float:
+            case InputKind::Slider: {
+                const bool integer = *kind == InputKind::Integer;
+                const auto value = number_attr("value", integer);
+                const auto min = number_attr("min", integer);
+                const auto max = number_attr("max", integer);
+                const auto step = number_attr("step", integer);
+                if (min && max && *min > *max) diagnostics.error(file, node.span(), describe(node) + " has min greater than max");
+                if (step && *step <= 0.0) diagnostics.error(file, node.find_attribute("step")->span, "step must be greater than 0");
+                if (value && ((min && *value < *min) || (max && *value > *max))) diagnostics.warning(file, node.find_attribute("value")->span, "value is outside min..max and will be clamped");
+                break;
+            }
+            case InputKind::String: {
+                const auto limit = number_attr("maxlength", true);
+                if (limit && *limit < 0) diagnostics.error(file, node.find_attribute("maxlength")->span, "maxlength can't be negative");
+                if (limit && *limit >= 0 && code_points(node.attribute_or("value", "")) > static_cast<std::size_t>(*limit)) {
+                    diagnostics.warning(file, node.find_attribute("value")->span, "value is longer than maxlength and will be cut");
+                }
+                break;
+            }
+            case InputKind::Color: {
+                if (const Attribute* a = node.find_attribute("value")) {
+                    if (!bark::parse_hex_color(a->value) || a->value.empty() || a->value.front() != '#') {
+                        diagnostics.error(file, a->span, "value=\"" + a->value + "\" is not a color like #rrggbb");
+                    }
+                }
+                break;
+            }
+            case InputKind::Radio: {
+                const std::string name = node.attribute_or("name", "");
+                if (name.empty()) diagnostics.error(file, node.span(), describe(node) + " needs a name=\"...\" for its group");
+                if (!node.has_attribute("value")) diagnostics.error(file, node.span(), describe(node) + " needs a value=\"...\"");
+                if (!name.empty() && node.has_attribute("checked")) checked_radios[name].push_back(&node);
+                break;
+            }
+            case InputKind::Bool: break;
+        }
+    });
+
+    for (const auto& [group, nodes] : checked_radios) {
+        for (std::size_t i = 1; i < nodes.size(); ++i) {
+            diagnostics.error(file, nodes[i]->span(), "radio group '" + group + "' already has a checked option");
+        }
+    }
+}
+
+} // namespace grove

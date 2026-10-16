@@ -4,7 +4,7 @@ $text = #cdd6f4;
 $muted = #9399b2;
 $accent = #89b4fa;
 
-window {
+body {
     size: 900px 640px;
     background: $background;
     color: $text;
