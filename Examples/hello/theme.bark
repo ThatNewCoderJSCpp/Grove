@@ -1,0 +1,40 @@
+$background = #1e1e2e;
+$surface = #313244;
+$text = #cdd6f4;
+$muted = #9399b2;
+$accent = #89b4fa;
+
+window {
+    size: 900px 640px;
+    background: $background;
+    color: $text;
+    font-size: 16px;
+    padding: 32px;
+}
+
+h1 {
+    font-size: 32px;
+    margin: 0 0 8px 0;
+}
+
+.lead {
+    color: $muted;
+    margin: 0 0 24px 0;
+}
+
+panel.card {
+    background: $surface;
+    border-color: rgba(137, 180, 250, 40%);
+    padding: 16px 20px;
+    margin: 0 0 16px 0;
+
+    h3 {
+        color: $accent;
+        margin: 0 0 12px 0;
+    }
+
+    > math {
+        font-size: 24px;
+        text-align: center;
+    }
+}

@@ -1,0 +1,106 @@
+cmake_minimum_required(VERSION 3.18)
+project(grove VERSION 0.1.0 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(GROVE_BUILD_RUNTIME "Build grove_runtime, which opens documents in a Fizmo window" ON)
+option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\"> blocks" ON)
+option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
+set(GROVE_FIZMO_TAG "v0.2.24" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.6" CACHE STRING "Walnut git tag to fetch")
+
+include(FetchContent)
+set(GROVE_FETCH_EXCLUDE "")
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
+    list(APPEND GROVE_FETCH_EXCLUDE SYSTEM)
+endif()
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
+    list(APPEND GROVE_FETCH_EXCLUDE EXCLUDE_FROM_ALL)
+endif()
+
+FetchContent_Declare(fizmo
+    GIT_REPOSITORY https://github.com/ThatNewCoderJSCpp/Fizmo.git
+    GIT_TAG        ${GROVE_FIZMO_TAG}
+    GIT_SHALLOW    TRUE
+    ${GROVE_FETCH_EXCLUDE})
+FetchContent_MakeAvailable(fizmo)
+
+if(GROVE_WITH_WALNUT)
+    FetchContent_Declare(walnut
+        GIT_REPOSITORY https://github.com/ThatNewCoderJSCpp/Walnut.git
+        GIT_TAG        ${GROVE_WALNUT_TAG}
+        GIT_SHALLOW    TRUE
+        ${GROVE_FETCH_EXCLUDE})
+    FetchContent_MakeAvailable(walnut)
+endif()
+
+set(GROVE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.hpp.in" "${GROVE_GENERATED_DIR}/grove/version.hpp" @ONLY)
+
+function(grove_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /utf-8)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
+add_library(grove_core STATIC
+    Source/common/diagnostics.cpp
+    Source/markup/node.cpp
+    Source/markup/tags.cpp
+    Source/markup/parser.cpp
+    Source/bark/value.cpp
+    Source/bark/stylesheet.cpp
+    Source/bark/parser.cpp
+    Source/bark/cascade.cpp
+    Source/script/script.cpp
+    Source/math/math_block.cpp
+    Source/api/grove_api.cpp
+    Source/project.cpp)
+add_library(grove::core ALIAS grove_core)
+target_compile_features(grove_core PUBLIC cxx_std_17)
+target_include_directories(grove_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/Include"
+    "${GROVE_GENERATED_DIR}")
+target_link_libraries(grove_core PUBLIC fizmo::headers)
+set_target_properties(grove_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+grove_warnings(grove_core)
+
+if(GROVE_BUILD_RUNTIME)
+    add_library(grove_runtime STATIC Source/runtime/runtime.cpp)
+    add_library(grove::runtime ALIAS grove_runtime)
+    target_link_libraries(grove_runtime PUBLIC grove_core)
+    if(TARGET fizmo::graphics)
+        target_link_libraries(grove_runtime PUBLIC fizmo::graphics)
+    else()
+        target_link_libraries(grove_runtime PUBLIC fizmo::fizmo)
+    endif()
+    grove_warnings(grove_runtime)
+endif()
+
+add_executable(grove Tools/grove.cpp)
+target_link_libraries(grove PRIVATE grove_core)
+if(GROVE_BUILD_RUNTIME)
+    target_link_libraries(grove PRIVATE grove_runtime)
+    target_compile_definitions(grove PRIVATE GROVE_HAS_RUNTIME)
+endif()
+if(GROVE_WITH_WALNUT AND TARGET walnut)
+    add_dependencies(grove walnut)
+    target_compile_definitions(grove PRIVATE "GROVE_WALNUT_EXECUTABLE=\"$<TARGET_FILE:walnut>\"")
+endif()
+grove_warnings(grove)
+
+if(GROVE_BUILD_TESTS)
+    enable_testing()
+    add_executable(grove_tests Tests/grove_tests.cpp)
+    target_link_libraries(grove_tests PRIVATE grove_core)
+    target_compile_definitions(grove_tests PRIVATE "GROVE_EXAMPLES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Examples\"")
+    grove_warnings(grove_tests)
+    add_test(NAME grove_tests COMMAND grove_tests)
+    add_test(NAME grove_check_hello COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/hello/hello.grove")
+endif()

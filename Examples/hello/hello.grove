@@ -1,0 +1,37 @@
+<!grove>
+<grove>
+    <head>
+        <title>Hello, Grove</title>
+        <style src="theme.bark" />
+        <style>
+            #greeting {
+                color: $accent;
+            }
+        </style>
+        <script lang="walnut" src="app.wal"></script>
+        <script lang="c++" src="helpers.cpp"></script>
+    </head>
+
+    <body>
+        <window id="main" title="Hello, Grove">
+            <h1 id="greeting">Hello from Grove</h1>
+            <p class="lead">A document backed by Fizmo, styled with Bark and scripted with Walnut, C++ or C.</p>
+
+            <panel class="card">
+                <h3>The quadratic formula</h3>
+                <math display="block">
+                    x = (-b \pm\ sqrt(b^2 - 4*a*c)) / (2*a)
+                </math>
+            </panel>
+
+            <panel class="card">
+                <h3>Brace form works too</h3>
+                <math syntax="brace" display="block">
+                    equals{Sum{equals{"n", 1}, \infty\, frac{1, power{"n", 2}}}, frac{power{\pi\, 2}, 6}}
+                </math>
+            </panel>
+
+            <p style="color: $muted; font-size: 13px;">Edit theme.bark and run "grove check hello.grove" to see diagnostics.</p>
+        </window>
+    </body>
+</grove>
