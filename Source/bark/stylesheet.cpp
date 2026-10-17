@@ -3,12 +3,54 @@
 namespace grove {
 namespace bark {
 
+bool is_known_pseudo_class(std::string_view name) noexcept {
+    static const std::string_view names[] = { "hover", "active", "focus", "checked", "disabled", "enabled", "first-child", "last-child", "only-child", "empty" };
+    for (std::string_view n : names) {
+        if (n == name) return true;
+    }
+    return false;
+}
+
+namespace {
+
+std::size_t element_index(const Node& node, bool from_end) {
+    const Node* parent = node.parent();
+    if (!parent) return 0;
+    std::vector<const Node*> elements;
+    for (const auto& c : parent->children()) {
+        if (c->is_element()) elements.push_back(c.get());
+    }
+    for (std::size_t i = 0; i < elements.size(); ++i) {
+        if (elements[i] == &node) return from_end ? elements.size() - 1 - i : i;
+    }
+    return 0;
+}
+
+bool pseudo_matches(const std::string& p, const Node& node) {
+    if (p == "hover") return node.has_state(StateHover);
+    if (p == "active") return node.has_state(StateActive);
+    if (p == "focus") return node.has_state(StateFocus);
+    if (p == "checked") return node.has_attribute("checked");
+    if (p == "disabled") return node.has_attribute("disabled");
+    if (p == "enabled") return !node.has_attribute("disabled");
+    if (p == "first-child") return element_index(node, false) == 0;
+    if (p == "last-child") return element_index(node, true) == 0;
+    if (p == "only-child") return element_index(node, false) == 0 && element_index(node, true) == 0;
+    if (p == "empty") return node.children().empty();
+    return false;
+}
+
+} // namespace
+
 bool Compound::matches(const Node& node) const {
     if (!node.is_element()) return false;
     if (!tag.empty() && tag != "*" && tag != node.tag()) return false;
     if (!id.empty() && node.id() != id) return false;
     for (const std::string& c : classes) {
         if (!node.has_class(c)) return false;
+    }
+    for (const std::string& p : pseudos) {
+        if (!pseudo_matches(p, node)) return false;
     }
     return true;
 }
@@ -37,7 +79,7 @@ Specificity Selector::specificity() const noexcept {
     Specificity s;
     for (const Compound& c : parts) {
         if (!c.id.empty()) ++s.ids;
-        s.classes += static_cast<int>(c.classes.size());
+        s.classes += static_cast<int>(c.classes.size() + c.pseudos.size());
         if (!c.tag.empty() && c.tag != "*") ++s.tags;
     }
     return s;
@@ -51,7 +93,8 @@ std::string Selector::to_string() const {
         out += c.tag;
         if (!c.id.empty()) out += "#" + c.id;
         for (const std::string& cls : c.classes) out += "." + cls;
-        if (c.tag.empty() && c.id.empty() && c.classes.empty()) out += "*";
+        for (const std::string& p : c.pseudos) out += ":" + p;
+        if (c.tag.empty() && c.id.empty() && c.classes.empty() && c.pseudos.empty()) out += "*";
     }
     return out;
 }

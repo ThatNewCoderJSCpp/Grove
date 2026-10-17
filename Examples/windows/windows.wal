@@ -1,0 +1,112 @@
+import module.grove
+
+grove::Element: settings = grove::get_by_id("settings");
+grove::Element: notes = grove::get_by_id("notes");
+long int: note_total = 0;
+bool: typing = false;
+
+function show(const string&: what) -> void {
+    grove::get_by_id("answer").set_inner_text(what);
+} end function show
+
+grove::get_by_id("open-settings").on("click", [&](grove::Event&: e) -> void {
+    settings.open();
+});
+
+grove::get_by_id("open-notes").on("click", [&](grove::Event&: e) -> void {
+    notes.open();
+});
+
+grove::get_by_id("settings-done").on("click", [&](grove::Event&: e) -> void {
+    settings.close();
+});
+
+settings.on("change", [&](grove::Event&: e) -> void {
+    grove::Element: dark = grove::get_by_id("dark");
+    if (dark.value_bool()) then {
+        grove::get_by_id("theme").set_inner_text("Theme: dark");
+    } else then {
+        grove::get_by_id("theme").set_inner_text("Theme: light");
+    }
+    grove::get_by_id("volume").set_inner_text("Volume: " + grove::get_by_id("vol").value_text());
+});
+
+grove::body().on("open", [&](grove::Event&: e) -> void {
+    grove::get_by_id("log").set_inner_text("Opened " + e.target().get_attribute("title"));
+});
+
+grove::body().on("close", [&](grove::Event&: e) -> void {
+    grove::get_by_id("log").set_inner_text("Closed " + e.target().get_attribute("title"));
+});
+
+notes.on("close", [&](grove::Event&: e) -> void {
+    if (typing) then {
+        e.prevent_default();
+        grove::confirm("Unsaved note", "Throw away the note you're typing?", [&](bool: yes) -> void {
+            if (yes) then {
+                typing = false;
+                notes.close();
+            }
+        });
+    }
+});
+
+grove::get_by_id("note").on("input", [&](grove::Event&: e) -> void {
+    typing = true;
+});
+
+grove::get_by_id("note").on("change", [&](grove::Event&: e) -> void {
+    typing = false;
+    if (grove::get_by_id("note").value_string() == "") then {
+        return;
+    }
+    note_total += 1l;
+    grove::get_by_id("note-count").set_inner_text(note_total.to_string() + " notes");
+    grove::get_by_id("note").set_value_string("");
+});
+
+grove::get_by_id("alert").on("click", [&](grove::Event&: e) -> void {
+    grove::alert("Saved your work.");
+});
+
+grove::get_by_id("warn").on("click", [&](grove::Event&: e) -> void {
+    grove::popup_warning("Low space", "Only 2 GB left on this drive.");
+});
+
+grove::get_by_id("fail").on("click", [&](grove::Event&: e) -> void {
+    grove::popup_error("Couldn't save", "The file is read-only.");
+});
+
+grove::get_by_id("ask").on("click", [&](grove::Event&: e) -> void {
+    grove::confirm("Delete", "Delete everything?", [&](bool: yes) -> void {
+        if (yes) then {
+            show("You said yes");
+        } else then {
+            show("You said no");
+        }
+    });
+});
+
+grove::get_by_id("ask-name").on("click", [&](grove::Event&: e) -> void {
+    grove::prompt_string("Name", "What's your name?", "", [&](string: name) -> void {
+        show("Hello, " + name);
+    });
+});
+
+grove::get_by_id("ask-age").on("click", [&](grove::Event&: e) -> void {
+    grove::prompt_integer("Age", "How old are you?", 30l, [&](long int: age) -> void {
+        show("Next year you'll be " + (age + 1l).to_string());
+    });
+});
+
+grove::get_by_id("ask-color").on("click", [&](grove::Event&: e) -> void {
+    grove::prompt_color("Color", "Pick an accent color", "#89b4fa", [&](string: c) -> void {
+        show("Color " + c);
+    });
+});
+
+grove::get_by_id("ask-size").on("click", [&](grove::Event&: e) -> void {
+    grove::prompt_choice("Size", "How big?", "Small|Medium|Large", "Medium", [&](string: s) -> void {
+        show("Size " + s);
+    });
+});

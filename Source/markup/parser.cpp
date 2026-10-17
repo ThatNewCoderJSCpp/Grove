@@ -105,7 +105,18 @@ private:
     std::string read_name() {
         const Position start = m_cursor.position();
         while (!m_cursor.at_end() && is_name_char(m_cursor.peek())) m_cursor.advance();
-        return to_lower(m_cursor.slice(start));
+        std::string name = to_lower(m_cursor.slice(start));
+        if (!name.empty()) mark_tag(name, m_cursor.span_from(start));
+        return name;
+    }
+
+    void mark_tag(const std::string& name, const Span& span) {
+        MarkKind kind = MarkKind::Tag;
+        if (name.rfind("input", 0) == 0 && is_known_tag(name)) kind = MarkKind::InputTag;
+        else if (is_known_tag(name)) kind = MarkKind::Tag;
+        else if (name.find('-') != std::string::npos) kind = MarkKind::CustomTag;
+        else kind = MarkKind::UnknownTag;
+        m_doc.marks().push_back(Mark{ kind, span });
     }
 
     bool parse_attribute(Node& element) {
@@ -113,6 +124,7 @@ private:
         while (!m_cursor.at_end() && is_attr_char(m_cursor.peek())) m_cursor.advance();
         Attribute attr;
         attr.name = std::string(m_cursor.slice(start));
+        attr.name_span = m_cursor.span_from(start);
         if (attr.name.empty()) {
             m_diag.error(m_file, Span{ start, start }, std::string("unexpected '") + m_cursor.peek() + "' in tag");
             m_cursor.advance();
@@ -129,12 +141,14 @@ private:
                 const Position vstart = m_cursor.position();
                 while (!m_cursor.at_end() && m_cursor.peek() != q) m_cursor.advance();
                 attr.value = decode_entities(m_cursor.slice(vstart));
+                attr.value_span = m_cursor.span_from(vstart);
                 if (m_cursor.at_end()) m_diag.error(m_file, m_cursor.span_from(start), "attribute value is never closed");
                 else m_cursor.advance();
             } else {
                 const Position vstart = m_cursor.position();
                 while (!m_cursor.at_end() && !Cursor::is_space(m_cursor.peek()) && m_cursor.peek() != '>' && !m_cursor.starts_with("/>")) m_cursor.advance();
                 attr.value = decode_entities(m_cursor.slice(vstart));
+                attr.value_span = m_cursor.span_from(vstart);
                 if (attr.value.empty()) m_diag.error(m_file, m_cursor.span_from(start), "attribute '" + attr.name + "' is missing its value after '='");
             }
         }
@@ -195,7 +209,10 @@ private:
             m_diag.error(m_file, element.span(), "<" + element.tag() + "> is never closed");
             return;
         }
-        m_cursor.advance(closer.size());
+        m_cursor.advance(2);
+        const Position name_start = m_cursor.position();
+        m_cursor.advance(element.tag().size());
+        mark_tag(element.tag(), m_cursor.span_from(name_start));
         m_cursor.skip_whitespace();
         if (!m_cursor.match(">")) m_diag.error(m_file, m_cursor.span_from(m_cursor.position()), "expected '>' to finish </" + element.tag() + ">");
     }

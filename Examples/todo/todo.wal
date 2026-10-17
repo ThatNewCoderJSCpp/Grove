@@ -1,0 +1,61 @@
+import module.grove
+
+grove::Element: tasks = grove::get_by_id("tasks");
+grove::Element: entry = grove::get_by_id("new-task");
+long int: added = 0;
+
+function add_task(const string&: label) -> void {
+    if (label == "") then {
+        return;
+    }
+    grove::Element: row = grove::create_element("row");
+    row.add_class("task");
+
+    grove::Element: check = grove::create_element("input_bool");
+    check.set_inner_text(label);
+    check.on("change", [row](grove::Event&: e) -> void {
+        grove::Element: r = row;
+        r.toggle_class("done");
+        grove::dispatch("tasks_changed");
+    });
+
+    grove::Element: remove = grove::create_element("button");
+    remove.set_inner_text("Remove");
+    remove.on("click", [row](grove::Event&: e) -> void {
+        grove::Element: r = row;
+        r.remove();
+        grove::dispatch("tasks_changed");
+    });
+
+    row.append_child(check);
+    row.append_child(remove);
+    grove::get_by_id("tasks").append_child(row);
+    grove::dispatch("tasks_changed");
+} end function add_task
+
+grove::get_by_id("add").on("click", [&](grove::Event&: e) -> void {
+    add_task(entry.value_string());
+    entry.set_value_string("");
+});
+
+entry.on("change", [&](grove::Event&: e) -> void {
+    add_task(entry.value_string());
+    entry.set_value_string("");
+});
+
+grove::get_by_id("clear-done").on("click", [&](grove::Event&: e) -> void {
+    grove::ElementList: done = grove::query_all("row.task.done");
+    for (long int: i = 0l; i < done.size(); i += 1l) {
+        done.at(i).remove();
+    }
+    grove::dispatch("tasks_changed");
+});
+
+long int: seconds = 0;
+grove::set_interval(1000.0, [&]() -> void {
+    seconds += 1l;
+    grove::get_by_id("clock").set_inner_text("Open for " + seconds.to_string() + " s");
+});
+
+add_task("Try Grove");
+add_task("Write a Walnut script");

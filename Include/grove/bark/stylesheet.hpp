@@ -3,6 +3,7 @@
 
 #include "value.hpp"
 #include "../markup/node.hpp"
+#include "../common/marks.hpp"
 
 #include <map>
 #include <string>
@@ -23,10 +24,13 @@ struct Compound {
     std::string tag;
     std::string id;
     std::vector<std::string> classes;
+    std::vector<std::string> pseudos;
     Combinator combinator = Combinator::None;
 
     bool matches(const Node& node) const;
 };
+
+bool is_known_pseudo_class(std::string_view name) noexcept;
 
 struct Specificity {
     int ids = 0;
@@ -73,6 +77,9 @@ public:
     std::map<std::string, ValueList>& variables() noexcept { return m_variables; }
     const std::map<std::string, ValueList>& variables() const noexcept { return m_variables; }
 
+    Marks& marks() noexcept { return m_marks; }
+    const Marks& marks() const noexcept { return m_marks; }
+
     void append(const Stylesheet& other);
     void dump(std::ostream& os) const;
 
@@ -81,6 +88,7 @@ private:
     std::vector<Rule> m_rules;
     std::vector<std::string> m_imports;
     std::map<std::string, ValueList> m_variables;
+    Marks m_marks;
 };
 
 } // namespace bark

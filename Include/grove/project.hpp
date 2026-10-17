@@ -6,6 +6,8 @@
 #include "script/script.hpp"
 #include "math/math_block.hpp"
 
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,7 +24,13 @@ struct Project {
     Diagnostics diagnostics;
 };
 
+using FileReadObserver = std::function<void(const std::string& path, const std::string& text)>;
+
 std::optional<std::string> read_file(const std::string& path);
+void set_file_read_observer(FileReadObserver observer);
+void set_virtual_files(std::map<std::string, std::string> files);
+std::string virtual_file_key(const std::string& path);
+bool path_exists(const std::string& path);
 std::string resolve_path(const std::string& base_dir, const std::string& relative);
 
 Project load_project(const std::string& path);

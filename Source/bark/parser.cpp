@@ -1,8 +1,11 @@
 #include "grove/bark/parser.hpp"
 #include "grove/common/cursor.hpp"
+#include "grove/bark/properties.hpp"
+#include "grove/markup/tags.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <cstdlib>
 
 namespace grove {
@@ -234,6 +237,21 @@ public:
     }
 
     void set_variables(const std::map<std::string, ValueList>& vars) { m_sheet.variables() = vars; }
+    Marks take_marks() { return std::move(m_sheet.marks()); }
+
+    std::optional<std::vector<Selector>> parse_selector_list_only() {
+        std::vector<Selector> out;
+        do {
+            Selector s;
+            if (!parse_selector(s, false)) return std::nullopt;
+            out.push_back(std::move(s));
+        } while (accept(Tok::Comma));
+        if (!at(Tok::End)) {
+            m_diag.error(m_file, peek().span, "unexpected '" + peek().text + "' in selector");
+            return std::nullopt;
+        }
+        return out;
+    }
 
 private:
     const Token& peek(std::size_t ahead = 0) const {
@@ -246,6 +264,23 @@ private:
         if (m_pos < m_tokens.size() - 1) ++m_pos;
         return t;
     }
+    Position prev_end() const {
+        return m_pos > 0 ? m_tokens[m_pos - 1].span.end : peek().span.begin;
+    }
+
+    void mark(MarkKind kind, const Span& span) { m_sheet.marks().push_back(Mark{ kind, span }); }
+
+    void mark_color(const Span& span, const Rgba& c) {
+        Mark m{ MarkKind::Color, span };
+        m.r = c.r;
+        m.g = c.g;
+        m.b = c.b;
+        m.a = c.a;
+        m_sheet.marks().push_back(m);
+    }
+
+    void mark_variable_use(const Token& t, bool resolved) { mark(resolved ? MarkKind::Variable : MarkKind::UnresolvedVariable, t.span); }
+
     bool accept(Tok kind) {
         if (!at(kind)) return false;
         advance();
@@ -274,6 +309,7 @@ private:
 
     void parse_variable() {
         const Token name = advance();
+        mark(MarkKind::VariableDeclaration, name.span);
         if (!accept(Tok::Equals) && !accept(Tok::Colon)) {
             m_diag.error(m_file, peek().span, "expected '=' after $" + name.text);
             sync_statement();
@@ -300,7 +336,14 @@ private:
 
     bool parse_compound(Compound& c) {
         bool any = false;
-        if (at(Tok::Ident)) { c.tag = advance().text; any = true; }
+        if (at(Tok::Ident)) {
+            const Token& t = advance();
+            c.tag = t.text;
+            any = true;
+            const bool known = is_known_tag(c.tag) || c.tag.find('-') != std::string::npos;
+            mark(known ? MarkKind::SelectorTag : MarkKind::UnknownSelectorTag, t.span);
+            if (!known) m_diag.warning(m_file, t.span, "there is no <" + c.tag + "> element; custom elements need a '-' in their name");
+        }
         else if (at(Tok::Star)) { advance(); c.tag = "*"; any = true; }
         for (;;) {
             if (peek().space_before && any) break;
@@ -316,6 +359,12 @@ private:
                     return false;
                 }
                 c.classes.push_back(advance().text);
+                any = true;
+            } else if (at(Tok::Colon) && peek(1).kind == Tok::Ident && !peek(1).space_before) {
+                advance();
+                const Token& name = advance();
+                if (!is_known_pseudo_class(name.text)) m_diag.warning(m_file, name.span, "unknown pseudo-class ':" + name.text + "'; it never matches");
+                c.pseudos.push_back(name.text);
                 any = true;
             } else {
                 break;
@@ -360,6 +409,7 @@ private:
                     if (!first.tag.empty()) merged.tag = first.tag;
                     if (!first.id.empty()) merged.id = first.id;
                     merged.classes.insert(merged.classes.end(), first.classes.begin(), first.classes.end());
+                    merged.pseudos.insert(merged.pseudos.end(), first.pseudos.begin(), first.pseudos.end());
                     s.parts.back() = merged;
                     s.parts.insert(s.parts.end(), c.parts.begin() + 1, c.parts.end());
                 } else {
@@ -413,11 +463,10 @@ private:
 
     bool looks_like_nested_rule() const {
         if (at(Tok::Ampersand) || at(Tok::Greater) || at(Tok::Dot) || at(Tok::Hash) || at(Tok::Star)) return true;
-        if (at(Tok::Ident) && peek(1).kind == Tok::Colon) return false;
         for (std::size_t i = 0; m_pos + i < m_tokens.size(); ++i) {
             const Tok k = peek(i).kind;
             if (k == Tok::LBrace) return true;
-            if (k == Tok::Semicolon || k == Tok::RBrace || k == Tok::End || k == Tok::Colon) return false;
+            if (k == Tok::Semicolon || k == Tok::RBrace || k == Tok::End) return false;
         }
         return false;
     }
@@ -431,6 +480,12 @@ private:
         const Token name = advance();
         d.property = name.text;
         d.span = name.span;
+        if (is_known_property(name.text)) {
+            mark(MarkKind::Property, name.span);
+        } else {
+            mark(MarkKind::UnknownProperty, name.span);
+            m_diag.warning(m_file, name.span, "unknown property '" + name.text + "'");
+        }
         if (!accept(Tok::Colon)) {
             m_diag.error(m_file, peek().span, "expected ':' after '" + name.text + "'");
             sync_statement();
@@ -457,6 +512,7 @@ private:
             if (at(Tok::Variable)) {
                 const Token& t = advance();
                 auto it = m_sheet.variables().find(t.text);
+                mark_variable_use(t, it != m_sheet.variables().end());
                 if (it == m_sheet.variables().end()) {
                     m_diag.error(m_file, t.span, "unknown variable $" + t.text);
                     continue;
@@ -548,6 +604,7 @@ private:
                 }
                 v.kind = ValueKind::Color;
                 v.color = *c;
+                mark_color(t.span, *c);
                 return true;
             }
             case Tok::Ident:
@@ -560,6 +617,7 @@ private:
                         if (at(Tok::Variable)) {
                             const Token& var = advance();
                             auto it = m_sheet.variables().find(var.text);
+                            mark_variable_use(var, it != m_sheet.variables().end());
                             if (it == m_sheet.variables().end()) m_diag.error(m_file, var.span, "unknown variable $" + var.text);
                             else v.args.insert(v.args.end(), it->second.begin(), it->second.end());
                             continue;
@@ -568,10 +626,14 @@ private:
                         if (parse_value(arg)) v.args.push_back(std::move(arg));
                     }
                     if (!accept(Tok::RParen)) m_diag.error(m_file, t.span, t.text + "( is never closed with ')'");
-                    return evaluate_function(v);
+                    v.span = Span{ t.span.begin, prev_end() };
+                    const bool ok = evaluate_function(v);
+                    if (ok && v.is_color()) mark_color(v.span, v.color);
+                    return ok;
                 }
                 v.kind = ValueKind::Ident;
                 v.text = t.text;
+                if (const auto named = named_color(t.text)) mark_color(t.span, *named);
                 return true;
             default:
                 m_diag.error(m_file, t.span, "unexpected '" + t.text + "' in a value");
@@ -598,6 +660,27 @@ std::vector<Declaration> parse_declarations(std::string_view source, const std::
     Parser parser(Lexer(source, file, diagnostics, origin).run(), file, diagnostics);
     parser.set_variables(variables);
     return parser.parse_declaration_list();
+}
+
+std::optional<std::vector<Selector>> parse_selectors(std::string_view source, Diagnostics& diagnostics) {
+    const std::string file = "<selector>";
+    Diagnostics local;
+    Parser parser(Lexer(source, file, local, Position{}).run(), file, local);
+    std::optional<std::vector<Selector>> out = parser.parse_selector_list_only();
+    for (const Diagnostic& d : local.items()) {
+        if (d.severity == Severity::Error) diagnostics.add(d.severity, d.file, d.span, d.message);
+    }
+    if (!local.ok()) return std::nullopt;
+    return out;
+}
+
+std::vector<Declaration> parse_declarations(std::string_view source, const std::string& file, Diagnostics& diagnostics, const std::map<std::string, ValueList>& variables, const Position& origin, Marks& marks) {
+    Parser parser(Lexer(source, file, diagnostics, origin).run(), file, diagnostics);
+    parser.set_variables(variables);
+    std::vector<Declaration> out = parser.parse_declaration_list();
+    Marks found = parser.take_marks();
+    marks.insert(marks.end(), found.begin(), found.end());
+    return out;
 }
 
 } // namespace bark

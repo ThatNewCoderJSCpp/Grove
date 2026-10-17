@@ -95,8 +95,37 @@ const Stylesheet& default_stylesheet() {
             "    background: rgba(255, 255, 255, 6%); border-color: rgba(255, 255, 255, 22%); border-radius: 6px;\n"
             "}\n"
             "input_slider, slider { width: 220px; margin: 0 0 8px 0; }\n"
-            "input_bool, input_radio, checkbox { margin: 0 0 6px 0; appearance: checkbox; }\n"
-            "body { accent-color: #89b4fa; }\n",
+            "input_bool, input_radio, checkbox { margin: 0 0 6px 0; appearance: checkbox; cursor: pointer; }\n"
+            "input_slider, slider { cursor: pointer; }\n"
+            "button {\n"
+            "    padding: 6px 14px; margin: 0 0 8px 0; cursor: pointer; border-radius: 6px;\n"
+            "    background: rgba(255, 255, 255, 10%); border-color: rgba(255, 255, 255, 25%);\n"
+            "}\n"
+            "button:hover { background: rgba(255, 255, 255, 16%); }\n"
+            "button:active { background: rgba(255, 255, 255, 24%); }\n"
+            "button:focus { border-color: rgba(255, 255, 255, 45%); }\n"
+            "button:disabled { opacity: 0.45; cursor: default; }\n"
+            "row { display: row; gap: 8px; }\n"
+            "column { display: column; }\n"
+            "body { accent-color: #89b4fa; }\n"
+            "window.popup { background: #1e1e2e; color: #cdd6f4; padding: 20px 22px 16px 22px; accent-color: #89b4fa; font-size: 15px; }\n"
+            ".popup-main { gap: 16px; }\n"
+            ".popup-icon {\n"
+            "    width: 36px; height: 36px; border-radius: 18px; margin: 0; padding: 5px 0 0 0;\n"
+            "    text-align: center; font-size: 20px; font-weight: bold; color: #1e1e2e; background: #89b4fa;\n"
+            "}\n"
+            ".popup-warning .popup-icon { background: #f9e2af; }\n"
+            ".popup-error .popup-icon { background: #f38ba8; }\n"
+            ".popup-question .popup-icon { background: #a6e3a1; }\n"
+            ".popup-text { padding: 7px 0 0 0; }\n"
+            ".popup-message { margin: 0 0 6px 0; }\n"
+            ".popup-input { width: 300px; margin: 8px 0 0 0; }\n"
+            ".popup-choice { margin: 0 0 6px 0; }\n"
+            ".popup-buttons { justify-content: end; margin: 18px 0 0 0; }\n"
+            ".popup-buttons button { margin: 0; padding: 6px 18px; }\n"
+            ".popup-buttons .popup-ok { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }\n"
+            ".popup-buttons .popup-ok:hover { background: #b4cefb; }\n"
+            ".popup-buttons .popup-ok:focus { border-color: #ffffff; }\n",
             "<default>", ignored);
     }();
     return sheet;
@@ -114,6 +143,7 @@ void StyleEngine::add(const Stylesheet& sheet) {
 }
 
 ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent, Diagnostics& diagnostics) const {
+    (void)diagnostics;
     ComputedStyle out;
     out.set_viewport(m_viewport);
     if (parent) {
@@ -142,7 +172,8 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
 
     std::vector<Declaration> inline_decls;
     if (const Attribute* a = node.find_attribute("style")) {
-        inline_decls = parse_declarations(a->value, node.tag() + "[style]", diagnostics, m_sheet.variables());
+        Diagnostics checked_at_load;
+        inline_decls = parse_declarations(a->value, node.tag() + "[style]", checked_at_load, m_sheet.variables());
         for (const Declaration& d : inline_decls) candidates.push_back(Candidate{ Specificity{}, d.important, true, ++order, &d });
     }
 

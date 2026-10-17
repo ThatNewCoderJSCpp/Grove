@@ -1,0 +1,45 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "MathText",
+    "scopeName": "source.mathtext",
+    "patterns": [
+        {
+            "name": "string.quoted.double.mathtext",
+            "begin": "\"",
+            "end": "\""
+        },
+        {
+            "name": "string.quoted.single.mathtext",
+            "begin": "'",
+            "end": "'"
+        },
+        {
+            "name": "support.constant.command.mathtext",
+            "match": "\\\\[A-Za-z][\\w-]*\\\\"
+        },
+        {
+            "name": "invalid.illegal.command.mathtext",
+            "match": "\\\\[A-Za-z][\\w-]*"
+        },
+        {
+            "name": "constant.numeric.mathtext",
+            "match": "\\b\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\b"
+        },
+        {
+            "name": "entity.name.function.mathtext",
+            "match": "\\b[A-Za-z_]\\w*(?=\\s*[({])"
+        },
+        {
+            "name": "variable.other.mathtext",
+            "match": "\\b[A-Za-z_]\\w*\\b"
+        },
+        {
+            "name": "keyword.operator.mathtext",
+            "match": "[-+*/^=<>!]"
+        },
+        {
+            "name": "punctuation.separator.mathtext",
+            "match": "[,{}()]"
+        }
+    ]
+}

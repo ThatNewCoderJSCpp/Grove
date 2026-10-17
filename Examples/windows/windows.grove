@@ -1,0 +1,49 @@
+<grove>
+    <head>
+        <title>Grove windows</title>
+        <style src="windows.bark" />
+        <script lang="walnut" src="windows.wal"></script>
+    </head>
+    <body>
+        <h2>Windows and popups</h2>
+        <p class="muted">The settings window is its own window. What happens in it is told to this window, and no other.</p>
+        <row>
+            <button id="open-settings">Settings...</button>
+            <button id="open-notes">Notes...</button>
+        </row>
+        <p id="theme">Theme: dark</p>
+        <p id="volume">Volume: 0.6</p>
+
+        <h3>Popups</h3>
+        <row>
+            <button id="alert">Alert</button>
+            <button id="warn">Warning</button>
+            <button id="fail">Error</button>
+            <button id="ask">Confirm</button>
+        </row>
+        <row>
+            <button id="ask-name">Name</button>
+            <button id="ask-age">Age</button>
+            <button id="ask-color">Color</button>
+            <button id="ask-size">Size</button>
+        </row>
+        <p id="answer" class="muted">Answers show up here.</p>
+        <p id="log" class="muted"></p>
+
+        <window id="settings" title="Settings" width="360">
+            <h3>Settings</h3>
+            <input_bool id="dark" checked>Dark theme</input_bool>
+            <p class="label">Volume</p>
+            <input_slider id="vol" min="0" max="1" step="0.1" value="0.6" />
+            <row class="end">
+                <button id="settings-done">Done</button>
+            </row>
+        </window>
+
+        <window id="notes" title="Notes" width="420" height="260">
+            <h3>Notes</h3>
+            <input_string id="note" placeholder="Type a note, then Enter" />
+            <p id="note-count" class="muted">0 notes</p>
+        </window>
+    </body>
+</grove>

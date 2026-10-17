@@ -54,6 +54,19 @@ Comments are `// line` and `/* block */`.
 | `body p` | `p` anywhere inside `body` |
 | `body > p` | `p` directly inside `body` |
 | `a, b` | either |
+| `button:hover` | a pseudo-class, see below |
+
+| Pseudo-class | Matches |
+|---|---|
+| `:hover` | the element under the mouse, and its parents |
+| `:active` | an element while the mouse is pressed on it |
+| `:focus` | the element that has the keyboard |
+| `:checked` | a checked `input_bool` or `input_radio` |
+| `:disabled`, `:enabled` | with or without the `disabled` attribute |
+| `:first-child`, `:last-child`, `:only-child` | by position among its parent's elements |
+| `:empty` | an element with no children |
+
+An unknown pseudo-class is a warning and never matches. Scripts use the same selectors with `query` and `query_all`.
 
 Inside a rule, a nested rule is a descendant of its parent. Start it with `>` for a direct child, or `&` to add to the parent itself (`&.wide` is `panel.card.wide`).
 
@@ -87,13 +100,13 @@ They update as the window is resized. For `body { size: ... }` they're measured 
 
 For each property the winner is decided by, in order: `!important`, then `style="..."` attributes, then selector specificity (ids, then classes, then tags), then whichever came last. `color`, `font-*`, `line-height`, `text-align`, `letter-spacing`, `math-color`, `accent-color` and `cursor` inherit; nothing else does. `em` and `%` font sizes resolve against the parent.
 
-Grove ships a small default sheet first (heading sizes and weights, `display: none` for `head`/`style`/`script` and for a `<window>` inside `<body>`).
+Grove ships a small default sheet first: heading sizes and weights, `display: none` for `head`/`style`/`script` and for a `<window>` inside `<body>`, a `button` look with `:hover`, `:active`, `:focus` and `:disabled` states, `row { display: row; gap: 8px; }`, and the popup look (`window.popup`, `.popup-icon`, `.popup-buttons`, `.popup-ok` and friends), which your own rules can override.
 
 ## Properties the runtime reads today
 
 | Property | On | |
 |---|---|---|
-| `size` | `body`, `window` | `width height` |
+| `size` | `body`, `window` | `width height`; a `<window>` with no height fits its content |
 | `title` | `body`, `window` | window title (the `title` attribute wins) |
 | `background` | any | fill color |
 | `color`, `font-size`, `font-weight` | text | |
@@ -104,8 +117,12 @@ Grove ships a small default sheet first (heading sizes and weights, `display: no
 | `width` | inputs | text inputs and sliders; default 220px, never wider than the space they're in |
 | `appearance` | `input_bool` | `checkbox` (default) or `switch` |
 | `accent-color` | inputs | checked boxes and radios, slider fill and thumb, focused border |
-| `gap` | blocks | extra space after the block |
+| `gap` | blocks, `row` | extra space after a block; space between the items of a row |
+| `justify-content` | `row` | `start` (default), `center`, `end` or `space-between`, when nothing in the row stretches |
+| `height`, `min-height` | blocks | the smallest height a block takes |
+| `opacity` | any | 0 to 1; fades the element and everything inside it |
+| `cursor` | any | `pointer`, `text`, `default`, `crosshair`, `move`, `not-allowed`, ... while the mouse is over it |
 | `text-align` | `math` | `left`, `center`, `right` |
-| `display` | any | `none` hides it |
+| `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content |
 
-Everything else is parsed, cascaded and visible in `grove computed`, ready for the runtime to grow into.
+Everything else is parsed, cascaded and visible in `grove computed`, ready for the runtime to grow into. Bark also knows `font`, `font-family`, `font-style`, `line-height`, `letter-spacing`, `min-width`, `max-width`, `max-height` and `math-syntax`; any other property name is a warning (`unknown property 'colr'`), and so is a selector naming an element that doesn't exist (custom elements need a `-` in their name).

@@ -74,9 +74,29 @@ Without the runtime, `grove_core` only needs Fizmo's headers (MathText is header
 | `grove math doc.grove` | every `<math>` block converted to brace form |
 | `grove inputs doc.grove` | every input with its type and current value |
 | `grove scripts doc.grove` | the scripts the document uses |
-| `grove run doc.grove [--window id]` | open the document's `<body>` as a Fizmo window |
+| `grove run doc.grove [--window id]` | build the scripts and open the document's `<body>` as a Fizmo window |
+| `grove exec doc.grove [--event "click #id"] [--for ms]` | build and run the scripts without a window, then print the element tree |
+| `grove build doc.grove [-o app]` | one executable with the document, its styles and its compiled scripts |
+| `grove scripts doc.grove --build` | compile every script and report errors |
+| `grove highlight doc.grove` | tokens, colors and diagnostics as JSON, for editors (`.bark` files too; `--stdin` reads unsaved text) |
 
-`--viewport WxH` sets the window size the other commands use for viewport units (default 800x600).
+`--viewport WxH` sets the window size the other commands use for viewport units (default 800x600). `--rebuild` compiles scripts again even if they're cached, `-v` prints every compiler command, and `--tools` shows where Grove found Walnut, the compilers and its headers.
+
+## Scripts
+
+Scripts work like JavaScript in a web page: they find elements, change them, listen for events and set timers. The same API is in Walnut (`import module.grove`), C++ (`#include <grove/dom.hpp>`) and C (`#include <grove/api/grove_api.h>`).
+
+```walnut
+import module.grove
+
+grove::get_by_id("add").on("click", [&](grove::Event&: e) -> void {
+    grove::Element: item = grove::create_element("p");
+    item.set_inner_text("Clicked at " + e.x().to_string());
+    grove::get_by_id("list").append_child(item);
+});
+```
+
+Every `<window>` is a separate window whose events bubble up to the window it sits in, and `alert`, `confirm` and typed `prompt_*` popups ask the user things. Scripts are compiled the first time the document runs and cached after that, so they need Walnut (for `.wal`) and a C/C++ compiler. A program made with `grove build` needs neither. See [Documentation/grove.md](Documentation/grove.md#scripts) for the whole API and the list of events.
 
 ## Layout
 
@@ -86,21 +106,36 @@ Include/grove/
     markup/     Grove markup: nodes, tag table, parser
     bark/       Bark: values, selectors, parser, cascade
     math/       <math> blocks through fizmo::mathtext
-    script/     <script> collection (walnut, c++, c)
+    script/     <script> collection, building scripts into modules, loading them
+    markup/events.hpp  listeners, bubbling and timers
+    dom.hpp     the C++ script API (Document, Element, Event)
+    dom_tools.hpp  query and query_all with Bark selectors, classes, inline styles
+    walnut/grove.walh  the Walnut script API
+    bundle.hpp, app.hpp  grove build: one executable holding a document
+    windowing.hpp  <window> open/close, which window an element is in, popups
     input/      typed inputs: kinds, values, typing rules, validation
-    api/        grove_api.h, the C API scripts use to touch the document
+    api/        grove_api.h, the C API scripts use; grove_host.h and grove_module.cpp tie a script module to the program
+    highlight.hpp  the JSON behind grove highlight
     runtime/    the Fizmo-backed window and renderer
     project.hpp loads a .grove file with all of its styles, scripts and math
 Source/         implementations, same layout
 Tools/grove.cpp the command-line tool
 Tests/          grove_tests
+Tools/vscode-grove  the VS Code extension
 Examples/hello  a small document using markup, Bark, math and scripts
 Examples/inputs every input type, sized with viewport units
+Examples/todo   a to-do list with a Walnut script and a C++ script
+Examples/windows  a settings window, a notes window that asks before closing, and every kind of popup
+Tools/codegen   grove_api.spec and make_grove_api.py, which write grove_api.h and grove_api_list.h; make_grove_walh.py, which writes grove.walh
 Documentation/  the language references
 ```
 
+## Editor support
+
+`Tools/vscode-grove` is a VS Code extension for `.grove` and `.bark` files: color swatches you can click to open a color picker, coloring (with Bark, MathText, Walnut, C++ and C inside a `.grove` file), unknown tags, properties and variables marked, and `grove check`'s errors underlined. It works like the Walnut extension, with its own `colors.json`; see [its README](Tools/vscode-grove/README.md). Install `Tools/vscode-grove/grove-language-0.1.0.vsix` with **Extensions → ... → Install from VSIX...**.
+
 ## Releases
 
-Pushing a tag `vX.Y.Z` that matches `project(grove VERSION X.Y.Z)` runs `.github/workflows/release.yml`. It builds, tests and packages `grove` for Linux x86_64, arm64 and i686 (`.tar.gz`) and Windows MinGW64, UCRT64 and ARM64 (`.zip`), then attaches them to the GitHub release. Each package has `bin/grove`, the headers, `grove_core`/`grove_runtime`, the docs and the examples. Locally, `-DGROVE_PACKAGE=ON` and `cpack` make the same package.
+Pushing a tag `vX.Y.Z` that matches `project(grove VERSION X.Y.Z)` runs `.github/workflows/release.yml`. It builds, tests and packages `grove` for Linux x86_64, arm64 and i686 (`.tar.gz`) and Windows MinGW64, UCRT64 and ARM64 (`.zip`), then attaches them to the GitHub release. Each package has `bin/grove`, the headers, `grove_core`/`grove_runtime`, the docs and the examples. Walnut isn't in the package; install it from its own release and put `walnut` on `PATH` (or next to `grove`, or in `GROVE_WALNUT`) to run Walnut scripts. Locally, `-DGROVE_PACKAGE=ON` and `cpack` make the same package.
 
 See [Documentation/grove.md](Documentation/grove.md) for the markup and [Documentation/bark.md](Documentation/bark.md) for styles.

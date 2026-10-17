@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.1 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.2 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -12,7 +12,7 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
 set(GROVE_FIZMO_TAG "v0.2.24" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.1.6" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.7" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -52,24 +52,35 @@ endfunction()
 
 add_library(grove_core STATIC
     Source/common/diagnostics.cpp
+    Source/common/marks.cpp
     Source/markup/node.cpp
+    Source/markup/events.cpp
     Source/markup/tags.cpp
     Source/markup/parser.cpp
     Source/bark/value.cpp
     Source/bark/stylesheet.cpp
     Source/bark/parser.cpp
     Source/bark/cascade.cpp
+    Source/bark/properties.cpp
     Source/script/script.cpp
+    Source/script/builder.cpp
+    Source/script/loader.cpp
     Source/input/input.cpp
     Source/math/math_block.cpp
     Source/api/grove_api.cpp
-    Source/project.cpp)
+    Source/project.cpp
+    Source/dom_tools.cpp
+    Source/bundle.cpp
+    Source/windowing.cpp
+    Source/app.cpp
+    Source/highlight.cpp)
 add_library(grove::core ALIAS grove_core)
 target_compile_features(grove_core PUBLIC cxx_std_17)
 target_include_directories(grove_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Include"
     "${GROVE_GENERATED_DIR}")
-target_link_libraries(grove_core PUBLIC fizmo::headers)
+target_link_libraries(grove_core PUBLIC fizmo::headers ${CMAKE_DL_LIBS})
+target_compile_definitions(grove_core PRIVATE "GROVE_SOURCE_INCLUDE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Include\"")
 set_target_properties(grove_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 grove_warnings(grove_core)
 
@@ -94,6 +105,7 @@ endif()
 if(GROVE_WITH_WALNUT AND TARGET walnut)
     add_dependencies(grove walnut)
     target_compile_definitions(grove PRIVATE "GROVE_WALNUT_EXECUTABLE=\"$<TARGET_FILE:walnut>\"")
+    target_compile_definitions(grove_core PRIVATE "GROVE_WALNUT_EXECUTABLE=\"$<TARGET_FILE:walnut>\"")
 endif()
 grove_warnings(grove)
 
@@ -106,6 +118,24 @@ if(GROVE_BUILD_TESTS)
     add_test(NAME grove_tests COMMAND grove_tests)
     add_test(NAME grove_check_hello COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/hello/hello.grove")
     add_test(NAME grove_check_inputs COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/inputs/inputs.grove")
+    add_test(NAME grove_check_todo COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove")
+    add_test(NAME grove_check_windows COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/windows/windows.grove")
+    if(GROVE_WITH_WALNUT AND TARGET walnut)
+        add_test(NAME grove_exec_todo COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove" --event "click #clear-done")
+        set_tests_properties(grove_exec_todo PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            PASS_REGULAR_EXPRESSION "0 of 2 done")
+        add_test(NAME grove_exec_windows COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/windows/windows.grove" --event "click #ask-age" --event "click .popup-ok")
+        set_tests_properties(grove_exec_windows PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            PASS_REGULAR_EXPRESSION "be 31")
+        if(GROVE_BUILD_RUNTIME)
+            add_test(NAME grove_build_todo COMMAND grove build "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove" -o "${CMAKE_CURRENT_BINARY_DIR}/todo-app")
+            set_tests_properties(grove_build_todo PROPERTIES
+                ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+                PASS_REGULAR_EXPRESSION "2 scripts")
+        endif()
+    endif()
 endif()
 
 include(GNUInstallDirs)

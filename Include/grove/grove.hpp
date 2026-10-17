@@ -13,6 +13,11 @@
 #include "math/math_block.hpp"
 #include "input/input.hpp"
 #include "project.hpp"
+#include "highlight.hpp"
+#include "dom_tools.hpp"
+#include "windowing.hpp"
+#include "bundle.hpp"
+#include "app.hpp"
 #include <grove/version.hpp>
 
 #endif // GROVE_GROVE_HPP

@@ -1,0 +1,564 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Grove",
+    "scopeName": "text.grove",
+    "patterns": [
+        {
+            "include": "#comment"
+        },
+        {
+            "include": "#declaration"
+        },
+        {
+            "include": "#entities"
+        },
+        {
+            "match": "(<)(style)\\b((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/>)",
+            "captures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                "4": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            }
+        },
+        {
+            "match": "(<)(script)\\b((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/>)",
+            "captures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                "4": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            }
+        },
+        {
+            "match": "(<)(math)\\b((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/>)",
+            "captures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                "4": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            }
+        },
+        {
+            "begin": "(<)(style)\\b",
+            "beginCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                }
+            },
+            "end": "(</)(style)\\s*(>)",
+            "endCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            },
+            "name": "meta.tag.style.grove",
+            "patterns": [
+                {
+                    "begin": "\\G",
+                    "end": "(>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(?<=>)",
+                    "end": "(?=</style\\s*>)",
+                    "contentName": "meta.embedded.block.bark source.bark",
+                    "patterns": [
+                        {
+                            "include": "source.bark"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "begin": "(<)(script)\\b(?=(?:[^>\"']|\"[^\"]*\"|'[^']*')*?\\blang\\s*=\\s*[\"']?(?:c\\+\\+|cpp|cxx|cc|hpp|hxx|cpp-header|c\\+\\+-header)(?![\\w+-]))",
+            "beginCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                }
+            },
+            "end": "(</)(script)\\s*(>)",
+            "endCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            },
+            "name": "meta.tag.script.grove",
+            "patterns": [
+                {
+                    "begin": "\\G",
+                    "end": "(>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(?<=>)",
+                    "end": "(?=</script\\s*>)",
+                    "contentName": "meta.embedded.block.cpp source.cpp",
+                    "patterns": [
+                        {
+                            "include": "source.cpp"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "begin": "(<)(script)\\b(?=(?:[^>\"']|\"[^\"]*\"|'[^']*')*?\\blang\\s*=\\s*[\"']?(?:c|h|c-header)(?![\\w+-]))",
+            "beginCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                }
+            },
+            "end": "(</)(script)\\s*(>)",
+            "endCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            },
+            "name": "meta.tag.script.grove",
+            "patterns": [
+                {
+                    "begin": "\\G",
+                    "end": "(>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(?<=>)",
+                    "end": "(?=</script\\s*>)",
+                    "contentName": "meta.embedded.block.c source.c",
+                    "patterns": [
+                        {
+                            "include": "source.c"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "begin": "(<)(script)\\b",
+            "beginCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                }
+            },
+            "end": "(</)(script)\\s*(>)",
+            "endCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            },
+            "name": "meta.tag.script.grove",
+            "patterns": [
+                {
+                    "begin": "\\G",
+                    "end": "(>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(?<=>)",
+                    "end": "(?=</script\\s*>)",
+                    "contentName": "meta.embedded.block.walnut source.walnut",
+                    "patterns": [
+                        {
+                            "include": "source.walnut"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "begin": "(<)(math)\\b",
+            "beginCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                }
+            },
+            "end": "(</)(math)\\s*(>)",
+            "endCaptures": {
+                "1": {
+                    "name": "punctuation.definition.tag.begin.grove"
+                },
+                "2": {
+                    "name": "entity.name.tag.grove"
+                },
+                "3": {
+                    "name": "punctuation.definition.tag.end.grove"
+                }
+            },
+            "name": "meta.tag.math.grove",
+            "patterns": [
+                {
+                    "begin": "\\G",
+                    "end": "(>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(?<=>)",
+                    "end": "(?=</math\\s*>)",
+                    "contentName": "meta.embedded.block.mathtext source.mathtext",
+                    "patterns": [
+                        {
+                            "include": "source.mathtext"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "include": "#tag"
+        }
+    ],
+    "repository": {
+        "comment": {
+            "name": "comment.block.grove",
+            "begin": "<!--",
+            "end": "-->"
+        },
+        "declaration": {
+            "name": "meta.tag.metadata.grove",
+            "match": "<[!?][^>]*>"
+        },
+        "entities": {
+            "patterns": [
+                {
+                    "name": "constant.character.entity.grove",
+                    "match": "&(?:[A-Za-z]+|#\\d+|#[xX][0-9a-fA-F]+);"
+                }
+            ]
+        },
+        "tag": {
+            "patterns": [
+                {
+                    "begin": "(</?)(input(?:_\\w+)?|checkbox|slider|color)(?![\\w:.-])",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.begin.grove"
+                        },
+                        "2": {
+                            "name": "entity.name.tag.input.grove"
+                        }
+                    },
+                    "end": "(/?>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "name": "meta.tag.grove",
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(</?)([A-Za-z_][\\w:.]*-[\\w:.-]*)(?![\\w:.-])",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.begin.grove"
+                        },
+                        "2": {
+                            "name": "entity.name.tag.custom.grove"
+                        }
+                    },
+                    "end": "(/?>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "name": "meta.tag.grove",
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                },
+                {
+                    "begin": "(</?)([A-Za-z_][\\w:.-]*)(?![\\w:.-])",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.begin.grove"
+                        },
+                        "2": {
+                            "name": "entity.name.tag.grove"
+                        }
+                    },
+                    "end": "(/?>)",
+                    "endCaptures": {
+                        "1": {
+                            "name": "punctuation.definition.tag.end.grove"
+                        }
+                    },
+                    "name": "meta.tag.grove",
+                    "patterns": [
+                        {
+                            "include": "#attributes"
+                        }
+                    ]
+                }
+            ]
+        },
+        "attributes": {
+            "patterns": [
+                {
+                    "begin": "\\b(style)\\s*(=)\\s*(\")",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "entity.other.attribute-name.grove"
+                        },
+                        "2": {
+                            "name": "punctuation.separator.key-value.grove"
+                        },
+                        "3": {
+                            "name": "punctuation.definition.string.begin.grove"
+                        }
+                    },
+                    "end": "\"",
+                    "endCaptures": {
+                        "0": {
+                            "name": "punctuation.definition.string.end.grove"
+                        }
+                    },
+                    "contentName": "meta.embedded.inline.bark source.bark",
+                    "patterns": [
+                        {
+                            "include": "source.bark#declarations-dq"
+                        }
+                    ]
+                },
+                {
+                    "begin": "\\b(style)\\s*(=)\\s*(')",
+                    "beginCaptures": {
+                        "1": {
+                            "name": "entity.other.attribute-name.grove"
+                        },
+                        "2": {
+                            "name": "punctuation.separator.key-value.grove"
+                        },
+                        "3": {
+                            "name": "punctuation.definition.string.begin.grove"
+                        }
+                    },
+                    "end": "'",
+                    "endCaptures": {
+                        "0": {
+                            "name": "punctuation.definition.string.end.grove"
+                        }
+                    },
+                    "contentName": "meta.embedded.inline.bark source.bark",
+                    "patterns": [
+                        {
+                            "include": "source.bark#declarations-sq"
+                        }
+                    ]
+                },
+                {
+                    "match": "\\b([A-Za-z_@][\\w:.@-]*)\\s*(=)\\s*(\")([^\"]*)(\")",
+                    "captures": {
+                        "1": {
+                            "name": "entity.other.attribute-name.grove"
+                        },
+                        "2": {
+                            "name": "punctuation.separator.key-value.grove"
+                        },
+                        "3": {
+                            "name": "punctuation.definition.string.begin.grove"
+                        },
+                        "4": {
+                            "name": "string.quoted.double.grove",
+                            "patterns": [
+                                {
+                                    "include": "#attribute-value"
+                                }
+                            ]
+                        },
+                        "5": {
+                            "name": "punctuation.definition.string.end.grove"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b([A-Za-z_@][\\w:.@-]*)\\s*(=)\\s*(')([^']*)(')",
+                    "captures": {
+                        "1": {
+                            "name": "entity.other.attribute-name.grove"
+                        },
+                        "2": {
+                            "name": "punctuation.separator.key-value.grove"
+                        },
+                        "3": {
+                            "name": "punctuation.definition.string.begin.grove"
+                        },
+                        "4": {
+                            "name": "string.quoted.single.grove",
+                            "patterns": [
+                                {
+                                    "include": "#attribute-value"
+                                }
+                            ]
+                        },
+                        "5": {
+                            "name": "punctuation.definition.string.end.grove"
+                        }
+                    }
+                },
+                {
+                    "match": "\\b([A-Za-z_@][\\w:.@-]*)\\s*(=)\\s*([^\\s>\"']+)",
+                    "captures": {
+                        "1": {
+                            "name": "entity.other.attribute-name.grove"
+                        },
+                        "2": {
+                            "name": "punctuation.separator.key-value.grove"
+                        },
+                        "3": {
+                            "name": "string.unquoted.grove",
+                            "patterns": [
+                                {
+                                    "include": "#attribute-value"
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "entity.other.attribute-name.grove",
+                    "match": "\\b[A-Za-z_@][\\w:.@-]*"
+                }
+            ]
+        },
+        "attribute-value": {
+            "patterns": [
+                {
+                    "include": "#entities"
+                },
+                {
+                    "name": "constant.other.color.rgb-value.grove",
+                    "match": "#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\\b"
+                }
+            ]
+        }
+    }
+}

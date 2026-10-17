@@ -1,0 +1,28 @@
+$accent = #89b4fa;
+
+body {
+    size: 640px 520px;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 24px;
+    accent-color: $accent;
+}
+
+window {
+    background: #181825;
+    padding: 20px;
+}
+
+.muted {
+    color: #a6adc8;
+    font-size: 13px;
+}
+
+.label {
+    margin: 8px 0 2px 0;
+}
+
+row.end {
+    justify-content: end;
+    margin: 12px 0 0 0;
+}

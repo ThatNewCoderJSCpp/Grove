@@ -1,0 +1,200 @@
+{
+    "name": "grove-language",
+    "displayName": "Grove",
+    "description": "Coloring, color pickers and error underlines for Grove (.grove) and Bark (.bark) files",
+    "version": "0.1.0",
+    "publisher": "grove",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ThatNewCoderJSCpp/Grove"
+    },
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "main": "./extension.js",
+    "activationEvents": [
+        "onLanguage:grove",
+        "onLanguage:bark"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "grove",
+                "aliases": [
+                    "Grove",
+                    "grove"
+                ],
+                "extensions": [
+                    ".grove"
+                ],
+                "configuration": "./language-configuration-grove.json"
+            },
+            {
+                "id": "bark",
+                "aliases": [
+                    "Bark",
+                    "bark"
+                ],
+                "extensions": [
+                    ".bark"
+                ],
+                "configuration": "./language-configuration-bark.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "grove",
+                "scopeName": "text.grove",
+                "path": "./syntaxes/grove.tmLanguage.json",
+                "embeddedLanguages": {
+                    "meta.embedded.block.bark": "bark",
+                    "meta.embedded.inline.bark": "bark",
+                    "meta.embedded.block.walnut": "walnut",
+                    "meta.embedded.block.cpp": "cpp",
+                    "meta.embedded.block.c": "c"
+                }
+            },
+            {
+                "language": "bark",
+                "scopeName": "source.bark",
+                "path": "./syntaxes/bark.tmLanguage.json"
+            },
+            {
+                "scopeName": "source.mathtext",
+                "path": "./syntaxes/mathtext.tmLanguage.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "grove.editColors",
+                "title": "Edit Colors",
+                "category": "Grove"
+            },
+            {
+                "command": "grove.chooseColorsFile",
+                "title": "Choose Colors File...",
+                "category": "Grove"
+            },
+            {
+                "command": "grove.removeColors",
+                "title": "Remove Colors From Settings",
+                "category": "Grove"
+            },
+            {
+                "command": "grove.choosePath",
+                "title": "Choose grove Program...",
+                "category": "Grove"
+            },
+            {
+                "command": "grove.refresh",
+                "title": "Refresh Highlighting",
+                "category": "Grove"
+            }
+        ],
+        "configuration": {
+            "title": "Grove",
+            "properties": {
+                "grove.path": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The `grove` program used for full coloring, color pickers and error underlines. Empty means `grove` found on your PATH."
+                },
+                "grove.colorsFile": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The colors file to use. Empty means `Tools/vscode-grove/colors.json` in the Grove folder the `grove` program was built in, or else the copy that came with the extension. Changes show up as soon as it's saved."
+                },
+                "grove.colors.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Apply the colors file to Grove and Bark files, whatever color theme is in use."
+                },
+                "grove.semanticHighlighting": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Ask grove what each tag, property and variable is, to color unknown names and resolved variables exactly."
+                },
+                "grove.colorPickers": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show a color swatch next to each color; click it to open the color picker."
+                },
+                "grove.diagnostics": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Underline grove's errors and warnings."
+                },
+                "grove.highlightDelay": {
+                    "type": "number",
+                    "default": 250,
+                    "description": "How long to wait after typing stops before asking grove, in milliseconds."
+                }
+            }
+        },
+        "semanticTokenTypes": [
+            {
+                "id": "tag",
+                "description": "A Grove element name"
+            },
+            {
+                "id": "unresolved",
+                "description": "A tag, property or variable grove doesn't know"
+            }
+        ],
+        "semanticTokenModifiers": [
+            {
+                "id": "input",
+                "description": "A typed input element"
+            },
+            {
+                "id": "custom",
+                "description": "A custom element (its name has a '-')"
+            }
+        ],
+        "semanticTokenScopes": [
+            {
+                "language": "grove",
+                "scopes": {
+                    "tag": [
+                        "entity.name.tag.grove"
+                    ],
+                    "tag.input": [
+                        "entity.name.tag.input.grove"
+                    ],
+                    "tag.custom": [
+                        "entity.name.tag.custom.grove"
+                    ],
+                    "property": [
+                        "support.type.property-name.bark"
+                    ],
+                    "variable": [
+                        "variable.other.bark"
+                    ],
+                    "variable.declaration": [
+                        "variable.other.declaration.bark"
+                    ]
+                }
+            },
+            {
+                "language": "bark",
+                "scopes": {
+                    "tag": [
+                        "entity.name.tag.bark"
+                    ],
+                    "property": [
+                        "support.type.property-name.bark"
+                    ],
+                    "variable": [
+                        "variable.other.bark"
+                    ],
+                    "variable.declaration": [
+                        "variable.other.declaration.bark"
+                    ]
+                }
+            }
+        ]
+    }
+}

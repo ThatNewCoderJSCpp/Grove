@@ -1,0 +1,977 @@
+extern "C++" from "<grove/dom.hpp>" {
+    class NativeElement as "grove::Element" {
+    public:
+        operator(==) function(const NativeElement&: other) const -> bool;
+        function exists() const -> bool;
+        function tag() const -> string;
+        function id() const -> string;
+        function has_attribute(const string&: name) const -> bool;
+        function get_attribute(const string&: name) const -> string;
+        function set_attribute(const string&: name, const string&: value) -> void;
+        function remove_attribute(const string&: name) -> void;
+        function inner_text() const -> string;
+        function set_inner_text(const string&: value) -> void;
+        function has_class(const string&: name) const -> bool;
+        function add_class(const string&: name) -> void;
+        function remove_class(const string&: name) -> void;
+        function toggle_class(const string&: name) -> bool;
+        function style(const string&: property) const -> string;
+        function set_style(const string&: property, const string&: value) -> void;
+        function remove_style(const string&: property) -> void;
+        function computed_style(const string&: property) const -> string;
+        function parent() const -> NativeElement;
+        function child_count() const -> long int;
+        function child(long int: index) const -> NativeElement;
+        function index() const -> long int;
+        function next_sibling() const -> NativeElement;
+        function previous_sibling() const -> NativeElement;
+        function append_child(const NativeElement&: child) -> bool;
+        function insert_before(const NativeElement&: child, const NativeElement&: reference) -> bool;
+        function remove() -> bool;
+        function is_attached() const -> bool;
+        function query(const string&: selector) const -> NativeElement;
+        function listen(const string&: type, function() -> void: fn) -> long int;
+        function remove_event_listener(long int: id) -> bool;
+        function dispatch(const string&: type) -> bool;
+        function focus() -> bool;
+        function hovered() const -> bool;
+        function focused() const -> bool;
+        function active() const -> bool;
+        function input_kind() const -> long int;
+        function value_integer() const -> long int;
+        function value_float() const -> short float;
+        function value_bool() const -> bool;
+        function value_string() const -> string;
+        function value_text() const -> string;
+        function value_color() const -> string;
+        function set_value_integer(long int: value) -> bool;
+        function set_value_float(short float: value) -> bool;
+        function set_value_bool(bool: value) -> bool;
+        function set_value_string(const string&: value) -> bool;
+        function set_value_color(const string&: hex) -> bool;
+        function window() const -> NativeElement;
+        function open() -> bool;
+        function close() -> bool;
+        function is_open() const -> bool;
+        function window_width() const -> short float;
+        function window_height() const -> short float;
+        function resize_window(short float: width, short float: height) -> bool;
+        function move_window(short float: x, short float: y) -> bool;
+        function focus_window() -> bool;
+        function answer(bool: ok) -> bool;
+        function answer_value() const -> string;
+    } end class NativeElement
+
+    class NativeElementList as "grove::ElementList" {
+    public:
+        static function children_of(const NativeElement&: element) -> NativeElementList;
+        static function query_all_in(const NativeElement&: element, const string&: selector) -> NativeElementList;
+        function size() const -> long int;
+        function empty() const -> bool;
+        function at(long int: index) const -> NativeElement;
+        function first() const -> NativeElement;
+        function last() const -> NativeElement;
+    } end class NativeElementList
+
+    class NativeEvent as "grove::Event" {
+    public:
+        static function current() -> NativeEvent;
+        function exists() const -> bool;
+        function type() const -> string;
+        function target() const -> NativeElement;
+        function current_target() const -> NativeElement;
+        function x() const -> short float;
+        function y() const -> short float;
+        function delta_x() const -> short float;
+        function delta_y() const -> short float;
+        function button() const -> long int;
+        function key() const -> string;
+        function input_text() const -> string as "text";
+        function shift() const -> bool;
+        function ctrl() const -> bool;
+        function alt() const -> bool;
+        function meta() const -> bool;
+        function stop_propagation() -> void;
+        function prevent_default() -> void;
+        function default_prevented() const -> bool;
+    } end class NativeEvent
+
+    class NativeDocument as "grove::Document" {
+    public:
+        function root() const -> NativeElement;
+        function body() const -> NativeElement;
+        function get_by_id(const string&: id) const -> NativeElement;
+        function get_by_class(const string&: name) const -> NativeElementList;
+        function get_by_tag(const string&: tag) const -> NativeElementList;
+        function id_selector(const string&: id) const -> NativeElement;
+        function class_selector(const string&: name) const -> NativeElementList;
+        function tag_selector(const string&: tag) const -> NativeElementList;
+        function query(const string&: selector) const -> NativeElement;
+        function query_all(const string&: selector) const -> NativeElementList;
+        function create_element(const string&: tag) const -> NativeElement;
+        function choice(const string&: group) const -> string;
+        function set_choice(const string&: group, const string&: value) const -> bool;
+        function listen(const string&: type, function() -> void: fn) const -> long int;
+        function remove_event_listener(long int: id) const -> bool;
+        function dispatch(const string&: type) const -> bool;
+        function set_timeout(short float: milliseconds, function() -> void: fn) const -> long int;
+        function set_interval(short float: milliseconds, function() -> void: fn) const -> long int;
+        function clear_timer(long int: id) const -> bool;
+        function main_window() const -> NativeElement;
+        function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> NativeElement;
+        function popup_info(const string&: title, const string&: message) const -> NativeElement;
+        function popup_warning(const string&: title, const string&: message) const -> NativeElement;
+        function popup_error(const string&: title, const string&: message) const -> NativeElement;
+        function alert(const string&: message) const -> NativeElement;
+        function warning(const string&: message) const -> NativeElement;
+        function error(const string&: message) const -> NativeElement;
+        function confirm(const string&: title, const string&: message, function(bool) -> void: fn) const -> NativeElement;
+        function prompt_string(const string&: title, const string&: message, const string&: value, function(string) -> void: fn) const -> NativeElement;
+        function prompt_integer(const string&: title, const string&: message, long int: value, function(long int) -> void: fn) const -> NativeElement;
+        function prompt_float(const string&: title, const string&: message, short float: value, function(short float) -> void: fn) const -> NativeElement;
+        function prompt_bool(const string&: title, const string&: message, bool: value, function(bool) -> void: fn) const -> NativeElement;
+        function prompt_color(const string&: title, const string&: message, const string&: value, function(string) -> void: fn) const -> NativeElement;
+        function prompt_choice(const string&: title, const string&: message, const string&: options, const string&: value, function(string) -> void: fn) const -> NativeElement;
+        function prompt_slider(const string&: title, const string&: message, short float: value, short float: min, short float: max, function(short float) -> void: fn) const -> NativeElement;
+        function time_ms() const -> short float;
+        function width() const -> short float;
+        function height() const -> short float;
+        function quit() const -> void;
+        function log(const string&: message) const -> void;
+    } end class NativeDocument
+} end extern
+
+class Element;
+class ElementList;
+class Event;
+
+class Element {
+public:
+    NativeElement: raw;
+
+    function exists() const -> bool {
+        return raw.exists();
+    } end function exists
+
+    function tag() const -> string {
+        return raw.tag();
+    } end function tag
+
+    function id() const -> string {
+        return raw.id();
+    } end function id
+
+    function has_attribute(const string&: name) const -> bool {
+        return raw.has_attribute(name);
+    } end function has_attribute
+
+    function get_attribute(const string&: name) const -> string {
+        return raw.get_attribute(name);
+    } end function get_attribute
+
+    function set_attribute(const string&: name, const string&: value) -> void {
+        raw.set_attribute(name, value);
+    } end function set_attribute
+
+    function remove_attribute(const string&: name) -> void {
+        raw.remove_attribute(name);
+    } end function remove_attribute
+
+    function inner_text() const -> string {
+        return raw.inner_text();
+    } end function inner_text
+
+    function set_inner_text(const string&: value) -> void {
+        raw.set_inner_text(value);
+    } end function set_inner_text
+
+    function has_class(const string&: name) const -> bool {
+        return raw.has_class(name);
+    } end function has_class
+
+    function add_class(const string&: name) -> void {
+        raw.add_class(name);
+    } end function add_class
+
+    function remove_class(const string&: name) -> void {
+        raw.remove_class(name);
+    } end function remove_class
+
+    function toggle_class(const string&: name) -> bool {
+        return raw.toggle_class(name);
+    } end function toggle_class
+
+    function style(const string&: property) const -> string {
+        return raw.style(property);
+    } end function style
+
+    function set_style(const string&: property, const string&: value) -> void {
+        raw.set_style(property, value);
+    } end function set_style
+
+    function remove_style(const string&: property) -> void {
+        raw.remove_style(property);
+    } end function remove_style
+
+    function computed_style(const string&: property) const -> string {
+        return raw.computed_style(property);
+    } end function computed_style
+
+    function parent() const -> Element {
+        Element: out;
+        out.raw = raw.parent();
+        return out;
+    } end function parent
+
+    function child_count() const -> long int {
+        return raw.child_count();
+    } end function child_count
+
+    function child(long int: index) const -> Element {
+        Element: out;
+        out.raw = raw.child(index);
+        return out;
+    } end function child
+
+    function index() const -> long int {
+        return raw.index();
+    } end function index
+
+    function next_sibling() const -> Element {
+        Element: out;
+        out.raw = raw.next_sibling();
+        return out;
+    } end function next_sibling
+
+    function previous_sibling() const -> Element {
+        Element: out;
+        out.raw = raw.previous_sibling();
+        return out;
+    } end function previous_sibling
+
+    function append_child(const Element&: child) -> bool {
+        return raw.append_child(child.raw);
+    } end function append_child
+
+    function insert_before(const Element&: child, const Element&: reference) -> bool {
+        return raw.insert_before(child.raw, reference.raw);
+    } end function insert_before
+
+    function remove() -> bool {
+        return raw.remove();
+    } end function remove
+
+    function is_attached() const -> bool {
+        return raw.is_attached();
+    } end function is_attached
+
+    function query(const string&: selector) const -> Element {
+        Element: out;
+        out.raw = raw.query(selector);
+        return out;
+    } end function query
+
+    function listen(const string&: type, function() -> void: fn) -> long int {
+        return raw.listen(type, fn);
+    } end function listen
+
+    function remove_event_listener(long int: id) -> bool {
+        return raw.remove_event_listener(id);
+    } end function remove_event_listener
+
+    function dispatch(const string&: type) -> bool {
+        return raw.dispatch(type);
+    } end function dispatch
+
+    function focus() -> bool {
+        return raw.focus();
+    } end function focus
+
+    function hovered() const -> bool {
+        return raw.hovered();
+    } end function hovered
+
+    function focused() const -> bool {
+        return raw.focused();
+    } end function focused
+
+    function active() const -> bool {
+        return raw.active();
+    } end function active
+
+    function input_kind() const -> long int {
+        return raw.input_kind();
+    } end function input_kind
+
+    function value_integer() const -> long int {
+        return raw.value_integer();
+    } end function value_integer
+
+    function value_float() const -> short float {
+        return raw.value_float();
+    } end function value_float
+
+    function value_bool() const -> bool {
+        return raw.value_bool();
+    } end function value_bool
+
+    function value_string() const -> string {
+        return raw.value_string();
+    } end function value_string
+
+    function value_text() const -> string {
+        return raw.value_text();
+    } end function value_text
+
+    function value_color() const -> string {
+        return raw.value_color();
+    } end function value_color
+
+    function set_value_integer(long int: value) -> bool {
+        return raw.set_value_integer(value);
+    } end function set_value_integer
+
+    function set_value_float(short float: value) -> bool {
+        return raw.set_value_float(value);
+    } end function set_value_float
+
+    function set_value_bool(bool: value) -> bool {
+        return raw.set_value_bool(value);
+    } end function set_value_bool
+
+    function set_value_string(const string&: value) -> bool {
+        return raw.set_value_string(value);
+    } end function set_value_string
+
+    function set_value_color(const string&: hex) -> bool {
+        return raw.set_value_color(hex);
+    } end function set_value_color
+
+    function window() const -> Element {
+        Element: out;
+        out.raw = raw.window();
+        return out;
+    } end function window
+
+    function open() -> bool {
+        return raw.open();
+    } end function open
+
+    function close() -> bool {
+        return raw.close();
+    } end function close
+
+    function is_open() const -> bool {
+        return raw.is_open();
+    } end function is_open
+
+    function window_width() const -> short float {
+        return raw.window_width();
+    } end function window_width
+
+    function window_height() const -> short float {
+        return raw.window_height();
+    } end function window_height
+
+    function resize_window(short float: width, short float: height) -> bool {
+        return raw.resize_window(width, height);
+    } end function resize_window
+
+    function move_window(short float: x, short float: y) -> bool {
+        return raw.move_window(x, y);
+    } end function move_window
+
+    function focus_window() -> bool {
+        return raw.focus_window();
+    } end function focus_window
+
+    function answer(bool: ok) -> bool {
+        return raw.answer(ok);
+    } end function answer
+
+    function answer_value() const -> string {
+        return raw.answer_value();
+    } end function answer_value
+
+    function children() const -> ElementList {
+        ElementList: out;
+        out.raw = NativeElementList::children_of(raw);
+        return out;
+    } end function children
+
+    function query_all(const string&: selector) const -> ElementList {
+        ElementList: out;
+        out.raw = NativeElementList::query_all_in(raw, selector);
+        return out;
+    } end function query_all
+
+    function add_event_listener(const string&: type, function(Event&) -> void: fn) -> long int {
+        return raw.listen(type, [fn]() -> void {
+            Event: e = Event::current();
+            fn(e);
+        });
+    } end function add_event_listener
+
+    function on(const string&: type, function(Event&) -> void: fn) -> long int {
+        return add_event_listener(type, fn);
+    } end function on
+
+    operator(==) function(const Element&: other) const -> bool {
+        return raw == other.raw;
+    }
+} end class Element
+
+class ElementList {
+public:
+    NativeElementList: raw;
+
+    function size() const -> long int {
+        return raw.size();
+    } end function size
+
+    function empty() const -> bool {
+        return raw.empty();
+    } end function empty
+
+    function at(long int: index) const -> Element {
+        Element: out;
+        out.raw = raw.at(index);
+        return out;
+    } end function at
+
+    function first() const -> Element {
+        Element: out;
+        out.raw = raw.first();
+        return out;
+    } end function first
+
+    function last() const -> Element {
+        Element: out;
+        out.raw = raw.last();
+        return out;
+    } end function last
+} end class ElementList
+
+class Event {
+public:
+    NativeEvent: raw;
+
+    static function current() -> Event {
+        Event: out;
+        out.raw = NativeEvent::current();
+        return out;
+    } end function current
+
+    function exists() const -> bool {
+        return raw.exists();
+    } end function exists
+
+    function type() const -> string {
+        return raw.type();
+    } end function type
+
+    function target() const -> Element {
+        Element: out;
+        out.raw = raw.target();
+        return out;
+    } end function target
+
+    function current_target() const -> Element {
+        Element: out;
+        out.raw = raw.current_target();
+        return out;
+    } end function current_target
+
+    function x() const -> short float {
+        return raw.x();
+    } end function x
+
+    function y() const -> short float {
+        return raw.y();
+    } end function y
+
+    function delta_x() const -> short float {
+        return raw.delta_x();
+    } end function delta_x
+
+    function delta_y() const -> short float {
+        return raw.delta_y();
+    } end function delta_y
+
+    function button() const -> long int {
+        return raw.button();
+    } end function button
+
+    function key() const -> string {
+        return raw.key();
+    } end function key
+
+    function input_text() const -> string {
+        return raw.input_text();
+    } end function input_text
+
+    function shift() const -> bool {
+        return raw.shift();
+    } end function shift
+
+    function ctrl() const -> bool {
+        return raw.ctrl();
+    } end function ctrl
+
+    function alt() const -> bool {
+        return raw.alt();
+    } end function alt
+
+    function meta() const -> bool {
+        return raw.meta();
+    } end function meta
+
+    function stop_propagation() -> void {
+        raw.stop_propagation();
+    } end function stop_propagation
+
+    function prevent_default() -> void {
+        raw.prevent_default();
+    } end function prevent_default
+
+    function default_prevented() const -> bool {
+        return raw.default_prevented();
+    } end function default_prevented
+} end class Event
+
+class Document {
+public:
+    NativeDocument: raw;
+
+    function root() const -> Element {
+        Element: out;
+        out.raw = raw.root();
+        return out;
+    } end function root
+
+    function body() const -> Element {
+        Element: out;
+        out.raw = raw.body();
+        return out;
+    } end function body
+
+    function get_by_id(const string&: id) const -> Element {
+        Element: out;
+        out.raw = raw.get_by_id(id);
+        return out;
+    } end function get_by_id
+
+    function get_by_class(const string&: name) const -> ElementList {
+        ElementList: out;
+        out.raw = raw.get_by_class(name);
+        return out;
+    } end function get_by_class
+
+    function get_by_tag(const string&: tag) const -> ElementList {
+        ElementList: out;
+        out.raw = raw.get_by_tag(tag);
+        return out;
+    } end function get_by_tag
+
+    function id_selector(const string&: id) const -> Element {
+        Element: out;
+        out.raw = raw.id_selector(id);
+        return out;
+    } end function id_selector
+
+    function class_selector(const string&: name) const -> ElementList {
+        ElementList: out;
+        out.raw = raw.class_selector(name);
+        return out;
+    } end function class_selector
+
+    function tag_selector(const string&: tag) const -> ElementList {
+        ElementList: out;
+        out.raw = raw.tag_selector(tag);
+        return out;
+    } end function tag_selector
+
+    function query(const string&: selector) const -> Element {
+        Element: out;
+        out.raw = raw.query(selector);
+        return out;
+    } end function query
+
+    function query_all(const string&: selector) const -> ElementList {
+        ElementList: out;
+        out.raw = raw.query_all(selector);
+        return out;
+    } end function query_all
+
+    function create_element(const string&: tag) const -> Element {
+        Element: out;
+        out.raw = raw.create_element(tag);
+        return out;
+    } end function create_element
+
+    function choice(const string&: group) const -> string {
+        return raw.choice(group);
+    } end function choice
+
+    function set_choice(const string&: group, const string&: value) const -> bool {
+        return raw.set_choice(group, value);
+    } end function set_choice
+
+    function listen(const string&: type, function() -> void: fn) const -> long int {
+        return raw.listen(type, fn);
+    } end function listen
+
+    function remove_event_listener(long int: id) const -> bool {
+        return raw.remove_event_listener(id);
+    } end function remove_event_listener
+
+    function dispatch(const string&: type) const -> bool {
+        return raw.dispatch(type);
+    } end function dispatch
+
+    function set_timeout(short float: milliseconds, function() -> void: fn) const -> long int {
+        return raw.set_timeout(milliseconds, fn);
+    } end function set_timeout
+
+    function set_interval(short float: milliseconds, function() -> void: fn) const -> long int {
+        return raw.set_interval(milliseconds, fn);
+    } end function set_interval
+
+    function clear_timer(long int: id) const -> bool {
+        return raw.clear_timer(id);
+    } end function clear_timer
+
+    function main_window() const -> Element {
+        Element: out;
+        out.raw = raw.main_window();
+        return out;
+    } end function main_window
+
+    function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> Element {
+        Element: out;
+        out.raw = raw.popup(kind, title, message, input, value, options);
+        return out;
+    } end function popup
+
+    function popup_info(const string&: title, const string&: message) const -> Element {
+        Element: out;
+        out.raw = raw.popup_info(title, message);
+        return out;
+    } end function popup_info
+
+    function popup_warning(const string&: title, const string&: message) const -> Element {
+        Element: out;
+        out.raw = raw.popup_warning(title, message);
+        return out;
+    } end function popup_warning
+
+    function popup_error(const string&: title, const string&: message) const -> Element {
+        Element: out;
+        out.raw = raw.popup_error(title, message);
+        return out;
+    } end function popup_error
+
+    function alert(const string&: message) const -> Element {
+        Element: out;
+        out.raw = raw.alert(message);
+        return out;
+    } end function alert
+
+    function warning(const string&: message) const -> Element {
+        Element: out;
+        out.raw = raw.warning(message);
+        return out;
+    } end function warning
+
+    function error(const string&: message) const -> Element {
+        Element: out;
+        out.raw = raw.error(message);
+        return out;
+    } end function error
+
+    function confirm(const string&: title, const string&: message, function(bool) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.confirm(title, message, fn);
+        return out;
+    } end function confirm
+
+    function prompt_string(const string&: title, const string&: message, const string&: value, function(string) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_string(title, message, value, fn);
+        return out;
+    } end function prompt_string
+
+    function prompt_integer(const string&: title, const string&: message, long int: value, function(long int) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_integer(title, message, value, fn);
+        return out;
+    } end function prompt_integer
+
+    function prompt_float(const string&: title, const string&: message, short float: value, function(short float) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_float(title, message, value, fn);
+        return out;
+    } end function prompt_float
+
+    function prompt_bool(const string&: title, const string&: message, bool: value, function(bool) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_bool(title, message, value, fn);
+        return out;
+    } end function prompt_bool
+
+    function prompt_color(const string&: title, const string&: message, const string&: value, function(string) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_color(title, message, value, fn);
+        return out;
+    } end function prompt_color
+
+    function prompt_choice(const string&: title, const string&: message, const string&: options, const string&: value, function(string) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_choice(title, message, options, value, fn);
+        return out;
+    } end function prompt_choice
+
+    function prompt_slider(const string&: title, const string&: message, short float: value, short float: min, short float: max, function(short float) -> void: fn) const -> Element {
+        Element: out;
+        out.raw = raw.prompt_slider(title, message, value, min, max, fn);
+        return out;
+    } end function prompt_slider
+
+    function time_ms() const -> short float {
+        return raw.time_ms();
+    } end function time_ms
+
+    function width() const -> short float {
+        return raw.width();
+    } end function width
+
+    function height() const -> short float {
+        return raw.height();
+    } end function height
+
+    function quit() const -> void {
+        raw.quit();
+    } end function quit
+
+    function log(const string&: message) const -> void {
+        raw.log(message);
+    } end function log
+
+    function add_event_listener(const string&: type, function(Event&) -> void: fn) const -> long int {
+        return raw.listen(type, [fn]() -> void {
+            Event: e = Event::current();
+            fn(e);
+        });
+    } end function add_event_listener
+
+    function on(const string&: type, function(Event&) -> void: fn) const -> long int {
+        return add_event_listener(type, fn);
+    } end function on
+} end class Document
+
+function document() -> Document {
+    Document: d;
+    return d;
+} end function document
+
+function body() -> Element {
+    Document: d;
+    return d.body();
+} end function body
+
+function get_by_id(const string&: id) -> Element {
+    Document: d;
+    return d.get_by_id(id);
+} end function get_by_id
+
+function get_by_class(const string&: name) -> ElementList {
+    Document: d;
+    return d.get_by_class(name);
+} end function get_by_class
+
+function get_by_tag(const string&: tag) -> ElementList {
+    Document: d;
+    return d.get_by_tag(tag);
+} end function get_by_tag
+
+function id_selector(const string&: id) -> Element {
+    Document: d;
+    return d.id_selector(id);
+} end function id_selector
+
+function class_selector(const string&: name) -> ElementList {
+    Document: d;
+    return d.class_selector(name);
+} end function class_selector
+
+function tag_selector(const string&: tag) -> ElementList {
+    Document: d;
+    return d.tag_selector(tag);
+} end function tag_selector
+
+function query(const string&: selector) -> Element {
+    Document: d;
+    return d.query(selector);
+} end function query
+
+function query_all(const string&: selector) -> ElementList {
+    Document: d;
+    return d.query_all(selector);
+} end function query_all
+
+function create_element(const string&: tag) -> Element {
+    Document: d;
+    return d.create_element(tag);
+} end function create_element
+
+function choice(const string&: group) -> string {
+    Document: d;
+    return d.choice(group);
+} end function choice
+
+function set_choice(const string&: group, const string&: value) -> bool {
+    Document: d;
+    return d.set_choice(group, value);
+} end function set_choice
+
+function remove_event_listener(long int: id) -> bool {
+    Document: d;
+    return d.remove_event_listener(id);
+} end function remove_event_listener
+
+function dispatch(const string&: type) -> bool {
+    Document: d;
+    return d.dispatch(type);
+} end function dispatch
+
+function set_timeout(short float: milliseconds, function() -> void: fn) -> long int {
+    Document: d;
+    return d.set_timeout(milliseconds, fn);
+} end function set_timeout
+
+function set_interval(short float: milliseconds, function() -> void: fn) -> long int {
+    Document: d;
+    return d.set_interval(milliseconds, fn);
+} end function set_interval
+
+function clear_timer(long int: id) -> bool {
+    Document: d;
+    return d.clear_timer(id);
+} end function clear_timer
+
+function main_window() -> Element {
+    Document: d;
+    return d.main_window();
+} end function main_window
+
+function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) -> Element {
+    Document: d;
+    return d.popup(kind, title, message, input, value, options);
+} end function popup
+
+function popup_info(const string&: title, const string&: message) -> Element {
+    Document: d;
+    return d.popup_info(title, message);
+} end function popup_info
+
+function popup_warning(const string&: title, const string&: message) -> Element {
+    Document: d;
+    return d.popup_warning(title, message);
+} end function popup_warning
+
+function popup_error(const string&: title, const string&: message) -> Element {
+    Document: d;
+    return d.popup_error(title, message);
+} end function popup_error
+
+function alert(const string&: message) -> Element {
+    Document: d;
+    return d.alert(message);
+} end function alert
+
+function warning(const string&: message) -> Element {
+    Document: d;
+    return d.warning(message);
+} end function warning
+
+function error(const string&: message) -> Element {
+    Document: d;
+    return d.error(message);
+} end function error
+
+function confirm(const string&: title, const string&: message, function(bool) -> void: fn) -> Element {
+    Document: d;
+    return d.confirm(title, message, fn);
+} end function confirm
+
+function prompt_string(const string&: title, const string&: message, const string&: value, function(string) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_string(title, message, value, fn);
+} end function prompt_string
+
+function prompt_integer(const string&: title, const string&: message, long int: value, function(long int) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_integer(title, message, value, fn);
+} end function prompt_integer
+
+function prompt_float(const string&: title, const string&: message, short float: value, function(short float) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_float(title, message, value, fn);
+} end function prompt_float
+
+function prompt_bool(const string&: title, const string&: message, bool: value, function(bool) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_bool(title, message, value, fn);
+} end function prompt_bool
+
+function prompt_color(const string&: title, const string&: message, const string&: value, function(string) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_color(title, message, value, fn);
+} end function prompt_color
+
+function prompt_choice(const string&: title, const string&: message, const string&: options, const string&: value, function(string) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_choice(title, message, options, value, fn);
+} end function prompt_choice
+
+function prompt_slider(const string&: title, const string&: message, short float: value, short float: min, short float: max, function(short float) -> void: fn) -> Element {
+    Document: d;
+    return d.prompt_slider(title, message, value, min, max, fn);
+} end function prompt_slider
+
+function time_ms() -> short float {
+    Document: d;
+    return d.time_ms();
+} end function time_ms
+
+function width() -> short float {
+    Document: d;
+    return d.width();
+} end function width
+
+function height() -> short float {
+    Document: d;
+    return d.height();
+} end function height
+
+function quit() -> void {
+    Document: d;
+    d.quit();
+} end function quit
+
+function log(const string&: message) -> void {
+    Document: d;
+    d.log(message);
+} end function log
+
+function add_event_listener(const string&: type, function(Event&) -> void: fn) -> long int {
+    Document: d;
+    return d.add_event_listener(type, fn);
+} end function add_event_listener
+
+function on(const string&: type, function(Event&) -> void: fn) -> long int {
+    Document: d;
+    return d.on(type, fn);
+} end function on
+
+export this

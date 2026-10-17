@@ -2,6 +2,8 @@
 #define GROVE_MARKUP_NODE_HPP
 
 #include "../common/diagnostics.hpp"
+#include "../common/marks.hpp"
+#include "events.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -14,6 +16,12 @@
 
 namespace grove {
 
+enum NodeState : unsigned {
+    StateHover = 1u,
+    StateActive = 2u,
+    StateFocus = 4u
+};
+
 enum class NodeKind {
     Element,
     Text,
@@ -25,6 +33,8 @@ struct Attribute {
     std::string value;
     bool has_value = false;
     Span span;
+    Span name_span;
+    Span value_span;
 };
 
 class Node {
@@ -61,7 +71,15 @@ public:
 
     const std::vector<std::unique_ptr<Node>>& children() const noexcept { return m_children; }
     Node* append_child(std::unique_ptr<Node> child);
+    Node* insert_child(std::size_t index, std::unique_ptr<Node> child);
+    std::unique_ptr<Node> remove_child(const Node* child);
+    std::size_t index_in_parent() const noexcept;
+    bool is_inside(const Node* ancestor) const noexcept;
     void clear_children() noexcept { m_children.clear(); }
+
+    unsigned state() const noexcept { return m_state; }
+    bool has_state(unsigned bits) const noexcept { return (m_state & bits) == bits; }
+    void set_state(unsigned bits, bool on) noexcept { m_state = on ? (m_state | bits) : (m_state & ~bits); }
 
     std::string inner_text() const;
     void set_inner_text(std::string text);
@@ -82,6 +100,19 @@ private:
     std::string m_text;
     std::vector<Attribute> m_attributes;
     std::vector<std::unique_ptr<Node>> m_children;
+    unsigned m_state = 0;
+};
+
+struct DocumentHost {
+    std::function<std::string(const Node&, const std::string&)> computed_style;
+    std::function<bool(Node*)> focus;
+    double viewport_width = 0.0;
+    double viewport_height = 0.0;
+    Node* main_window = nullptr;
+    std::function<bool(const Node&, double&, double&)> window_size;
+    std::function<bool(Node&, double, double)> resize_window;
+    std::function<bool(Node&, double, double)> move_window;
+    std::function<bool(Node&)> focus_window;
 };
 
 class Document {
@@ -101,12 +132,34 @@ public:
     Node* first_by_tag(std::string_view tag);
     const Node* first_by_tag(std::string_view tag) const;
 
+    DocumentHost& host() noexcept { return *m_host; }
+    const DocumentHost& host() const noexcept { return *m_host; }
+
+    EventRegistry& events() noexcept { return *m_events; }
+    const EventRegistry& events() const noexcept { return *m_events; }
+
+    Node* create_element(std::string tag);
+    Node* create_text(std::string text);
+    Node* append_child(Node& parent, Node& child);
+    Node* insert_before(Node& parent, Node& child, const Node* reference);
+    bool remove(Node& node);
+    bool is_attached(const Node& node) const noexcept;
+
+    Marks& marks() noexcept { return m_marks; }
+    const Marks& marks() const noexcept { return m_marks; }
+
     std::uint64_t revision() const noexcept { return m_revision; }
     void touch() noexcept { ++m_revision; }
 
 private:
     std::unique_ptr<Node> m_root;
+    std::unique_ptr<Node> take_detached(Node& node);
+
     std::string m_path;
+    Marks m_marks;
+    std::vector<std::unique_ptr<Node>> m_detached;
+    std::unique_ptr<EventRegistry> m_events = std::make_unique<EventRegistry>();
+    std::unique_ptr<DocumentHost> m_host = std::make_unique<DocumentHost>();
     std::uint64_t m_revision = 0;
 };
 

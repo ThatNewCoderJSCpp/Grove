@@ -1,5 +1,6 @@
 #include "grove/markup/node.hpp"
 
+#include <algorithm>
 #include <sstream>
 
 namespace grove {
@@ -84,6 +85,40 @@ Node* Node::append_child(std::unique_ptr<Node> child) {
     return m_children.back().get();
 }
 
+Node* Node::insert_child(std::size_t index, std::unique_ptr<Node> child) {
+    child->m_parent = this;
+    index = std::min(index, m_children.size());
+    auto it = m_children.insert(m_children.begin() + static_cast<std::ptrdiff_t>(index), std::move(child));
+    return it->get();
+}
+
+std::unique_ptr<Node> Node::remove_child(const Node* child) {
+    for (auto it = m_children.begin(); it != m_children.end(); ++it) {
+        if (it->get() != child) continue;
+        std::unique_ptr<Node> out = std::move(*it);
+        m_children.erase(it);
+        out->m_parent = nullptr;
+        return out;
+    }
+    return nullptr;
+}
+
+std::size_t Node::index_in_parent() const noexcept {
+    if (!m_parent) return 0;
+    const auto& siblings = m_parent->m_children;
+    for (std::size_t i = 0; i < siblings.size(); ++i) {
+        if (siblings[i].get() == this) return i;
+    }
+    return 0;
+}
+
+bool Node::is_inside(const Node* ancestor) const noexcept {
+    for (const Node* n = this; n; n = n->m_parent) {
+        if (n == ancestor) return true;
+    }
+    return false;
+}
+
 std::string Node::inner_text() const {
     if (!is_element()) return m_text;
     std::string out;
@@ -109,6 +144,57 @@ void Node::walk(const std::function<void(Node&)>& fn) {
 void Node::walk(const std::function<void(const Node&)>& fn) const {
     fn(*this);
     for (const auto& c : m_children) static_cast<const Node&>(*c).walk(fn);
+}
+
+Node* Document::create_element(std::string tag) {
+    m_detached.push_back(Node::make_element(std::move(tag), Span{}));
+    touch();
+    return m_detached.back().get();
+}
+
+Node* Document::create_text(std::string text) {
+    m_detached.push_back(Node::make_text(std::move(text), Span{}));
+    return m_detached.back().get();
+}
+
+bool Document::is_attached(const Node& node) const noexcept {
+    return node.is_inside(m_root.get());
+}
+
+std::unique_ptr<Node> Document::take_detached(Node& node) {
+    if (Node* parent = node.parent()) return parent->remove_child(&node);
+    for (auto it = m_detached.begin(); it != m_detached.end(); ++it) {
+        if (it->get() != &node) continue;
+        std::unique_ptr<Node> out = std::move(*it);
+        m_detached.erase(it);
+        return out;
+    }
+    return nullptr;
+}
+
+Node* Document::append_child(Node& parent, Node& child) {
+    return insert_before(parent, child, nullptr);
+}
+
+Node* Document::insert_before(Node& parent, Node& child, const Node* reference) {
+    if (!parent.is_element() || &child == &parent || parent.is_inside(&child)) return nullptr;
+    if (reference && reference->parent() != &parent) return nullptr;
+    std::unique_ptr<Node> owned = take_detached(child);
+    if (!owned) return nullptr;
+    const std::size_t index = reference ? reference->index_in_parent() : parent.children().size();
+    Node* placed = parent.insert_child(index, std::move(owned));
+    touch();
+    return placed;
+}
+
+bool Document::remove(Node& node) {
+    if (&node == m_root.get() || !node.parent()) return false;
+    std::unique_ptr<Node> owned = node.parent()->remove_child(&node);
+    if (!owned) return false;
+    owned->walk([](Node& n) { n.set_state(StateHover | StateActive | StateFocus, false); });
+    m_detached.push_back(std::move(owned));
+    touch();
+    return true;
 }
 
 Node* Document::find_by_id(std::string_view id) {

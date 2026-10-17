@@ -1,0 +1,6 @@
+extern "C" {
+    function grove_set_text_by_id(string: id, string: value) -> int;
+    function grove_set_attribute_by_id(string: id, string: name, string: value) -> int;
+} end extern
+
+grove_set_text_by_id("greeting", "Hello from Walnut");

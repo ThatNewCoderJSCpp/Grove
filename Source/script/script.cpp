@@ -1,5 +1,6 @@
 #include "grove/script/script.hpp"
 #include "grove/markup/parser.hpp"
+#include "grove/project.hpp"
 
 #include <filesystem>
 
@@ -99,7 +100,7 @@ std::vector<ScriptBlock> collect_scripts(const Document& document, const std::st
             if (!code.empty()) diagnostics.warning(document.path(), el->span(), "<script> has both src and inline code; the inline code is ignored");
             const std::filesystem::path p = std::filesystem::path(base_dir) / *src;
             block.source_path = p.lexically_normal().string();
-            if (!std::filesystem::exists(p)) diagnostics.error(document.path(), el->span(), "script file '" + *src + "' does not exist");
+            if (!path_exists(p.string())) diagnostics.error(document.path(), el->span(), "script file '" + *src + "' does not exist");
         } else {
             if (code.empty()) {
                 diagnostics.warning(document.path(), el->span(), "empty <script>");
