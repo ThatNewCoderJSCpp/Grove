@@ -118,6 +118,9 @@ extern "C++" from "<grove/dom.hpp>" {
         function set_interval(short float: milliseconds, function() -> void: fn) const -> long int;
         function clear_timer(long int: id) const -> bool;
         function main_window() const -> NativeElement;
+        function has_native(const string&: name) const -> bool;
+        function call(const string&: name, const string&: argument) const -> string;
+        function choose_file(const string&: mode, const string&: title, const string&: filter) const -> string;
         function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> NativeElement;
         function popup_info(const string&: title, const string&: message) const -> NativeElement;
         function popup_warning(const string&: title, const string&: message) const -> NativeElement;
@@ -647,6 +650,18 @@ public:
         return out;
     } end function main_window
 
+    function has_native(const string&: name) const -> bool {
+        return raw.has_native(name);
+    } end function has_native
+
+    function call(const string&: name, const string&: argument) const -> string {
+        return raw.call(name, argument);
+    } end function call
+
+    function choose_file(const string&: mode, const string&: title, const string&: filter) const -> string {
+        return raw.choose_file(mode, title, filter);
+    } end function choose_file
+
     function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> Element {
         Element: out;
         out.raw = raw.popup(kind, title, message, input, value, options);
@@ -863,6 +878,21 @@ function main_window() -> Element {
     Document: d;
     return d.main_window();
 } end function main_window
+
+function has_native(const string&: name) -> bool {
+    Document: d;
+    return d.has_native(name);
+} end function has_native
+
+function call(const string&: name, const string&: argument) -> string {
+    Document: d;
+    return d.call(name, argument);
+} end function call
+
+function choose_file(const string&: mode, const string&: title, const string&: filter) -> string {
+    Document: d;
+    return d.choose_file(mode, title, filter);
+} end function choose_file
 
 function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) -> Element {
     Document: d;

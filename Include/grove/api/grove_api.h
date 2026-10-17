@@ -36,7 +36,9 @@ typedef enum grove_input_kind {
     GROVE_INPUT_BOOL = 4,
     GROVE_INPUT_RADIO = 5,
     GROVE_INPUT_SLIDER = 6,
-    GROVE_INPUT_COLOR = 7
+    GROVE_INPUT_COLOR = 7,
+    GROVE_INPUT_CODE = 8,
+    GROVE_INPUT_FILE = 9
 } grove_input_kind;
 
 typedef enum grove_modifier {
@@ -150,6 +152,9 @@ GROVE_API bool grove_window_focus(grove_document* document, grove_element* windo
 GROVE_API grove_element* grove_popup(grove_document* document, grove_element* owner, const char* kind, const char* title, const char* message, const char* input, const char* value, const char* options);
 GROVE_API bool grove_popup_answer(grove_document* document, grove_element* popup, bool ok);
 GROVE_API const char* grove_input_text(const grove_element* element);
+GROVE_API const char* grove_call_native(grove_document* document, const char* name, const char* const* args, size_t count);
+GROVE_API bool grove_has_native(grove_document* document, const char* name);
+GROVE_API const char* grove_file_dialog(grove_document* document, const char* mode, const char* title, const char* filter, bool multiple);
 
 #ifdef __cplusplus
 }

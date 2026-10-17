@@ -1,0 +1,13 @@
+import module.grove
+
+grove::get_by_id("code").on("cursor", [](grove::Event&: e) -> void {
+    grove::get_by_id("log").set_inner_text("line " + e.x().to_string() + ", column " + e.y().to_string());
+});
+
+grove::get_by_id("docs").on("click", [](grove::Event&: e) -> void {
+    if (grove::has_native("open_docs")) then {
+        grove::call("open_docs", "editor");
+    } else then {
+        grove::get_by_id("log").set_inner_text("no host function named open_docs");
+    }
+});

@@ -37,17 +37,19 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 |---|---|
 | `grove`, `head`, `body`, `title` | document structure |
 | `window` | a separate window, set up like `<body>`; it isn't drawn inside the window it sits in. See [Windows](#windows) |
-| `panel`, `div`, `row`, `column`, `list`, `item` | blocks |
+| `panel`, `div`, `row`, `column`, `list`, `item`, `pre` | blocks; `pre` keeps its spaces and line breaks |
 | `h1`–`h4`, `p` | headings and paragraphs |
 | `text`, `span`, `b`, `i`, `u`, `code`, `link` | inline text |
 | `input_integer`, `input_float`, `input_string`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
+| `input_code` | a code editor, see [Code editor](#code-editor) |
+| `input_file` | a button that opens the system's file or folder picker, see [File picker](#file-picker) |
 | `button`, `label` | controls |
 | `img`, `br`, `hr` | images and breaks |
 | `math` | MathText, see below |
 | `style` | Bark, inline or `src="file.bark"` |
 | `script` | Walnut, C++ or C, inline or `src="..."` |
 
-`grove run` lays out blocks, headings, paragraphs, text, math and every input; `button` and `img` parse and style but don't draw yet.
+`grove run` lays out blocks, headings, paragraphs, wrapped text with inline elements, math, buttons and every input; `img` parses and styles but doesn't draw yet. Bark's [Layout](bark.md#layout) section covers widths, `flex`, scrolling and wrapping.
 
 ## Inputs
 
@@ -62,6 +64,8 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `<input_radio name="g" value="v">Label</input_radio>` | `bool` per option, `string` per group | click to pick; one per `name` group |
 | `<input_slider>` | `double` | click or drag |
 | `<input_color>` | `bark::Rgba` / `uint32_t` `0xRRGGBBAA` | `#` and hex digits |
+| `<input_code>` | `std::string` / `const char*` / `string` | everything; see [Code editor](#code-editor) |
+| `<input_file>` | `std::string` / `const char*` / `string`, the chosen path (several are separated by `\n`) | nothing; clicking opens the system picker |
 
 ```html
 <input_integer id="count" value="3" min="0" max="99" />
@@ -108,6 +112,52 @@ Type safety holds at every layer:
 `<input type="integer">` (and `float`, `string`, `bool`, `radio`, `slider`, `color`) still works and means the same as the matching `input_*` element; `checkbox`, `slider` and `color` are kept as short names for `input_bool`, `input_slider` and `input_color`.
 
 `grove inputs doc.grove` lists every input with its type and current value.
+
+### Code editor
+
+`<input_code>` is a multi-line editor with line numbers, syntax highlighting, a caret and selection, and its own scrolling. Its text is the element's content (indentation shared by every line is removed, so it can be indented with the markup) until `value` is set; after that, `value_string()` and `set_value_string()` read and replace it like any string input.
+
+```html
+<input_code id="source" language="cpp" tab-size="4">
+    int main() {
+        return 0;
+    }
+</input_code>
+```
+
+| Attribute | |
+|---|---|
+| `language` | `c`, `cpp`, `walnut`, `grove`, `bark` or `plain` (default); file extensions like `hpp` or `wal` work too |
+| `tab-size` | columns per tab (default 4) |
+| `indent` | `spaces` (default) or `tabs`: what Tab and Enter insert |
+| `line-numbers` | `false` hides them |
+| `readonly` | can be selected and copied but not changed |
+| `placeholder` | shown while it's empty |
+| `caret` | `line:column` (1-based) moves the caret there and scrolls to it whenever the attribute changes; anything after a `#` is ignored, so `"12:1#2"` moves there again |
+
+Keys: arrows, Home (to the indent, then the line start), End, Page Up/Down, Ctrl+Home/End, Ctrl+Left/Right by word, Shift with any of them to select; Backspace and Delete (Ctrl for a whole word; Backspace between `()`, `[]`, `{}`, `""` or `''` removes both); Enter keeps the indent and indents after `{`, `(` or `[`; Tab and Shift+Tab indent and outdent (every selected line when the selection spans lines); Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V (with nothing selected, copy and cut take the whole line); Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z undo and redo. Click to move the caret, drag or Shift+click to select, double-click selects a word, and the wheel scrolls (Shift+wheel sideways). `input` fires on every edit, `change` when it loses focus with different text, and `cursor` whenever the caret moves, with `x()` as the line and `y()` as the column. Listen for `key_down` and call `prevent_default()` to take a key for yourself. Its colors follow `color`, `background`, `border-color` and `accent-color` (caret, selection and focus).
+
+### File picker
+
+`<input_file>` looks like a button. Clicking it (or Enter or Space while it's focused) opens the system's file dialog: the native one on Windows, and zenity or kdialog on Linux (set `FIZMO_DIALOG=zenity` or `kdialog` to choose). The window keeps running while the dialog is open. Picking something sets the value and fires `input` and `change`; closing the dialog fires `cancel`.
+
+```html
+<input_file id="project" mode="folder">Open folder...</input_file>
+<input_file id="images" filter="Images: *.png *.jpg; All files: *" multiple />
+<input_file id="export" mode="save" title="Export as" start="/home/me/exports" />
+```
+
+| Attribute | |
+|---|---|
+| `mode` | `open` (default), `save` or `folder` |
+| `multiple` | with `open`: pick several files |
+| `filter` | `Name: *.a *.b; Other: *.c`, or just `*.a *.b` |
+| `title` | the dialog's title |
+| `start` | the folder the dialog starts in (default: the current value) |
+| `hide-value` | don't show the chosen file's name next to the label |
+| `placeholder` | shown next to the label until something is picked |
+
+With no label, it says "Choose file...", "Choose files...", "Choose folder..." or "Save as...". A script can also ask directly: `grove::choose_file("folder", "Pick a folder", "")` (C: `grove_file_dialog`) waits for the dialog and returns the path, or `""` when cancelled.
 
 ## Math
 
@@ -195,6 +245,29 @@ GROVE_ON_LOAD(setup) {
 }
 ```
 
+### Calling into the app that hosts the document
+
+An app that embeds Grove (a C++ program that loads a document and calls `grove::runtime::run`) can give its scripts functions of its own. They take and return strings:
+
+```cpp
+#include <grove/grove.hpp>
+#include <grove/runtime/runtime.hpp>
+
+grove::Project project = grove::load_project("ui.grove");
+grove::register_native(project.document, "app.save", [&](const std::vector<std::string>& args) {
+    return save(args.at(0)) ? std::string("ok") : std::string();
+});
+grove::runtime::run(project);
+```
+
+```walnut
+if (grove::has_native("app.save")) then {
+    string: result = grove::call("app.save", "notes.txt");
+}
+```
+
+C++ scripts call `grove::document.call("app.save", "notes.txt")` with any number of string arguments (or `call_with(name, vector)`), and C scripts call `grove_call_native(doc, "app.save", args, count)`, which returns `NULL` when there's no such function. A function that throws reports a script error and returns `""`. `grove::has_native` and `grove::native_names` list what's there.
+
 ### Events
 
 Events go to the element under the mouse (or the focused element for keys), then bubble up through its parents to the document. `e.stop_propagation()` stops the bubbling, and `e.prevent_default()` stops Grove's own handling, like scrolling for `wheel` or typing for `key_down`.
@@ -209,13 +282,14 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `text` | text is typed | `text` |
 | `focus`, `blur` | an element gains or loses focus (doesn't bubble) | |
 | `input` | an input's value changes while editing | |
-| `change` | an input's value is committed (Enter, a click, leaving the field) | |
+| `change` | an input's value is committed (Enter, a click, leaving the field, picking a file) | |
+| `cursor` | the caret of an `input_code` moves | `x()` is the line, `y()` the column, both from 1 |
 | `resize` | a window changes size; for a `<window>` it goes to that `<window>` and bubbles | `width()`, `height()`, or `window_width()` on the target |
 | `load` | after the scripts have run | |
 | `open` | a `<window>` opens; the target is the `<window>` | |
 | `close` | a window closes; `prevent_default()` keeps it open when the user closed it | |
 | `window_focus`, `window_blur` | a window gains or loses the keyboard | |
-| `ok`, `cancel` | a popup is answered; the target is the popup | |
+| `ok`, `cancel` | a popup is answered; the target is the popup. `cancel` also fires on an `input_file` whose dialog was closed without picking | |
 
 Any other name is a custom event, fired with `dispatch`. Names ignore case, `_` and `-`, so `mouse_down`, `mousedown` and `MouseDown` are the same.
 

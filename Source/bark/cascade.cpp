@@ -18,6 +18,7 @@ constexpr const char* k_inherited[] = {
     "line-height",
     "text-align",
     "letter-spacing",
+    "white-space",
     "math-syntax",
     "math-color",
     "accent-color",
@@ -87,7 +88,10 @@ const Stylesheet& default_stylesheet() {
             "h4 { font-size: 1.1em; font-weight: bold; }\n"
             "b { font-weight: bold; }\n"
             "i { font-style: italic; }\n"
+            "u { text-decoration: underline; }\n"
             "code { font-family: monospace; }\n"
+            "pre { white-space: pre; font-family: monospace; margin: 0 0 0.5em 0; }\n"
+            "link { color: #89b4fa; cursor: pointer; }\n"
             "p { margin: 0 0 0.5em 0; }\n"
             "math { display: inline; }\n"
             "input, input_integer, input_float, input_string, input_color {\n"
@@ -95,6 +99,17 @@ const Stylesheet& default_stylesheet() {
             "    background: rgba(255, 255, 255, 6%); border-color: rgba(255, 255, 255, 22%); border-radius: 6px;\n"
             "}\n"
             "input_slider, slider { width: 220px; margin: 0 0 8px 0; }\n"
+            "input_code {\n"
+            "    height: 300px; margin: 0 0 8px 0; font-family: monospace; font-size: 14px; cursor: text;\n"
+            "    background: rgba(0, 0, 0, 25%); border-color: rgba(255, 255, 255, 15%); border-radius: 6px;\n"
+            "}\n"
+            "input_file {\n"
+            "    padding: 6px 14px; margin: 0 0 8px 0; cursor: pointer; border-radius: 6px;\n"
+            "    background: rgba(255, 255, 255, 10%); border-color: rgba(255, 255, 255, 25%);\n"
+            "}\n"
+            "input_file:hover { background: rgba(255, 255, 255, 16%); }\n"
+            "input_file:active { background: rgba(255, 255, 255, 24%); }\n"
+            "input_file:disabled { opacity: 0.45; cursor: default; }\n"
             "input_bool, input_radio, checkbox { margin: 0 0 6px 0; appearance: checkbox; cursor: pointer; }\n"
             "input_slider, slider { cursor: pointer; }\n"
             "button {\n"

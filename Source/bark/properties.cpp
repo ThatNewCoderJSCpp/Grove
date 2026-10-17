@@ -16,6 +16,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "color",
         "cursor",
         "display",
+        "flex",
         "font",
         "font-family",
         "font-size",
@@ -34,10 +35,13 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "min-height",
         "min-width",
         "opacity",
+        "overflow",
         "padding",
         "size",
         "text-align",
+        "text-decoration",
         "title",
+        "white-space",
         "width",
     };
     return names;

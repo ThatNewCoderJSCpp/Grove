@@ -12,6 +12,8 @@
 #include "script/script.hpp"
 #include "math/math_block.hpp"
 #include "input/input.hpp"
+#include "input/code_buffer.hpp"
+#include "native.hpp"
 #include "project.hpp"
 #include "highlight.hpp"
 #include "dom_tools.hpp"

@@ -19,7 +19,9 @@ enum class InputKind {
     Bool,
     Radio,
     Slider,
-    Color
+    Color,
+    Code,
+    File
 };
 
 const char* to_string(InputKind kind) noexcept;
@@ -28,6 +30,8 @@ std::optional<InputKind> input_kind_from_name(std::string_view name) noexcept;
 std::optional<InputKind> input_kind_of(const Node& node) noexcept;
 bool is_input(const Node& node) noexcept;
 bool is_text_input(InputKind kind) noexcept;
+bool is_string_input(InputKind kind) noexcept;
+std::string code_source_text(const Node& node);
 bool is_switch(const Node& node, const std::optional<std::string>& appearance = std::nullopt) noexcept;
 
 std::optional<std::int64_t> parse_integer(std::string_view text) noexcept;

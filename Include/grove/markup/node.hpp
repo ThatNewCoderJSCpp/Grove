@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <ostream>
 #include <memory>
 #include <optional>
@@ -103,6 +104,17 @@ private:
     unsigned m_state = 0;
 };
 
+using NativeFunction = std::function<std::string(const std::vector<std::string>& args)>;
+
+struct FileDialogRequest {
+    std::string mode = "open";
+    std::string title;
+    std::string filter;
+    std::string start;
+    bool multiple = false;
+    Node* owner = nullptr;
+};
+
 struct DocumentHost {
     std::function<std::string(const Node&, const std::string&)> computed_style;
     std::function<bool(Node*)> focus;
@@ -113,6 +125,8 @@ struct DocumentHost {
     std::function<bool(Node&, double, double)> resize_window;
     std::function<bool(Node&, double, double)> move_window;
     std::function<bool(Node&)> focus_window;
+    std::map<std::string, NativeFunction, std::less<>> natives;
+    std::function<std::vector<std::string>(const FileDialogRequest&)> file_dialog;
 };
 
 class Document {

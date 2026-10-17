@@ -344,6 +344,33 @@ public:
 
     Element main_window() const { return Element(grove_main_window(handle())); }
 
+    bool has_native(const std::string& name) const { return grove_has_native(handle(), name.c_str()); }
+    std::string call_with(const std::string& name, const std::vector<std::string>& args) const {
+        std::vector<const char*> raw;
+        raw.reserve(args.size());
+        for (const std::string& a : args) raw.push_back(a.c_str());
+        return detail::str(grove_call_native(handle(), name.c_str(), raw.data(), raw.size()));
+    }
+    template <typename... Args>
+    std::string call(const std::string& name, const Args&... args) const {
+        return call_with(name, std::vector<std::string>{ std::string(args)... });
+    }
+    std::string choose_file(const std::string& mode, const std::string& title, const std::string& filter) const {
+        return detail::str(grove_file_dialog(handle(), mode.c_str(), title.c_str(), filter.c_str(), false));
+    }
+    std::vector<std::string> choose_files(const std::string& title, const std::string& filter) const {
+        const std::string joined = detail::str(grove_file_dialog(handle(), "open", title.c_str(), filter.c_str(), true));
+        std::vector<std::string> out;
+        std::size_t start = 0;
+        while (start < joined.size()) {
+            const std::size_t end = joined.find('\n', start);
+            out.push_back(joined.substr(start, end == std::string::npos ? std::string::npos : end - start));
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        return out;
+    }
+
     Element popup(const std::string& kind, const std::string& title, const std::string& message, const std::string& input, const std::string& value, const std::string& options) const {
         return Element(grove_popup(handle(), nullptr, kind.c_str(), title.c_str(), message.c_str(), input.c_str(), value.c_str(), options.c_str()));
     }

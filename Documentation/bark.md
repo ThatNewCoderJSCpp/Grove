@@ -98,9 +98,9 @@ They update as the window is resized. For `body { size: ... }` they're measured 
 
 ## Cascade
 
-For each property the winner is decided by, in order: `!important`, then `style="..."` attributes, then selector specificity (ids, then classes, then tags), then whichever came last. `color`, `font-*`, `line-height`, `text-align`, `letter-spacing`, `math-color`, `accent-color` and `cursor` inherit; nothing else does. `em` and `%` font sizes resolve against the parent.
+For each property the winner is decided by, in order: `!important`, then `style="..."` attributes, then selector specificity (ids, then classes, then tags), then whichever came last. `color`, `font-*`, `line-height`, `text-align`, `letter-spacing`, `white-space`, `math-color`, `accent-color` and `cursor` inherit; nothing else does. `em` and `%` font sizes resolve against the parent.
 
-Grove ships a small default sheet first: heading sizes and weights, `display: none` for `head`/`style`/`script` and for a `<window>` inside `<body>`, a `button` look with `:hover`, `:active`, `:focus` and `:disabled` states, `row { display: row; gap: 8px; }`, and the popup look (`window.popup`, `.popup-icon`, `.popup-buttons`, `.popup-ok` and friends), which your own rules can override.
+Grove ships a small default sheet first: heading sizes and weights, `display: none` for `head`/`style`/`script` and for a `<window>` inside `<body>`, a `button` look with `:hover`, `:active`, `:focus` and `:disabled` states (shared by `input_file`), the `input_code` look, `pre { white-space: pre; font-family: monospace; }`, `code` in monospace, `link` in blue, `u` underlined, `row { display: row; gap: 8px; }`, and the popup look (`window.popup`, `.popup-icon`, `.popup-buttons`, `.popup-ok` and friends), which your own rules can override.
 
 ## Properties the runtime reads today
 
@@ -110,19 +110,44 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `title` | `body`, `window` | window title (the `title` attribute wins) |
 | `background` | any | fill color |
 | `color`, `font-size`, `font-weight` | text | |
+| `font-style` | text | `italic` |
+| `font-family` | text | a font name like `"JetBrains Mono"`, or `monospace`, `serif`, `sans-serif`; a font that isn't installed falls back to one of the same kind |
+| `text-decoration` | text | `underline`, `line-through` |
+| `white-space` | blocks | `normal` (default) wraps text and collapses spaces; `nowrap` collapses but doesn't wrap; `pre` keeps spaces and line breaks and doesn't wrap; `pre-wrap` keeps them and wraps |
 | `math-color` | `math` | defaults to `color` |
 | `margin`, `padding` | blocks, inputs | 1 to 4 lengths, CSS order |
 | `border-color`, `border-width` | blocks, inputs | |
 | `border-radius` | blocks, inputs | rounded corners |
-| `width` | inputs | text inputs and sliders; default 220px, never wider than the space they're in |
+| `width` | blocks, inputs | a length or a `%` of the space it's in; text inputs and sliders default to 220px; never wider than the space it's in |
+| `min-width`, `max-width` | blocks, row items | lengths or `%`; in a row they bound how much of the free space an item takes |
+| `height` | blocks, `input_code` | a length or a `%` of the parent's height (when the parent's height is known); with `overflow` other than `visible` the block is exactly this tall, otherwise it's the smallest height |
+| `min-height`, `max-height` | blocks | lengths or `%`; `max-height` only applies when `overflow` clips |
+| `flex` | children of a column, row items | a number: how much of the leftover space the item gets. In a column (any block that isn't a row) this needs the column's height to be known: from `height`, from being an item in a row, or from being `body` |
+| `overflow` | blocks | `visible` (default), `hidden` clips the content to the block, `auto` and `scroll` clip it and let the mouse wheel scroll it |
 | `appearance` | `input_bool` | `checkbox` (default) or `switch` |
-| `accent-color` | inputs | checked boxes and radios, slider fill and thumb, focused border |
+| `accent-color` | inputs | checked boxes and radios, slider fill and thumb, focused border, the caret and selection of `input_code` |
 | `gap` | blocks, `row` | extra space after a block; space between the items of a row |
 | `justify-content` | `row` | `start` (default), `center`, `end` or `space-between`, when nothing in the row stretches |
-| `height`, `min-height` | blocks | the smallest height a block takes |
+| `line-height` | `input_code` | a multiple of the font size (`1.4`) or a length |
 | `opacity` | any | 0 to 1; fades the element and everything inside it |
 | `cursor` | any | `pointer`, `text`, `default`, `crosshair`, `move`, `not-allowed`, ... while the mouse is over it |
-| `text-align` | `math` | `left`, `center`, `right` |
-| `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content |
+| `text-align` | text, `math` | `left`, `center`, `right` |
+| `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content, `inline` puts it in the flow of the text around it |
 
-Everything else is parsed, cascaded and visible in `grove computed`, ready for the runtime to grow into. Bark also knows `font`, `font-family`, `font-style`, `line-height`, `letter-spacing`, `min-width`, `max-width`, `max-height` and `math-syntax`; any other property name is a warning (`unknown property 'colr'`), and so is a selector naming an element that doesn't exist (custom elements need a `-` in their name).
+### Layout
+
+Text wraps at word boundaries to the width it has, and a word too long for a line is broken where it has to be. Inline elements (`text`, `span`, `b`, `i`, `u`, `code`, `link`, `br`, or anything with `display: inline`) flow on the same lines as the text around them, keep their own color, font and background, and get their own clicks and hover.
+
+A row gives every item with a `width` (or that's only as wide as its content: inputs, buttons, inline elements, and rows made only of those) its size, then shares what's left between the rest by `flex` (1 when not set), within each one's `min-width` and `max-width`. When a row's height is known, its items stretch to fill it. A column with a known height gives its `flex` children the space its other children don't use, so
+
+```
+body { size: 1000px 700px; padding: 0; }
+#app { flex: 1; }
+#sidebar { width: 240px; overflow: auto; }
+#editor { flex: 1; }
+#terminal { height: 30%; }
+```
+
+fills the window: `#app` takes all of `body` that's left, the sidebar and the main column stretch to its height, and the editor gets whatever the terminal doesn't.
+
+Everything else is parsed, cascaded and visible in `grove computed`, ready for the runtime to grow into. Bark also knows `font`, `letter-spacing` and `math-syntax`; any other property name is a warning (`unknown property 'colr'`), and so is a selector naming an element that doesn't exist (custom elements need a `-` in their name).

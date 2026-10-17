@@ -4,12 +4,15 @@
 #include "grove/input/input.hpp"
 #include "grove/dom_tools.hpp"
 #include "grove/windowing.hpp"
+#include "grove/native.hpp"
 
 #include <array>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -33,6 +36,8 @@ int kind_code(const grove::Node* node) noexcept {
         case grove::InputKind::Radio: return GROVE_INPUT_RADIO;
         case grove::InputKind::Slider: return GROVE_INPUT_SLIDER;
         case grove::InputKind::Color: return GROVE_INPUT_COLOR;
+        case grove::InputKind::Code: return GROVE_INPUT_CODE;
+        case grove::InputKind::File: return GROVE_INPUT_FILE;
     }
     return GROVE_INPUT_NONE;
 }
@@ -199,7 +204,10 @@ bool grove_input_bool(const grove_element* element, bool* out) {
 }
 
 const char* grove_input_string(const grove_element* element) {
-    if (!element || grove::input_kind_of(*node_of(element)) != grove::InputKind::String) return nullptr;
+    if (!element) return nullptr;
+    const std::optional<grove::InputKind> kind = grove::input_kind_of(*node_of(element));
+    if (!kind || !grove::is_string_input(*kind)) return nullptr;
+    if (*kind == grove::InputKind::Code && !node_of(element)->has_attribute("value")) return keep(grove::code_source_text(*node_of(element)));
     const grove::Attribute* a = node_of(element)->find_attribute("value");
     return a ? a->value.c_str() : "";
 }
@@ -570,6 +578,35 @@ bool grove_popup_answer(grove_document* document, grove_element* popup, bool ok)
 const char* grove_input_text(const grove_element* element) {
     if (!element || !grove::input_kind_of(*node_of(element))) return "";
     return keep(grove::input_text(*node_of(element)));
+}
+
+const char* grove_call_native(grove_document* document, const char* name, const char* const* args, size_t count) {
+    if (!document || !name) return nullptr;
+    std::vector<std::string> list;
+    list.reserve(count);
+    for (size_t i = 0; i < count; ++i) list.emplace_back(args && args[i] ? args[i] : "");
+    const std::optional<std::string> result = grove::call_native(*doc_of(document), name, list);
+    return result ? keep(*result) : nullptr;
+}
+
+bool grove_has_native(grove_document* document, const char* name) {
+    return document && name && grove::has_native(*doc_of(document), name);
+}
+
+const char* grove_file_dialog(grove_document* document, const char* mode, const char* title, const char* filter, bool multiple) {
+    if (!document) return "";
+    grove::FileDialogRequest request;
+    request.mode = mode && *mode ? mode : "open";
+    request.title = title ? title : "";
+    request.filter = filter ? filter : "";
+    request.multiple = multiple;
+    const std::vector<std::string> paths = grove::run_file_dialog(*doc_of(document), request);
+    std::string joined;
+    for (const std::string& p : paths) {
+        if (!joined.empty()) joined += '\n';
+        joined += p;
+    }
+    return keep(joined);
 }
 
 const grove_host_api* grove_host_table(void) {

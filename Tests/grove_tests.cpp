@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -678,6 +679,146 @@ void test_windows_example() {
 
 } // namespace
 
+void test_code_buffer() {
+    grove::CodeBuffer b("int main() {\n    return 0;\n}");
+    CHECK(b.line_count() == 3);
+    b.set_caret(grove::CodePos{ 0, 12 });
+    b.new_line(4, true);
+    CHECK(b.line(1) == "    ");
+    CHECK(b.caret().line == 1 && b.caret().column == 4);
+    b.insert("x");
+    CHECK(b.line(1) == "    x");
+    b.backspace();
+    b.backspace();
+    CHECK(b.line(1) == "   ");
+    CHECK(b.undo());
+    CHECK(b.line(1) == "    x");
+    CHECK(b.undo());
+    CHECK(b.line(1) == "    ");
+    CHECK(b.undo());
+    CHECK(b.line_count() == 3 && b.line(0) == "int main() {");
+    CHECK(b.redo());
+    CHECK(b.line_count() == 4);
+
+    grove::CodeBuffer c("abc def");
+    c.set_caret(grove::CodePos{ 0, 0 });
+    c.move_right(true, true);
+    CHECK(c.selected_text() == "abc ");
+    c.insert("X");
+    CHECK(c.text() == "Xdef");
+    c.select_all();
+    c.insert("one\ntwo");
+    CHECK(c.line_count() == 2 && c.caret().line == 1 && c.caret().column == 3);
+
+    grove::CodeBuffer d("a\nb\nc");
+    d.select(grove::CodePos{ 0, 0 }, grove::CodePos{ 2, 1 });
+    d.indent(4, true);
+    CHECK(d.text() == "    a\n    b\n    c");
+    d.outdent(4);
+    CHECK(d.text() == "a\nb\nc");
+
+    grove::CodeBuffer e("f(|)");
+    e.set_caret(grove::CodePos{ 0, 2 });
+    e.delete_forward();
+    CHECK(e.text() == "f()");
+    e.set_caret(grove::CodePos{ 0, 2 });
+    e.new_line(4, true);
+    CHECK(e.text() == "f(\n    \n)");
+    CHECK(e.caret().line == 1 && e.caret().column == 4);
+
+    grove::CodeBuffer u("h\xC3\xA9llo");
+    u.set_caret(grove::CodePos{ 0, 1 });
+    u.move_right(false);
+    CHECK(u.caret().column == 3);
+    u.backspace();
+    CHECK(u.text() == "hllo");
+
+    CHECK(grove::code_display_column("\tx", 1, 4) == 4);
+    CHECK(grove::code_byte_column("\tx", 4, 4) == 1);
+    CHECK(grove::code_expand_tabs("a\tb", 4) == "a   b");
+}
+
+void test_code_highlight() {
+    grove::CodeLineState st;
+    auto kinds = grove::highlight_code_line(grove::CodeLanguage::Cpp, "int x = 42; // hi", st);
+    CHECK(!kinds.empty() && kinds.front().kind == grove::CodeTokenKind::Type);
+    CHECK(kinds.back().kind == grove::CodeTokenKind::Comment);
+    grove::highlight_code_line(grove::CodeLanguage::C, "/* open", st);
+    CHECK(st.block_comment);
+    auto closing = grove::highlight_code_line(grove::CodeLanguage::C, "still */ return", st);
+    CHECK(!st.block_comment && closing.front().kind == grove::CodeTokenKind::Comment && closing.back().kind == grove::CodeTokenKind::Keyword);
+    grove::CodeLineState ws;
+    auto wal = grove::highlight_code_line(grove::CodeLanguage::Walnut, "function main() -> int {", ws);
+    CHECK(wal.front().kind == grove::CodeTokenKind::Keyword);
+    grove::CodeLineState ms;
+    auto markup = grove::highlight_code_line(grove::CodeLanguage::Grove, "<p class=\"a\">hi</p>", ms);
+    bool tag = false;
+    bool attr = false;
+    for (const auto& t : markup) {
+        tag = tag || t.kind == grove::CodeTokenKind::Tag;
+        attr = attr || t.kind == grove::CodeTokenKind::Attribute;
+    }
+    CHECK(tag && attr);
+    CHECK(grove::code_language_for_path("/x/y/main.WAL") == grove::CodeLanguage::Walnut);
+    CHECK(grove::code_language_for_path("theme.bark") == grove::CodeLanguage::Bark);
+}
+
+void test_code_and_file_inputs() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup(
+        "<body>\n"
+        "  <input_code id=\"ed\" language=\"cpp\">\n"
+        "      int main() {\n"
+        "          return 0 < 1;\n"
+        "      }\n"
+        "  </input_code>\n"
+        "  <input_file id=\"pick\" mode=\"folder\">Open folder</input_file>\n"
+        "  <input_file id=\"bad\" mode=\"sideways\" />\n"
+        "</body>\n",
+        "t.grove", d);
+    CHECK(d.ok());
+    grove::check_inputs(doc, d);
+    CHECK(d.error_count() == 1);
+    grove::Node* ed = doc.find_by_id("ed");
+    CHECK(ed && grove::input_kind_of(*ed) == grove::InputKind::Code);
+    CHECK(ed && grove::input_string(*ed).value_or("") == "int main() {\n    return 0 < 1;\n}");
+    CHECK(ed && grove::set_input_string(doc, *ed, "x"));
+    CHECK(ed && grove::input_text(*ed) == "x");
+    grove::Node* pick = doc.find_by_id("pick");
+    CHECK(pick && grove::input_kind_of(*pick) == grove::InputKind::File);
+    CHECK(pick && grove::input_string(*pick).value_or("?").empty());
+    CHECK(grove_input_kind_of(reinterpret_cast<const grove_element*>(pick)) == GROVE_INPUT_FILE);
+}
+
+void test_natives() {
+    grove::Document doc;
+    CHECK(!grove::has_native(doc, "add"));
+    grove::register_native(doc, "add", [](const std::vector<std::string>& args) {
+        long total = 0;
+        for (const std::string& a : args) total += std::stol(a);
+        return std::to_string(total);
+    });
+    grove::register_native(doc, "boom", [](const std::vector<std::string>&) -> std::string { throw std::runtime_error("nope"); });
+    CHECK(grove::has_native(doc, "add"));
+    CHECK(grove::call_native(doc, "add", { "2", "40" }).value_or("") == "42");
+    std::string error;
+    doc.events().set_error_handler([&](const std::string& m) { error = m; });
+    CHECK(grove::call_native(doc, "boom", {}).value_or("?").empty());
+    CHECK(error.find("nope") != std::string::npos);
+    CHECK(!grove::call_native(doc, "missing", {}));
+    grove_document* handle = reinterpret_cast<grove_document*>(&doc);
+    const char* args[] = { "1", "2", "3" };
+    const char* r = grove_call_native(handle, "add", args, 3);
+    CHECK(r && std::string(r) == "6");
+    CHECK(grove_has_native(handle, "add"));
+    CHECK(grove_call_native(handle, "missing", nullptr, 0) == nullptr);
+    doc.host().file_dialog = [](const grove::FileDialogRequest& req) {
+        return std::vector<std::string>{ "/picked/" + req.mode, "/second" };
+    };
+    CHECK(std::string(grove_file_dialog(handle, "folder", "Pick", "", true)) == "/picked/folder\n/second");
+    CHECK(grove::unregister_native(doc, "add") && !grove::has_native(doc, "add"));
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -706,6 +847,10 @@ int main() {
     test_windows();
     test_popups();
     test_windows_example();
+    test_code_buffer();
+    test_code_highlight();
+    test_code_and_file_inputs();
+    test_natives();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

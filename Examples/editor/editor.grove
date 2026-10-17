@@ -1,0 +1,40 @@
+<grove>
+    <head>
+        <title>Grove editor demo</title>
+        <style src="editor.bark" />
+        <script lang="walnut" src="editor.wal"></script>
+    </head>
+    <body>
+        <row id="layout">
+            <column id="side">
+                <p class="heading">FILES</p>
+                <input_file id="folder" mode="folder">Open folder…</input_file>
+                <list id="files">
+                    <item>main.cpp</item>
+                    <item>app.wal</item>
+                    <item>ui.grove</item>
+                    <item>theme.bark</item>
+                    <item>notes.txt</item>
+                </list>
+            </column>
+            <column id="main">
+                <p class="intro">This paragraph is long enough to wrap onto several lines. It mixes <b>bold</b>, <i>italic</i>, <u>underlined</u> and <code>inline_code()</code> spans, plus a <link id="docs">link you can click</link>, all flowing on the same lines as the text around them.</p>
+                <input_code id="code" language="cpp">
+                    #include <iostream>
+
+                    // A tiny program
+                    int main() {
+                        const char* name = "Grove";
+                        for (int i = 0; i < 3; ++i) {
+                            std::cout << "Hello, " << name << " #" << i << '\n';
+                        }
+                        return 0;
+                    }
+                </input_code>
+                <pre id="log">$ grove run editor.grove
+built 0 scripts
+ready</pre>
+            </column>
+        </row>
+    </body>
+</grove>

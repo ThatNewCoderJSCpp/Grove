@@ -25,6 +25,8 @@ constexpr KindName k_tags[] = {
     { "input_radio",   InputKind::Radio },
     { "input_slider",  InputKind::Slider },
     { "input_color",   InputKind::Color },
+    { "input_code",    InputKind::Code },
+    { "input_file",    InputKind::File },
     { "checkbox",      InputKind::Bool },
     { "slider",        InputKind::Slider },
     { "color",         InputKind::Color },
@@ -45,6 +47,8 @@ constexpr KindName k_type_names[] = {
     { "slider",   InputKind::Slider },
     { "range",    InputKind::Slider },
     { "color",    InputKind::Color },
+    { "code",     InputKind::Code },
+    { "file",     InputKind::File },
 };
 
 bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
@@ -102,6 +106,8 @@ bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
         case InputKind::Bool: return name == "checked" || name == "switch";
         case InputKind::Radio: return name == "name" || name == "value" || name == "checked";
         case InputKind::Color: return name == "value";
+        case InputKind::Code: return name == "value" || name == "placeholder" || name == "name";
+        case InputKind::File: return name == "value" || name == "placeholder" || name == "name";
     }
     return false;
 }
@@ -117,6 +123,8 @@ const char* to_string(InputKind kind) noexcept {
         case InputKind::Radio: return "radio";
         case InputKind::Slider: return "slider";
         case InputKind::Color: return "color";
+        case InputKind::Code: return "code";
+        case InputKind::File: return "file";
     }
     return "string";
 }
@@ -130,6 +138,8 @@ const char* input_tag(InputKind kind) noexcept {
         case InputKind::Radio: return "input_radio";
         case InputKind::Slider: return "input_slider";
         case InputKind::Color: return "input_color";
+        case InputKind::Code: return "input_code";
+        case InputKind::File: return "input_file";
     }
     return "input_string";
 }
@@ -157,6 +167,39 @@ bool is_input(const Node& node) noexcept { return input_kind_of(node).has_value(
 
 bool is_text_input(InputKind kind) noexcept {
     return kind == InputKind::Integer || kind == InputKind::Float || kind == InputKind::String || kind == InputKind::Color;
+}
+
+bool is_string_input(InputKind kind) noexcept {
+    return kind == InputKind::String || kind == InputKind::Code || kind == InputKind::File;
+}
+
+std::string code_source_text(const Node& node) {
+    std::string raw = node.inner_text();
+    std::vector<std::string> lines;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= raw.size(); ++i) {
+        if (i == raw.size() || raw[i] == '\n') {
+            std::string line = raw.substr(start, i - start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            lines.push_back(std::move(line));
+            start = i + 1;
+        }
+    }
+    auto blank = [](const std::string& l) { return l.find_first_not_of(" \t") == std::string::npos; };
+    while (!lines.empty() && blank(lines.front())) lines.erase(lines.begin());
+    while (!lines.empty() && blank(lines.back())) lines.pop_back();
+    std::size_t common = std::string::npos;
+    for (const std::string& l : lines) {
+        if (blank(l)) continue;
+        common = std::min(common, l.find_first_not_of(" \t"));
+    }
+    if (common == std::string::npos) common = 0;
+    std::string out;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (i) out += '\n';
+        if (lines[i].size() >= common) out += lines[i].substr(common);
+    }
+    return out;
 }
 
 bool is_switch(const Node& node, const std::optional<std::string>& appearance) noexcept {
@@ -282,7 +325,9 @@ std::optional<double> input_float(const Node& node) {
 }
 
 std::optional<std::string> input_string(const Node& node) {
-    if (!kind_if(node, { InputKind::String })) return std::nullopt;
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File });
+    if (!kind) return std::nullopt;
+    if (*kind == InputKind::Code && !node.has_attribute("value")) return code_source_text(node);
     return node.attribute_or("value", "");
 }
 
@@ -333,7 +378,13 @@ bool set_input_float(Document& document, Node& node, double value) {
 }
 
 bool set_input_string(Document& document, Node& node, std::string value) {
-    if (!kind_if(node, { InputKind::String })) return false;
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File });
+    if (!kind) return false;
+    if (*kind != InputKind::String) {
+        node.set_attribute("value", std::move(value));
+        document.touch();
+        return true;
+    }
     if (const Attribute* a = node.find_attribute("maxlength")) {
         if (const auto limit = parse_integer(a->value)) {
             if (*limit >= 0) value = truncate_code_points(std::move(value), static_cast<std::size_t>(*limit));
@@ -400,7 +451,9 @@ std::string input_text(const Node& node) {
         case InputKind::Integer: return format_integer(*input_integer(node));
         case InputKind::Float:
         case InputKind::Slider: return format_float(*input_float(node));
-        case InputKind::String: return *input_string(node);
+        case InputKind::String:
+        case InputKind::Code:
+        case InputKind::File: return *input_string(node);
         case InputKind::Color: return format_color(*input_color(node));
         case InputKind::Bool:
         case InputKind::Radio: return *input_bool(node) ? "true" : "false";
@@ -456,7 +509,9 @@ bool commit_input_text(Document& document, Node& node, std::string_view text) {
             const auto v = parse_float(text);
             return v && set_input_float(document, node, *v);
         }
-        case InputKind::String: return set_input_string(document, node, std::string(text));
+        case InputKind::String:
+        case InputKind::Code:
+        case InputKind::File: return set_input_string(document, node, std::string(text));
         case InputKind::Color: {
             std::string hex(text);
             if (hex.empty() || hex.front() != '#') hex.insert(hex.begin(), '#');
@@ -477,11 +532,11 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
         if (generic) {
             const Attribute* type = node.find_attribute("type");
             if (!type) {
-                diagnostics.error(file, node.span(), "<input> needs a type (integer, float, string, bool, radio, slider or color), or use <input_integer>, <input_float>, ...");
+                diagnostics.error(file, node.span(), "<input> needs a type (integer, float, string, bool, radio, slider, color, code or file), or use <input_integer>, <input_float>, ...");
                 return;
             }
             if (!input_kind_from_name(type->value)) {
-                diagnostics.error(file, type->span, "unknown input type '" + type->value + "' (use integer, float, string, bool, radio, slider or color)");
+                diagnostics.error(file, type->span, "unknown input type '" + type->value + "' (use integer, float, string, bool, radio, slider, color, code or file)");
                 return;
             }
         }
@@ -547,7 +602,15 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
                 if (!name.empty() && node.has_attribute("checked")) checked_radios[name].push_back(&node);
                 break;
             }
-            case InputKind::Bool: break;
+            case InputKind::File: {
+                const std::string mode = node.attribute_or("mode", "open");
+                if (mode != "open" && mode != "save" && mode != "folder") {
+                    diagnostics.error(file, node.find_attribute("mode")->span, "mode=\"" + mode + "\" should be open, save or folder");
+                }
+                break;
+            }
+            case InputKind::Bool:
+            case InputKind::Code: break;
         }
     });
 

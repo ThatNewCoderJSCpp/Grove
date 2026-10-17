@@ -1,0 +1,57 @@
+body {
+    size: 960px 620px;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    font-size: 14px;
+    padding: 0;
+}
+
+#layout {
+    gap: 0;
+    height: 100%;
+}
+
+#side {
+    width: 220px;
+    background: #181825;
+    padding: 12px;
+    overflow: auto;
+}
+
+.heading {
+    color: #9399b2;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+#files item {
+    padding: 3px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+        background: #313244;
+    }
+}
+
+#main {
+    padding: 16px 20px;
+}
+
+code {
+    background: #313244;
+    border-radius: 3px;
+}
+
+#code {
+    flex: 1;
+    margin: 4px 0 10px 0;
+}
+
+#log {
+    background: #11111b;
+    padding: 8px 10px;
+    height: 80px;
+    overflow: auto;
+    color: #a6e3a1;
+}

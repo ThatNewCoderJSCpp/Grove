@@ -102,3 +102,6 @@ bool|grove_window_focus|grove_document* document, grove_element* window
 grove_element*|grove_popup|grove_document* document, grove_element* owner, const char* kind, const char* title, const char* message, const char* input, const char* value, const char* options
 bool|grove_popup_answer|grove_document* document, grove_element* popup, bool ok
 const char*|grove_input_text|const grove_element* element
+const char*|grove_call_native|grove_document* document, const char* name, const char* const* args, size_t count
+bool|grove_has_native|grove_document* document, const char* name
+const char*|grove_file_dialog|grove_document* document, const char* mode, const char* title, const char* filter, bool multiple
