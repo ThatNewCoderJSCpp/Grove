@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.3 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.4 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -66,6 +66,9 @@ add_library(grove_core STATIC
     Source/script/builder.cpp
     Source/script/loader.cpp
     Source/input/input.cpp
+    Source/input/code_buffer.cpp
+    Source/input/code_highlight.cpp
+    Source/native.cpp
     Source/math/math_block.cpp
     Source/api/grove_api.cpp
     Source/project.cpp
