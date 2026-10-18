@@ -134,12 +134,14 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `margin`, `padding` | blocks, inputs | 1 to 4 lengths, CSS order |
 | `border-color`, `border-width` | blocks, inputs | |
 | `border-radius` | blocks, inputs | rounded corners |
-| `width` | blocks, inputs | a length or a `%` of the space it's in; text inputs and sliders default to 220px; never wider than the space it's in |
+| `width` | blocks, inputs | a length or a `%` of the space it's in; text inputs and sliders default to 220px; never wider than the space it's in, except inside a block with `overflow-x: auto` |
 | `min-width`, `max-width` | blocks, row items | lengths or `%`; in a row they bound how much of the free space an item takes |
 | `height` | blocks, `input_code` | a length or a `%` of the parent's height (when the parent's height is known); with `overflow` other than `visible` the block is exactly this tall, otherwise it's the smallest height |
 | `min-height`, `max-height` | blocks | lengths or `%`; `max-height` only applies when `overflow` clips |
 | `flex` | children of a column, row items | a number: how much of the leftover space the item gets. In a column (any block that isn't a row) this needs the column's height to be known: from `height`, from being an item in a row, or from being `body` |
-| `overflow` | blocks | `visible` (default), `hidden` clips the content to the block, `auto` and `scroll` clip it and let the mouse wheel scroll it |
+| `overflow` | blocks | `visible` (default), `hidden` clips the content to the block, `auto` and `scroll` clip it and let the mouse wheel scroll it up and down |
+| `overflow-x`, `overflow-y` | blocks | the same for one direction. `overflow-y` defaults to `overflow`; `overflow-x` scrolls only when it's set to `auto` or `scroll`. Inside a block that scrolls sideways, images keep their own size and a `width` can be wider than the block instead of being shrunk to fit; Shift+wheel or a sideways wheel scrolls it, and a bar along the bottom shows where you are |
+| `zoom` | `body`, `window` | scales every `px` and `pt` length, font size and image in the window: `zoom: 1.25` (or `125%`) makes everything a quarter bigger. Viewport units are already relative to the window, so they don't change |
 | `appearance` | `input_bool` | `checkbox` (default) or `switch` |
 | `accent-color` | inputs | checked boxes and radios, slider fill and thumb, focused border, the caret and selection of `input_code` |
 | `gap` | blocks, `row` | extra space after a block; space between the items of a row |

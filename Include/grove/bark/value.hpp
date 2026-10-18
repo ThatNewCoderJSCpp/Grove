@@ -53,9 +53,11 @@ using ValueList = std::vector<Value>;
 struct Viewport {
     double width = 0.0;
     double height = 0.0;
+    double zoom = 1.0;
 
     bool known() const noexcept { return width > 0.0 && height > 0.0; }
-    bool operator==(const Viewport& o) const noexcept { return width == o.width && height == o.height; }
+    double scale() const noexcept { return zoom > 0.0 ? zoom : 1.0; }
+    bool operator==(const Viewport& o) const noexcept { return width == o.width && height == o.height && zoom == o.zoom; }
     bool operator!=(const Viewport& o) const noexcept { return !(*this == o); }
 };
 

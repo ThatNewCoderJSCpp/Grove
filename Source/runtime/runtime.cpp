@@ -441,6 +441,7 @@ struct Scroller {
     Rect rect;
     float max = 0;
     bool code = false;
+    float max_x = 0;
 };
 
 struct PendingDialog {
@@ -539,6 +540,19 @@ struct ColorPicker {
     std::size_t code_begin = 0;
     std::size_t code_end = 0;
     std::string code_format;
+};
+
+struct SelectMenu {
+    const Node* node = nullptr;
+    Rect anchor;
+    bool anchored = false;
+    Rect panel;
+    float scroll = 0;
+    float max_scroll = 0;
+    float row_h = 0;
+    std::size_t active = 0;
+    bool reveal = true;
+    std::vector<std::pair<Rect, std::size_t>> rows;
 };
 
 struct CodeHover {
@@ -676,6 +690,20 @@ public:
         return title.empty() ? std::string("Grove") : title;
     }
 
+    void apply_zoom() {
+        double zoom = 1.0;
+        if (const bark::ValueList* v = style_of(m_window).get("zoom"); v && !v->empty() && v->front().is_number()) {
+            const bark::Value& z = v->front();
+            zoom = z.unit == "%" ? z.number / 100.0 : z.unit.empty() ? z.number : 1.0;
+        }
+        zoom = std::clamp(zoom, 0.25, 5.0);
+        bark::Viewport vp = m_styles.viewport();
+        if (vp.zoom == zoom) return;
+        vp.zoom = zoom;
+        m_styles.set_viewport(vp);
+        m_measure.clear();
+    }
+
     void paint(fizmo::graphics::Renderer& r) {
         const auto now = std::chrono::steady_clock::now();
         m_dt = m_has_frame ? std::min(0.1f, std::chrono::duration<float>(now - m_last_frame).count()) : 0.0f;
@@ -692,7 +720,7 @@ public:
                 document().host().viewport_width = w;
                 document().host().viewport_height = h;
             }
-            m_styles.set_viewport(bark::Viewport{ w, h });
+            m_styles.set_viewport(bark::Viewport{ w, h, m_styles.viewport().zoom });
             if (!first) {
                 Event e;
                 e.type = "resize";
@@ -705,6 +733,7 @@ public:
         if (m_revision != document().revision()) {
             m_revision = document().revision();
             m_styles.invalidate();
+            apply_zoom();
             const std::string title = title_now();
             if (title != m_title) {
                 m_title = title;
@@ -715,6 +744,8 @@ public:
 
         poll_dialogs();
         if (m_picker.node && !document().is_attached(*m_picker.node)) m_picker = ColorPicker{};
+        if (m_menu.node && !document().is_attached(*m_menu.node)) m_menu = SelectMenu{};
+        m_menu.anchored = false;
         m_swatches.clear();
         m_ops.clear();
         m_hits.clear();
@@ -722,6 +753,7 @@ public:
         m_opacity.clear();
         m_scrollers.clear();
         m_clips.clear();
+        m_code_laid.clear();
         const bark::ComputedStyle& style = style_of(m_window);
         if (auto bg = style.color("background")) push_rect(DrawOp::Kind::Fill, 0, 0, w, h, to_color(*bg));
         const Box pad = box_of(style, "padding");
@@ -736,6 +768,7 @@ public:
         layout_modals(r, w, h);
         layout_code_hover(r, w, h);
         layout_picker(r, w, h);
+        layout_menu(r, w, h);
         std::vector<Rect> clips;
         auto apply = [&r](const Rect& c) {
             const int cx = static_cast<int>(std::floor(c.x));
@@ -811,6 +844,10 @@ public:
                 ev.delta_y = dy;
                 if (m_modal && !m_modal_panel.contains(m_mouse_x, m_mouse_y)) break;
                 if (!(m_code_hover.shown && m_code_hover.panel.contains(m_mouse_x, m_mouse_y))) hide_code_hover();
+                if (m_menu.node && m_menu.panel.contains(m_mouse_x, m_mouse_y)) {
+                    m_menu.scroll = std::clamp(m_menu.scroll - static_cast<float>(dy) * m_menu.row_h * 3.0f, 0.0f, m_menu.max_scroll);
+                    break;
+                }
                 if (dispatch(hit_element(m_mouse_x, m_mouse_y), ev)) {
                     const bool horizontal = (m_mods & ModifierShift) != 0 || (e.scroll_x != 0.0f && e.scroll_y == 0.0f && e.scroll_delta == 0.0f);
                     const double amount = horizontal && e.scroll_x != 0.0f ? static_cast<double>(e.scroll_x) : dy;
@@ -1036,9 +1073,25 @@ private:
         std::size_t scrollers = 0;
         std::size_t clips = 0;
         std::size_t swatches = 0;
+        std::size_t codes = 0;
     };
 
-    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size() }; }
+    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size() }; }
+
+    void shift_x(const Mark& from, float dx) {
+        for (std::size_t i = from.ops; i < m_ops.size(); ++i) m_ops[i].x += dx;
+        for (std::size_t i = from.hits; i < m_hits.size(); ++i) {
+            m_hits[i].x += dx;
+            m_hits[i].track_x += dx;
+        }
+        for (std::size_t i = from.boxes; i < m_boxes.size(); ++i) m_boxes[i].x += dx;
+        for (std::size_t i = from.scrollers; i < m_scrollers.size(); ++i) m_scrollers[i].rect.x += dx;
+        for (std::size_t i = from.swatches; i < m_swatches.size(); ++i) {
+            m_swatches[i].swatch.x += dx;
+            m_swatches[i].box.x += dx;
+        }
+        for (std::size_t i = from.codes; i < m_code_laid.size(); ++i) m_code[m_code_laid[i]].text_x += dx;
+    }
 
     void rewind(const Mark& m) {
         m_ops.resize(m.ops);
@@ -1047,6 +1100,7 @@ private:
         m_scrollers.resize(m.scrollers);
         m_clips.resize(m.clips);
         m_swatches.resize(m.swatches);
+        m_code_laid.resize(m.codes);
     }
 
     bool is_row(const Node& element, const bark::ComputedStyle& style) {
@@ -1257,11 +1311,11 @@ private:
         const bool fixed_kind = b.tag() == "img" || input_kind_of(b).has_value();
         if (fixed_kind) {
             const float n = natural_width(r, b.parent() ? *b.parent() : b, b, width);
-            if (n >= 0.0f) bw = std::min(avail, n - m.left - m.right);
+            if (n >= 0.0f) bw = m_wide > 0 && b.tag() == "img" ? n - m.left - m.right : std::min(avail, n - m.left - m.right);
             return bw + m.left + m.right;
         }
         if (const auto w = resolve_length(s, "width", width)) {
-            bw = std::min(avail, *w);
+            bw = m_wide > 0 ? *w : std::min(avail, *w);
         } else if (fit || is_inline_block(b, s)) {
             const float n = fit_width(r, b, width);
             if (n >= 0.0f) bw = std::min(avail, n - m.left - m.right);
@@ -1316,7 +1370,7 @@ private:
                 const Box pad = box_of(style, "padding");
                 return text_width(r, file_label(node), text_style(node)) + pad.left + pad.right + margins + 2.0f + file_value_width(r, node);
             }
-            if (is_text_input(*kind)) return resolve_length(style, "width", row_width).value_or(220.0f) + margins;
+            if (is_text_input(*kind) || *kind == InputKind::Select) return resolve_length(style, "width", row_width).value_or(220.0f) + margins;
             if (*kind == InputKind::Slider) return resolve_length(style, "width", row_width).value_or(220.0f) + 70.0f + margins;
             const float size = std::round(static_cast<float>(font_size_of(node)) * 1.05f);
             const bool toggle = *kind == InputKind::Bool && is_switch(node, style.text("appearance"));
@@ -1828,6 +1882,146 @@ private:
         y += h;
     }
 
+    void layout_select(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width) {
+        const bark::ComputedStyle& style = style_of(element);
+        const Box pad = box_of(style, "padding");
+        const fizmo::text::TextStyle ts = text_style(element);
+        const float lh = line_height(r, ts);
+        const float w = box_width(style, width);
+        const float h = lh + pad.top + pad.bottom;
+        const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
+        const bool open = m_menu.node == &element;
+        const bool focused = m_focused == &element || open;
+        const bool disabled = is_disabled(&element);
+        const double fade = (disabled ? 0.45 : 1.0) * opacity_of(element);
+
+        if (auto bg = style.color("background")) push_rect(DrawOp::Kind::Fill, x, y, w, h, with_alpha(to_color(*bg), fade), 1, radius);
+        Color border = to_color(style.color("border-color").value_or(bark::Rgba{ 255, 255, 255, 60 }));
+        if (focused) border = accent_color(element);
+        push_rect(DrawOp::Kind::Stroke, x, y, w, h, with_alpha(border, fade), focused ? 2u : 1u, radius);
+
+        const std::vector<SelectOption> options = select_options(element);
+        const std::optional<std::size_t> index = select_index(element);
+        const float arrow_w = text_width(r, "\xE2\x96\xBE", ts) + 4.0f;
+        const float tx = x + pad.left;
+        const float tw = std::max(1.0f, x + w - pad.right - arrow_w - tx);
+        fizmo::text::TextStyle shown = ts;
+        if (disabled) shown.set_fg_color(with_alpha(raw_text_color(element), fade));
+        if (index && *index < options.size()) {
+            push_text(tx, y + pad.top, tw, lh, options[*index].label, shown);
+        } else {
+            fizmo::text::TextStyle muted = ts;
+            muted.set_fg_color(with_alpha(text_color(element), 0.45));
+            push_text(tx, y + pad.top, tw, lh, element.has_attribute("value") ? element.attribute_or("value", "") : element.attribute_or("placeholder", ""), muted);
+        }
+        fizmo::text::TextStyle arrow = ts;
+        arrow.set_fg_color(with_alpha(text_color(element), disabled ? 0.3 : 0.7));
+        push_text(x + w - pad.right - arrow_w + 4.0f, y + pad.top, arrow_w, lh, "\xE2\x96\xBE", arrow);
+        if (open) {
+            m_menu.anchor = Rect{ x, y, w, h };
+            m_menu.anchored = true;
+        }
+        if (!disabled) add_hit(Hit{ &element, InputKind::Select, x, y, w, h, 0, 0 });
+        add_box(ElementBox{ &element, x, y, w, h });
+        y += h;
+    }
+
+    void open_menu(const Node* node) {
+        m_menu = SelectMenu{};
+        m_menu.node = node;
+        m_menu.active = select_index(*node).value_or(0);
+        m_menu.reveal = true;
+    }
+
+    void close_menu() {
+        m_menu = SelectMenu{};
+    }
+
+    void choose_option(std::size_t index) {
+        if (!m_menu.node && !m_focused) return;
+        const Node* target = m_menu.node ? m_menu.node : m_focused;
+        const std::vector<SelectOption> options = select_options(*target);
+        if (index >= options.size() || options[index].disabled) return;
+        Node& node = mutable_node(*target);
+        const bool changed = input_string(node).value_or("") != options[index].value || !node.has_attribute("value");
+        set_input_string(document(), node, options[index].value);
+        if (changed) fire_value(node, true);
+    }
+
+    std::size_t step_option(const Node& node, std::size_t from, int direction) {
+        const std::vector<SelectOption> options = select_options(node);
+        if (options.empty()) return from;
+        std::size_t at = std::min(from, options.size() - 1);
+        for (std::size_t tries = 0; tries < options.size(); ++tries) {
+            if (direction < 0 && at == 0) return from;
+            if (direction > 0 && at + 1 >= options.size()) return from;
+            at = direction < 0 ? at - 1 : at + 1;
+            if (!options[at].disabled) return at;
+        }
+        return from;
+    }
+
+    void layout_menu(fizmo::graphics::Renderer& r, float view_w, float view_h) {
+        SelectMenu& m = m_menu;
+        if (!m.node) return;
+        if (!m.anchored) {
+            m = SelectMenu{};
+            return;
+        }
+        const std::vector<SelectOption> options = select_options(*m.node);
+        const fizmo::text::TextStyle ts = text_style(*m.node);
+        const Color fg = raw_text_color(*m.node);
+        const Color accent = accent_color(*m.node);
+        const float lh = line_height(r, ts);
+        m.row_h = lh + 8.0f;
+        float widest = m.anchor.w;
+        for (const SelectOption& o : options) widest = std::max(widest, text_width(r, o.label, ts) + 28.0f);
+        const float panel_w = std::min(widest, std::max(m.anchor.w, view_w - 8.0f));
+        const float below = view_h - (m.anchor.y + m.anchor.h) - 8.0f;
+        const float above = m.anchor.y - 8.0f;
+        const float full = m.row_h * static_cast<float>(options.size()) + 8.0f;
+        const float limit = std::min(m.row_h * 12.0f + 8.0f, std::max(below, above));
+        const float panel_h = std::max(m.row_h + 8.0f, std::min(full, limit));
+        float px = std::clamp(m.anchor.x, 4.0f, std::max(4.0f, view_w - panel_w - 4.0f));
+        float py = full <= below || below >= above ? m.anchor.y + m.anchor.h + 4.0f : m.anchor.y - 4.0f - panel_h;
+        py = std::clamp(py, 4.0f, std::max(4.0f, view_h - panel_h - 4.0f));
+        m.panel = Rect{ px, py, panel_w, panel_h };
+        m.max_scroll = std::max(0.0f, full - panel_h);
+        if (m.reveal) {
+            const float top = static_cast<float>(m.active) * m.row_h;
+            if (top < m.scroll) m.scroll = top;
+            if (top + m.row_h > m.scroll + panel_h - 8.0f) m.scroll = top + m.row_h - (panel_h - 8.0f);
+            m.reveal = false;
+        }
+        m.scroll = std::clamp(m.scroll, 0.0f, m.max_scroll);
+
+        const Color window_bg = to_color(style_of(m_window).color("background").value_or(bark::Rgba{ 30, 30, 46, 255 }));
+        const Color panel_bg = mix(window_bg, fg, 0.06f);
+        push_rect(DrawOp::Kind::Fill, px + 2, py + 3, panel_w, panel_h, Color(0, 0, 0, 70), 1, 6);
+        push_rect(DrawOp::Kind::Fill, px, py, panel_w, panel_h, panel_bg, 1, 6);
+        push_rect(DrawOp::Kind::Stroke, px, py, panel_w, panel_h, with_alpha(fg, 0.22), 1, 6);
+        push_clip(Rect{ px, py + 4, panel_w, panel_h - 8 });
+        m.rows.clear();
+        const std::optional<std::size_t> chosen = select_index(*m.node);
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            const Rect row{ px + 4, py + 4 + static_cast<float>(i) * m.row_h - m.scroll, panel_w - 8, m.row_h };
+            if (row.y + row.h < py || row.y > py + panel_h) continue;
+            const bool hovered = row.contains(m_mouse_x, m_mouse_y) && m.panel.contains(m_mouse_x, m_mouse_y);
+            if (chosen && *chosen == i) push_rect(DrawOp::Kind::Fill, row.x, row.y, row.w, row.h, with_alpha(accent, 0.25), 1, 4);
+            if (i == m.active || hovered) push_rect(DrawOp::Kind::Fill, row.x, row.y, row.w, row.h, with_alpha(fg, 0.08), 1, 4);
+            fizmo::text::TextStyle text = ts;
+            text.set_fg_color(with_alpha(fg, options[i].disabled ? 0.4 : 0.95));
+            push_text(row.x + 10, row.y + 4, row.w - 14, lh, options[i].label, text);
+            m.rows.emplace_back(row, i);
+        }
+        pop_clip();
+        if (m.max_scroll > 0.0f) {
+            const float track = panel_h - 8.0f;
+            const float thumb = std::max(20.0f, track * track / (track + m.max_scroll));
+            push_rect(DrawOp::Kind::Fill, px + panel_w - 6, py + 4 + (track - thumb) * (m.scroll / m.max_scroll), 3, thumb, with_alpha(fg, 0.3), 1, 2);
+        }
+    }
+
     void layout_check(fizmo::graphics::Renderer& r, const Node& element, InputKind kind, float x, float& y, float width) {
         const fizmo::text::TextStyle ts = text_style(element);
         const float lh = line_height(r, ts);
@@ -1958,6 +2152,7 @@ private:
     void layout_code(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, float forced_h) {
         const bark::ComputedStyle& style = style_of(element);
         CodeEditor& ed = m_code[&element];
+        m_code_laid.push_back(&element);
         const std::string value = input_string(element).value_or("");
         if (value != ed.synced) {
             const CodePos keep = ed.buffer.caret();
@@ -2268,15 +2463,16 @@ private:
 
     void image_size(const Node& img, const bark::ComputedStyle& style, float available, float& w, float& h) {
         const fizmo::graphics::Texture* tex = texture_for(img);
-        const float nw = tex ? static_cast<float>(tex->width()) : 0.0f;
-        const float nh = tex ? static_cast<float>(tex->height()) : 0.0f;
+        const float zoom = static_cast<float>(m_styles.viewport().scale());
+        const float nw = tex ? static_cast<float>(tex->width()) * zoom : 0.0f;
+        const float nh = tex ? static_cast<float>(tex->height()) * zoom : 0.0f;
         std::optional<float> sw = resolve_length(style, "width", available);
         std::optional<float> sh = resolve_length(style, "height", -1.0f);
         if (!sw) {
-            if (const auto a = parse_float(img.attribute_or("width", ""))) sw = static_cast<float>(*a);
+            if (const auto a = parse_float(img.attribute_or("width", ""))) sw = static_cast<float>(*a) * zoom;
         }
         if (!sh) {
-            if (const auto a = parse_float(img.attribute_or("height", ""))) sh = static_cast<float>(*a);
+            if (const auto a = parse_float(img.attribute_or("height", ""))) sh = static_cast<float>(*a) * zoom;
         }
         if (sw && sh) {
             w = *sw;
@@ -2291,7 +2487,7 @@ private:
             w = nw;
             h = nh;
         }
-        if (w > available && available > 0.0f && w > 0.0f) {
+        if (m_wide == 0 && w > available && available > 0.0f && w > 0.0f) {
             h = h * available / w;
             w = available;
         }
@@ -2328,7 +2524,8 @@ private:
                 const float saved = m_avail_h;
                 layout_code(r, element, bx, y, bw, forced_h);
                 m_avail_h = saved;
-            } else if (is_text_input(*kind)) layout_text_input(r, element, *kind, bx, y, bw);
+            } else if (*kind == InputKind::Select) layout_select(r, element, bx, y, bw);
+            else if (is_text_input(*kind)) layout_text_input(r, element, *kind, bx, y, bw);
             else if (*kind == InputKind::Slider) layout_slider(r, element, bx, y, bw);
             else layout_check(r, element, *kind, bx, y, bw);
             y += margin.bottom;
@@ -2341,9 +2538,9 @@ private:
             float ih = 0.0f;
             image_size(element, style, bw, iw, ih);
             const Box ipad = box_of(style, "padding");
-            bw = std::min(bw, iw + ipad.left + ipad.right);
+            bw = m_wide > 0 ? iw + ipad.left + ipad.right : std::min(bw, iw + ipad.left + ipad.right);
         } else if (!sized) {
-            if (const auto w = resolve_length(style, "width", width)) bw = std::min(bw, *w);
+            if (const auto w = resolve_length(style, "width", width)) bw = m_wide > 0 ? *w : std::min(bw, *w);
             else if (is_inline_block(element, style)) {
                 const float natural = natural_width(r, *element.parent(), element, width) - margin.left - margin.right;
                 if (natural > 0.0f) bw = std::min(bw, natural);
@@ -2365,8 +2562,11 @@ private:
         else if (const auto hgt = resolve_length(style, "height", m_avail_h)) fixed_h = *hgt;
         std::optional<float> max_h = resolve_length(style, "max-height", m_avail_h);
         const std::string overflow = style.text("overflow").value_or("visible");
-        const bool clips = overflow == "hidden" || overflow == "scroll" || overflow == "auto";
-        const bool scrolls = overflow == "scroll" || overflow == "auto";
+        const std::string overflow_y = style.text("overflow-y").value_or(overflow);
+        const std::string overflow_x = style.text("overflow-x").value_or(overflow == "auto" || overflow == "scroll" ? std::string("hidden") : overflow);
+        const bool clips = overflow_y == "hidden" || overflow_y == "scroll" || overflow_y == "auto" || overflow_x == "hidden" || overflow_x == "scroll" || overflow_x == "auto";
+        const bool scrolls = overflow_y == "scroll" || overflow_y == "auto";
+        const bool scrolls_x = overflow_x == "scroll" || overflow_x == "auto";
 
         const auto bg = style.color("background");
         const auto border = style.color("border-color");
@@ -2384,6 +2584,8 @@ private:
         m_avail_h = fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f;
 
         float cy = y + pad.top - scroll;
+        const Mark inner = mark();
+        if (scrolls_x) ++m_wide;
         if (element.tag() == "math") layout_math(element, content_x, cy, content_w);
         else if (element.tag() == "img") layout_image(element, content_x, cy, content_w);
         else if (element.tag() == "br") cy += static_cast<float>(font_size_of(element));
@@ -2393,6 +2595,7 @@ private:
         } else if (kind && *kind == InputKind::File) {
             layout_file_content(r, element, content_x, cy, content_w);
         } else lay_content(r, element, style, content_x, cy, content_w);
+        if (scrolls_x) --m_wide;
         m_avail_h = saved_avail;
 
         const float natural_bottom = cy + scroll + pad.bottom;
@@ -2403,8 +2606,28 @@ private:
 
         if (clips) {
             m_ops[clip_op].h = bottom - top;
+            float max_scroll_x = 0.0f;
+            if (scrolls_x) {
+                float right = content_x + content_w;
+                for (std::size_t i = inner.ops; i < m_ops.size(); ++i) {
+                    const DrawOp& op = m_ops[i];
+                    if (op.kind == DrawOp::Kind::ClipPush || op.kind == DrawOp::Kind::ClipPop) continue;
+                    right = std::max(right, op.x + op.w + pad.right);
+                }
+                max_scroll_x = std::max(0.0f, right - (bx + bw));
+                float& sx = m_elem_scroll_x[&element];
+                sx = std::clamp(sx, 0.0f, max_scroll_x);
+                if (sx > 0.0f) shift_x(inner, -sx);
+                if (max_scroll_x > 0.0f) {
+                    const float track = bw;
+                    const float thumb = std::max(20.0f, track * track / (track + max_scroll_x));
+                    const float tx = bx + (track - thumb) * (sx / max_scroll_x);
+                    push_rect(DrawOp::Kind::Fill, tx, bottom - 6, thumb, 4, with_alpha(raw_text_color(element), 0.25), 1, 2);
+                }
+            }
+            float max_scroll = 0.0f;
             if (scrolls) {
-                const float max_scroll = std::max(0.0f, natural_bottom - bottom);
+                max_scroll = std::max(0.0f, natural_bottom - bottom);
                 float& s = m_elem_scroll[&element];
                 s = std::clamp(s, 0.0f, max_scroll);
                 if (max_scroll > 0.0f) {
@@ -2413,8 +2636,8 @@ private:
                     const float ty = top + (track - thumb) * (s / max_scroll);
                     push_rect(DrawOp::Kind::Fill, bx + bw - 6, ty, 4, thumb, with_alpha(raw_text_color(element), 0.25), 1, 2);
                 }
-                m_scrollers.push_back(Scroller{ &element, current_clip(), max_scroll, false });
             }
+            if (scrolls || scrolls_x) m_scrollers.push_back(Scroller{ &element, current_clip(), max_scroll, false, max_scroll_x });
             pop_clip();
         }
 
@@ -2899,6 +3122,25 @@ private:
     void mouse_down(float px, float py) {
         if (code_hover_click(px, py)) return;
         hide_code_hover();
+        if (m_menu.node) {
+            if (m_menu.panel.contains(px, py)) {
+                for (const auto& [row, index] : m_menu.rows) {
+                    if (row.contains(px, py) && py >= m_menu.panel.y + 4 && py < m_menu.panel.y + m_menu.panel.h - 4) {
+                        choose_option(index);
+                        if (!select_options(*m_menu.node).at(index).disabled) close_menu();
+                        return;
+                    }
+                }
+                return;
+            }
+            const Node* was = m_menu.node;
+            const bool on_anchor = m_menu.anchor.contains(px, py);
+            close_menu();
+            if (on_anchor) {
+                set_focused(was);
+                return;
+            }
+        }
         if (m_picker.node) {
             if (m_picker.panel.contains(px, py)) {
                 picker_press(px, py);
@@ -3000,6 +3242,12 @@ private:
                         blur(true);
                         blur_code();
                         set_focused(hit.node);
+                        return;
+                    case InputKind::Select:
+                        blur(true);
+                        blur_code();
+                        set_focused(hit.node);
+                        open_menu(hit.node);
                         return;
                     case InputKind::Slider:
                         blur(true);
@@ -3174,6 +3422,33 @@ private:
             code_key(key, e.mods);
             return;
         }
+        if (!m_focus && m_menu.node) {
+            const std::size_t count = select_options(*m_menu.node).size();
+            if (key == Key::Escape || key == Key::Tab) close_menu();
+            else if (key == Key::Up || key == Key::Down) {
+                m_menu.active = step_option(*m_menu.node, m_menu.active, key == Key::Up ? -1 : 1);
+                m_menu.reveal = true;
+            } else if (key == Key::Home || key == Key::End) {
+                m_menu.active = key == Key::Home ? 0 : (count == 0 ? 0 : count - 1);
+                m_menu.reveal = true;
+            } else if (key == Key::PageUp || key == Key::PageDown) {
+                for (int i = 0; i < 10; ++i) m_menu.active = step_option(*m_menu.node, m_menu.active, key == Key::PageUp ? -1 : 1);
+                m_menu.reveal = true;
+            } else if (key == Key::Enter || key == Key::Space) {
+                choose_option(m_menu.active);
+                close_menu();
+            }
+            return;
+        }
+        if (!m_focus && m_focused && input_kind_of(*m_focused) == InputKind::Select && !is_disabled(m_focused)) {
+            if (key == Key::Enter || key == Key::Space) open_menu(m_focused);
+            else if (key == Key::Up || key == Key::Down) {
+                const std::size_t from = select_index(*m_focused).value_or(0);
+                const std::size_t to = step_option(*m_focused, from, key == Key::Up ? -1 : 1);
+                if (to != from || !select_index(*m_focused)) choose_option(to);
+            }
+            return;
+        }
         if (!m_focus) {
             if (m_focused && (key == Key::Enter || key == Key::Space) && (m_focused->tag() == "button" || input_kind_of(*m_focused) == InputKind::File) && !is_disabled(m_focused)) {
                 Event click;
@@ -3245,7 +3520,15 @@ private:
                 }
                 return true;
             }
-            if (horizontal || sc.max <= 0.0f) continue;
+            if (horizontal) {
+                if (sc.max_x <= 0.0f) continue;
+                float& sx = m_elem_scroll_x[sc.node];
+                const float before_x = sx;
+                sx = std::clamp(sx - amount, 0.0f, sc.max_x);
+                if (sx != before_x || amount != 0.0f) return true;
+                continue;
+            }
+            if (sc.max <= 0.0f) continue;
             float& s = m_elem_scroll[sc.node];
             const float before = s;
             s = std::clamp(s - amount, 0.0f, sc.max);
@@ -3964,6 +4247,7 @@ private:
     std::size_t m_modal_boxes = 0;
     std::size_t m_modal_hits = 0;
     ColorPicker m_picker;
+    SelectMenu m_menu;
     CodeHover m_code_hover;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
     std::shared_ptr<fizmo::images::BitmapImage> m_color_wheel_image;
@@ -4000,6 +4284,9 @@ private:
     std::vector<Rect> m_clips;
     std::vector<Scroller> m_scrollers;
     std::unordered_map<const Node*, float> m_elem_scroll;
+    std::unordered_map<const Node*, float> m_elem_scroll_x;
+    std::vector<const Node*> m_code_laid;
+    int m_wide = 0;
     std::unordered_map<const Node*, CodeEditor> m_code;
     const Node* m_code_focus = nullptr;
     const Node* m_code_drag = nullptr;
@@ -4465,6 +4752,23 @@ private:
 };
 
 } // namespace
+
+std::vector<std::string> font_families(std::string_view kind) {
+    std::vector<std::string> out;
+    auto add = [&out](const char* name) {
+        const std::string n(name);
+        if (n.rfind("Invalid", 0) != 0) out.push_back(n);
+    };
+    const bool all = kind.empty() || kind == "all";
+#define GROVE_FONT_NAME(name, css) add(css);
+    if (all || kind == "monospace") { FIZMO_MONOSPACE_FONTS(GROVE_FONT_NAME) }
+    if (all || kind == "sans-serif") { FIZMO_SANS_SERIF_FONTS(GROVE_FONT_NAME) }
+    if (all || kind == "serif") { FIZMO_SERIF_FONTS(GROVE_FONT_NAME) }
+    if (all || kind == "display") { FIZMO_DISPLAY_FONTS(GROVE_FONT_NAME) }
+    if (all || kind == "handwriting") { FIZMO_HANDWRITING_FONTS(GROVE_FONT_NAME) }
+#undef GROVE_FONT_NAME
+    return out;
+}
 
 int run(Project& project, const RunOptions& options) {
     const Node* window = pick_window(project, options);

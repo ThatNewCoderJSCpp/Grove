@@ -129,9 +129,9 @@ std::optional<std::string> ComputedStyle::text(const std::string& property) cons
 
 double ComputedStyle::font_size() const {
     const ValueList* v = get("font-size");
-    if (!v) return 16.0;
-    const auto px = as_length(*v, 16.0, m_viewport);
-    return px ? *px : 16.0;
+    if (!v) return 16.0 * m_viewport.scale();
+    const auto px = as_length(*v, 16.0 * m_viewport.scale(), m_viewport);
+    return px ? *px : 16.0 * m_viewport.scale();
 }
 
 const Stylesheet& default_stylesheet() {
@@ -157,11 +157,13 @@ const Stylesheet& default_stylesheet() {
             "}\n"
             "p { margin: 0 0 0.5em 0; }\n"
             "math { display: inline; }\n"
-            "input, input_integer, input_float, input_string, input_color {\n"
+            "input, input_integer, input_float, input_string, input_color, input_select {\n"
             "    width: 220px; padding: 6px 10px; margin: 0 0 8px 0;\n"
             "    background: rgba(255, 255, 255, 6%); border-color: rgba(255, 255, 255, 22%); border-radius: 6px;\n"
             "}\n"
             "input_slider, slider { width: 220px; margin: 0 0 8px 0; }\n"
+            "input_select { cursor: pointer; }\n"
+            "option { display: none; }\n"
             "input_code {\n"
             "    height: 300px; margin: 0 0 8px 0; font-family: monospace; font-size: 14px; cursor: text;\n"
             "    background: rgba(0, 0, 0, 25%); border-color: rgba(255, 255, 255, 15%); border-radius: 6px;\n"
@@ -305,12 +307,13 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
     if (const ValueList* fs = out.get("font-size")) {
         if (!fs->empty() && fs->front().is_number()) {
             const Value& v = fs->front();
-            const double base = parent ? parent->font_size() : 16.0;
+            const double scale = m_viewport.scale();
+            const double base = parent ? parent->font_size() : 16.0 * scale;
             if (v.unit == "em" || v.unit == "%") {
                 const double factor = v.unit == "%" ? v.number / 100.0 : v.number;
-                out.set("font-size", ValueList{ Value::make_number(base * factor, "px") });
+                out.set("font-size", ValueList{ Value::make_number(base * factor / scale, "px") });
             } else if (const auto per = viewport_unit_size(v.unit, m_viewport)) {
-                out.set("font-size", ValueList{ Value::make_number(v.number * *per, "px") });
+                out.set("font-size", ValueList{ Value::make_number(v.number * *per / scale, "px") });
             }
         }
     }

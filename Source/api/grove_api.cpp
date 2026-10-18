@@ -39,6 +39,7 @@ int kind_code(const grove::Node* node) noexcept {
         case grove::InputKind::Color: return GROVE_INPUT_COLOR;
         case grove::InputKind::Code: return GROVE_INPUT_CODE;
         case grove::InputKind::File: return GROVE_INPUT_FILE;
+        case grove::InputKind::Select: return GROVE_INPUT_SELECT;
     }
     return GROVE_INPUT_NONE;
 }

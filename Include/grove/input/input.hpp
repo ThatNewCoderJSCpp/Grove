@@ -24,7 +24,8 @@ enum class InputKind {
     Slider,
     Color,
     Code,
-    File
+    File,
+    Select
 };
 
 const char* to_string(InputKind kind) noexcept;
@@ -87,6 +88,16 @@ std::optional<std::string> input_string(const Node& node);
 std::optional<bool> input_bool(const Node& node);
 std::optional<bark::Rgba> input_color(const Node& node);
 std::optional<std::string> radio_choice(const Document& document, std::string_view group);
+
+struct SelectOption {
+    std::string value;
+    std::string label;
+    bool disabled = false;
+};
+
+std::vector<SelectOption> select_options(const Node& node);
+std::optional<std::size_t> select_index(const Node& node);
+bool set_select_options(Document& document, Node& node, const std::vector<SelectOption>& options);
 
 bool set_input_integer(Document& document, Node& node, std::int64_t value);
 bool set_input_float(Document& document, Node& node, double value);

@@ -73,6 +73,8 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "min-width",
         "opacity",
         "overflow",
+        "overflow-x",
+        "overflow-y",
         "padding",
         "size",
         "text-align",
@@ -80,6 +82,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "title",
         "white-space",
         "width",
+        "zoom",
     };
     return names;
 }

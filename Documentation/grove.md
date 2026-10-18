@@ -46,6 +46,7 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 | `input_integer`, `input_float`, `input_string`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
 | `input_code` | a code editor, see [Code editor](#code-editor) |
 | `input_file` | a button that opens the system's file or folder picker, see [File picker](#file-picker) |
+| `input_select`, `option` | a dropdown, see [Dropdowns](#dropdowns) |
 | `button`, `label` | controls |
 | `img`, `br`, `hr` | images and breaks |
 | `math` | MathText, see below |
@@ -136,6 +137,7 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `<input_color>` | `bark::Rgba` / `uint32_t` `0xRRGGBBAA` | `#` and hex digits |
 | `<input_code>` | `std::string` / `const char*` / `string` | everything; see [Code editor](#code-editor) |
 | `<input_file>` | `std::string` / `const char*` / `string`, the chosen path (several are separated by `\n`) | nothing; clicking opens the system picker |
+| `<input_select>` | `std::string` / `const char*` / `string`, the chosen `<option>`'s value | nothing; clicking opens the list |
 
 ```html
 <input_integer id="count" value="3" min="0" max="99" />
@@ -279,7 +281,27 @@ Ctrl+click (Cmd+click on a Mac) fires `goto` with the same `x()` and `y()`, for 
 
 In Bark and Grove, every color written as `#rrggbb`, `rgb()`, `rgba()`, `hsl()` or `hsla()` after a `:` or `=` gets a small swatch beside it. Clicking the swatch opens the same picker as `input_color`, and picking a color rewrites the text in the format it was written in (or the one clicked in the picker); Escape puts the old text back.
 
-### File picker
+### Dropdowns
+
+`<input_select>` shows the chosen `<option>` with a ▾, and clicking it opens a list under it (or over it, near the bottom of the window). A long list scrolls with the wheel.
+
+```html
+<input_select id="font" value="mono">
+    <option value="mono">Monospace</option>
+    <option value="serif">Serif</option>
+    <option value="fira" disabled>Fira Code (not installed)</option>
+</input_select>
+```
+
+An option's value is its `value` attribute, or its text when it has none. `value` on the `<input_select>` picks the option; without it the first option is chosen, unless there's a `placeholder`, which is shown until something is picked. Picking an option sets `value` and fires `input` and `change`, so `value_string()` (and `grove::input_string()` in C++) reads it like a string input.
+
+Keys: while it's focused, Up and Down choose the previous or next option straight away, and Enter or Space opens the list. In the list, Up, Down, Home, End, Page Up and Page Down move, Enter or Space picks, and Escape closes it. Options with `disabled` are greyed out and skipped.
+
+C++ can read the options with `grove::select_options(node)` (value, label and disabled for each), find the chosen one with `grove::select_index(node)`, and replace them all with `grove::set_select_options(document, node, options)`. `grove check` warns about a `value` that isn't one of the options, a dropdown with no options, and anything but `<option>` inside one.
+
+`grove::runtime::font_families(kind)` lists the font names Grove knows (`"monospace"`, `"sans-serif"`, `"serif"`, `"display"`, `"handwriting"`, or `"all"`), which is handy for filling a font dropdown.
+
+## File picker
 
 `<input_file>` looks like a button. Clicking it (or Enter or Space while it's focused) opens the system's file dialog: the native one on Windows, and zenity or kdialog on Linux (set `FIZMO_DIALOG=zenity` or `kdialog` to choose). The window keeps running while the dialog is open. Picking something sets the value and fires `input` and `change`; closing the dialog fires `cancel`.
 

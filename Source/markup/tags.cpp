@@ -45,6 +45,8 @@ constexpr TagInfo k_tags[] = {
     { "input_color",   TagContent::Void,   TagRole::Control },
     { "input_code",    TagContent::Raw,    TagRole::Control },
     { "input_file",    TagContent::Normal, TagRole::Control },
+    { "input_select",  TagContent::Normal, TagRole::Control },
+    { "option",   TagContent::Normal, TagRole::Inline },
     { "checkbox", TagContent::Void,   TagRole::Control },
     { "slider",   TagContent::Void,   TagRole::Control },
     { "color",    TagContent::Void,   TagRole::Control },

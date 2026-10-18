@@ -1150,6 +1150,55 @@ void test_images() {
     CHECK(grove::split_asset_list(" a.png, b.png\tc.png ").size() == 3);
 }
 
+void test_zoom_and_select() {
+    grove::Diagnostics d;
+    grove::bark::Stylesheet sheet = grove::bark::parse_stylesheet(
+        "body { padding: 10px; font-size: 12pt; zoom: 2; opacity: 0.5; }\n"
+        "p { font-size: 1.5em; margin: 2vmin; }\n",
+        "t.bark", d);
+    CHECK(d.ok());
+    grove::Document doc = grove::parse_markup("<body><p id=\"p\">x</p></body>", "t.grove", d);
+    grove::bark::StyleEngine engine;
+    engine.add(sheet);
+    engine.set_viewport(grove::bark::Viewport{ 800, 600, 2.0 });
+    const auto& body = engine.style_of(*doc.first_by_tag("body"), d);
+    CHECK(body.length("padding") && *body.length("padding") == 20.0);
+    CHECK(body.font_size() == 32.0);
+    CHECK(body.length("opacity") && *body.length("opacity") == 0.5);
+    const auto& p = engine.style_of(*doc.find_by_id("p"), d);
+    CHECK(p.font_size() == 48.0);
+    CHECK(p.length("margin") && *p.length("margin") == 12.0);
+    CHECK(grove::bark::is_known_property("zoom") && grove::bark::is_known_property("overflow-x"));
+
+    grove::Document form = grove::parse_markup(
+        "<body>\n"
+        "  <input_select id=\"size\" value=\"m\">\n"
+        "    <option value=\"s\">Small</option>\n"
+        "    <option value=\"m\">Medium</option>\n"
+        "    <option>Large</option>\n"
+        "  </input_select>\n"
+        "  <input_select id=\"empty\" placeholder=\"Pick one\"><option>One</option></input_select>\n"
+        "  <input_select id=\"bad\" value=\"x\"><option>One</option></input_select>\n"
+        "</body>\n",
+        "t.grove", d);
+    CHECK(d.ok());
+    grove::Diagnostics checks;
+    grove::check_inputs(form, checks);
+    CHECK(checks.error_count() == 0 && checks.warning_count() == 1);
+    grove::Node* size = form.find_by_id("size");
+    CHECK(size && grove::input_kind_of(*size) == grove::InputKind::Select);
+    CHECK(size && grove::input_string(*size).value_or("") == "m");
+    const std::vector<grove::SelectOption> options = grove::select_options(*size);
+    CHECK(options.size() == 3 && options[2].value == "Large" && options[0].label == "Small");
+    CHECK(size && grove::select_index(*size).value_or(9) == 1);
+    CHECK(size && grove::set_input_string(form, *size, "s") && grove::select_index(*size).value_or(9) == 0);
+    grove::Node* empty = form.find_by_id("empty");
+    CHECK(empty && !grove::select_index(*empty) && grove::input_string(*empty).value_or("?").empty());
+    CHECK(empty && grove::set_select_options(form, *empty, { { "a", "A", false }, { "b", "B", false } }) && grove::select_options(*empty).size() == 2);
+    CHECK(grove_input_kind_of(reinterpret_cast<const grove_element*>(size)) == GROVE_INPUT_SELECT);
+    CHECK(grove::input_kind_from_name("select") == grove::InputKind::Select);
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1190,6 +1239,7 @@ int main() {
     test_multi_cursor();
     test_pages_and_modals();
     test_alignment_and_math();
+    test_zoom_and_select();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

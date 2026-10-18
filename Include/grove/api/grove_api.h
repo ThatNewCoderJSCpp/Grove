@@ -38,7 +38,8 @@ typedef enum grove_input_kind {
     GROVE_INPUT_SLIDER = 6,
     GROVE_INPUT_COLOR = 7,
     GROVE_INPUT_CODE = 8,
-    GROVE_INPUT_FILE = 9
+    GROVE_INPUT_FILE = 9,
+    GROVE_INPUT_SELECT = 10
 } grove_input_kind;
 
 typedef enum grove_modifier {

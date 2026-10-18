@@ -30,6 +30,7 @@ constexpr KindName k_tags[] = {
     { "input_color",   InputKind::Color },
     { "input_code",    InputKind::Code },
     { "input_file",    InputKind::File },
+    { "input_select",  InputKind::Select },
     { "checkbox",      InputKind::Bool },
     { "slider",        InputKind::Slider },
     { "color",         InputKind::Color },
@@ -52,6 +53,8 @@ constexpr KindName k_type_names[] = {
     { "color",    InputKind::Color },
     { "code",     InputKind::Code },
     { "file",     InputKind::File },
+    { "select",   InputKind::Select },
+    { "dropdown", InputKind::Select },
 };
 
 bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
@@ -111,6 +114,7 @@ bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
         case InputKind::Color: return name == "value" || name == "format" || name == "picker" || name == "alpha";
         case InputKind::Code: return name == "value" || name == "placeholder" || name == "name";
         case InputKind::File: return name == "value" || name == "placeholder" || name == "name";
+        case InputKind::Select: return name == "value" || name == "placeholder" || name == "name";
     }
     return false;
 }
@@ -128,6 +132,7 @@ const char* to_string(InputKind kind) noexcept {
         case InputKind::Color: return "color";
         case InputKind::Code: return "code";
         case InputKind::File: return "file";
+        case InputKind::Select: return "select";
     }
     return "string";
 }
@@ -143,6 +148,7 @@ const char* input_tag(InputKind kind) noexcept {
         case InputKind::Color: return "input_color";
         case InputKind::Code: return "input_code";
         case InputKind::File: return "input_file";
+        case InputKind::Select: return "input_select";
     }
     return "input_string";
 }
@@ -173,7 +179,7 @@ bool is_text_input(InputKind kind) noexcept {
 }
 
 bool is_string_input(InputKind kind) noexcept {
-    return kind == InputKind::String || kind == InputKind::Code || kind == InputKind::File;
+    return kind == InputKind::String || kind == InputKind::Code || kind == InputKind::File || kind == InputKind::Select;
 }
 
 std::string code_source_text(const Node& node) {
@@ -597,10 +603,65 @@ std::optional<double> input_float(const Node& node) {
     return range.clamp(value);
 }
 
+std::vector<SelectOption> select_options(const Node& node) {
+    std::vector<SelectOption> out;
+    for (const auto& child : node.children()) {
+        if (!child->is_element() || child->tag() != "option") continue;
+        SelectOption o;
+        o.label = child->inner_text();
+        while (!o.label.empty() && (o.label.back() == ' ' || o.label.back() == '\n' || o.label.back() == '\t' || o.label.back() == '\r')) o.label.pop_back();
+        std::size_t lead = 0;
+        while (lead < o.label.size() && (o.label[lead] == ' ' || o.label[lead] == '\n' || o.label[lead] == '\t' || o.label[lead] == '\r')) ++lead;
+        o.label.erase(0, lead);
+        o.value = child->has_attribute("value") ? child->attribute_or("value", "") : o.label;
+        if (o.label.empty()) o.label = o.value;
+        o.disabled = child->has_attribute("disabled");
+        out.push_back(std::move(o));
+    }
+    return out;
+}
+
+std::optional<std::size_t> select_index(const Node& node) {
+    const std::vector<SelectOption> options = select_options(node);
+    if (options.empty()) return std::nullopt;
+    if (const Attribute* a = node.find_attribute("value")) {
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            if (options[i].value == a->value) return i;
+        }
+        return std::nullopt;
+    }
+    if (node.has_attribute("placeholder")) return std::nullopt;
+    return 0;
+}
+
+bool set_select_options(Document& document, Node& node, const std::vector<SelectOption>& options) {
+    if (!kind_if(node, { InputKind::Select })) return false;
+    while (!node.children().empty()) {
+        Node* last = node.children().back().get();
+        if (!document.remove(*last)) {
+            node.clear_children();
+            break;
+        }
+    }
+    for (const SelectOption& o : options) {
+        Node* option = document.create_element("option");
+        option->set_attribute("value", o.value);
+        if (o.disabled) option->set_attribute("disabled", "");
+        option->set_inner_text(o.label.empty() ? o.value : o.label);
+        document.append_child(node, *option);
+    }
+    document.touch();
+    return true;
+}
+
 std::optional<std::string> input_string(const Node& node) {
-    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File });
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select });
     if (!kind) return std::nullopt;
     if (*kind == InputKind::Code && !node.has_attribute("value")) return code_source_text(node);
+    if (*kind == InputKind::Select && !node.has_attribute("value")) {
+        const std::vector<SelectOption> options = select_options(node);
+        return options.empty() || node.has_attribute("placeholder") ? std::string() : options.front().value;
+    }
     return node.attribute_or("value", "");
 }
 
@@ -651,7 +712,7 @@ bool set_input_float(Document& document, Node& node, double value) {
 }
 
 bool set_input_string(Document& document, Node& node, std::string value) {
-    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File });
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select });
     if (!kind) return false;
     if (*kind != InputKind::String) {
         node.set_attribute("value", std::move(value));
@@ -726,7 +787,8 @@ std::string input_text(const Node& node) {
         case InputKind::Slider: return format_float(*input_float(node));
         case InputKind::String:
         case InputKind::Code:
-        case InputKind::File: return *input_string(node);
+        case InputKind::File:
+        case InputKind::Select: return *input_string(node);
         case InputKind::Color: return format_color(*input_color(node), node.attribute_or("format", "hex"));
         case InputKind::Bool:
         case InputKind::Radio: return *input_bool(node) ? "true" : "false";
@@ -807,11 +869,11 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
         if (generic) {
             const Attribute* type = node.find_attribute("type");
             if (!type) {
-                diagnostics.error(file, node.span(), "<input> needs a type (integer, float, string, bool, radio, slider, color, code or file), or use <input_integer>, <input_float>, ...");
+                diagnostics.error(file, node.span(), "<input> needs a type (integer, float, string, bool, radio, slider, color, code, file or select), or use <input_integer>, <input_float>, ...");
                 return;
             }
             if (!input_kind_from_name(type->value)) {
-                diagnostics.error(file, type->span, "unknown input type '" + type->value + "' (use integer, float, string, bool, radio, slider, color, code or file)");
+                diagnostics.error(file, type->span, "unknown input type '" + type->value + "' (use integer, float, string, bool, radio, slider, color, code, file or select)");
                 return;
             }
         }
@@ -841,6 +903,17 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
         };
 
         switch (*kind) {
+            case InputKind::Select: {
+                const std::vector<SelectOption> options = select_options(node);
+                if (options.empty()) diagnostics.warning(file, node.span(), describe(node) + " has no <option> to pick from");
+                if (const Attribute* v = node.find_attribute("value"); v && !options.empty() && !select_index(node)) {
+                    diagnostics.warning(file, v->span, "value=\"" + v->value + "\" isn't one of the <option> values");
+                }
+                for (const auto& child : node.children()) {
+                    if (child->is_element() && child->tag() != "option") diagnostics.warning(file, child->span(), "only <option> elements belong inside <input_select>");
+                }
+                break;
+            }
             case InputKind::Integer:
             case InputKind::Float:
             case InputKind::Slider: {

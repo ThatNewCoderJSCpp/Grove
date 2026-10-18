@@ -206,9 +206,10 @@ std::optional<double> evaluate_length(const Value& v, double font_size, const Vi
 std::optional<double> as_length(const Value& v, double font_size, const Viewport& viewport) noexcept {
     if (is_math_function(v)) return evaluate_length(v, font_size, viewport, std::nullopt);
     if (!v.is_number()) return std::nullopt;
-    if (v.unit.empty() || v.unit == "px") return v.number;
+    if (v.unit.empty()) return v.number;
+    if (v.unit == "px") return v.number * viewport.scale();
     if (v.unit == "em") return v.number * font_size;
-    if (v.unit == "pt") return v.number * 96.0 / 72.0;
+    if (v.unit == "pt") return v.number * 96.0 / 72.0 * viewport.scale();
     if (const auto per = viewport_unit_size(v.unit, viewport)) return v.number * *per;
     return std::nullopt;
 }

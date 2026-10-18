@@ -4,6 +4,10 @@
 #include "../project.hpp"
 #include "../script/builder.hpp"
 
+#include <string>
+#include <string_view>
+#include <vector>
+
 namespace grove {
 namespace runtime {
 
@@ -16,6 +20,8 @@ struct RunOptions {
 };
 
 int run(Project& project, const RunOptions& options = RunOptions());
+
+std::vector<std::string> font_families(std::string_view kind = "all");
 
 } // namespace runtime
 } // namespace grove
