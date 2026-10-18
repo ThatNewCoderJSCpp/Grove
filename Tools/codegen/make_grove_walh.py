@@ -61,6 +61,10 @@ ELEMENT = [
     ('focus_window', [], 'bool', False),
     ('answer', [('bool', 'ok')], 'bool', False),
     ('answer_value', [], 'string', True),
+    ('show_page', [], 'bool', False),
+    ('open_modal', [], 'bool', False),
+    ('close_modal', [], 'bool', False),
+    ('is_current', [], 'bool', True),
 ]
 
 LIST = [
@@ -116,6 +120,8 @@ DOCUMENT = [
     ('has_native', [(S, 'name')], 'bool', True),
     ('call', [(S, 'name'), (S, 'argument')], 'string', True),
     ('choose_file', [(S, 'mode'), (S, 'title'), (S, 'filter')], 'string', True),
+    ('navigate', [(S, 'target')], 'bool', True),
+    ('go_back', [], 'bool', True),
     ('popup', [(S, 'kind'), (S, 'title'), (S, 'message'), (S, 'input'), (S, 'value'), (S, 'options')], 'Element', True),
     ('popup_info', [(S, 'title'), (S, 'message')], 'Element', True),
     ('popup_warning', [(S, 'title'), (S, 'message')], 'Element', True),

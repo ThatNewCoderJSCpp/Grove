@@ -1,5 +1,8 @@
 #include "grove/bark/cascade.hpp"
+#include "grove/pages.hpp"
 #include "grove/bark/parser.hpp"
+
+#include <cctype>
 
 #include <algorithm>
 
@@ -9,6 +12,23 @@ namespace bark {
 namespace {
 
 constexpr const char* k_inherited[] = {
+    "code-keyword",
+    "code-type",
+    "code-function",
+    "code-namespace",
+    "code-variable",
+    "code-constant",
+    "code-string",
+    "code-escape",
+    "code-number",
+    "code-comment",
+    "code-preprocessor",
+    "code-operator",
+    "code-tag",
+    "code-attribute",
+    "code-property",
+    "code-mark",
+    "code-plain",
     "color",
     "font",
     "font-family",
@@ -47,6 +67,28 @@ bool is_inherited_property(const std::string& property) noexcept {
         if (property == p) return true;
     }
     return false;
+}
+
+void split_align(const ValueList& align, std::string& horizontal, std::string& vertical) {
+    horizontal.clear();
+    vertical.clear();
+    std::size_t centers = 0;
+    for (const Value& w : align) {
+        if (!w.is_ident() && !w.is_string()) continue;
+        const std::string& t = w.text;
+        if (t == "top" || t == "bottom") vertical = t;
+        else if (t == "middle") vertical = "center";
+        else if (t == "left" || t == "right" || t == "start" || t == "end") horizontal = t == "start" ? "left" : t == "end" ? "right" : t;
+        else if (t == "center") ++centers;
+    }
+    if (centers > 0 && align.size() == 1) {
+        horizontal = vertical = "center";
+        return;
+    }
+    for (std::size_t i = 0; i < centers; ++i) {
+        if (vertical.empty()) vertical = "center";
+        else if (horizontal.empty()) horizontal = "center";
+    }
 }
 
 const ValueList* ComputedStyle::get(const std::string& property) const {
@@ -92,6 +134,11 @@ const Stylesheet& default_stylesheet() {
             "code { font-family: monospace; }\n"
             "pre { white-space: pre; font-family: monospace; margin: 0 0 0.5em 0; }\n"
             "link { color: #89b4fa; cursor: pointer; }\n"
+            "center { align: center; flex: 1; }\n"
+            "modal {\n"
+            "    width: 480px; padding: 20px 24px; border-radius: 10px; background: #24273a; color: #cdd6f4;\n"
+            "    border-color: rgba(255, 255, 255, 18%); backdrop: rgba(0, 0, 0, 55%);\n"
+            "}\n"
             "p { margin: 0 0 0.5em 0; }\n"
             "math { display: inline; }\n"
             "input, input_integer, input_float, input_string, input_color {\n"
@@ -167,6 +214,21 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
         }
     }
     if (!node.is_element()) return out;
+    if (node.has_attribute("center")) {
+        out.set("align", ValueList{ Value::make_ident("center") });
+    } else if (const Attribute* a = node.find_attribute("align")) {
+        ValueList words;
+        std::string word;
+        for (char c : a->value + " ") {
+            if (c == ' ' || c == ',' || c == '\t') {
+                if (!word.empty()) words.push_back(Value::make_ident(word));
+                word.clear();
+            } else {
+                word += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+        }
+        if (!words.empty()) out.set("align", words);
+    }
 
     std::vector<Candidate> candidates;
     std::size_t order = 0;
@@ -193,14 +255,35 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
     }
 
     std::stable_sort(candidates.begin(), candidates.end(), weaker);
+    bool declared_text_align = false;
     for (const Candidate& c : candidates) {
         const Declaration& d = *c.declaration;
+        if (d.property == "text-align") declared_text_align = true;
         if (d.values.size() == 1 && d.values.front().is_ident("inherit")) {
             const ValueList* pv = parent ? parent->get(d.property) : nullptr;
             if (pv) out.set(d.property, *pv);
             continue;
         }
         out.set(d.property, d.values);
+    }
+
+    if (const ValueList* ta = out.get("text-align"); ta && ta->size() == 1 && ta->front().is_ident()) {
+        const std::string& t = ta->front().text;
+        if (t == "start") out.set("text-align", ValueList{ Value::make_ident("left") });
+        else if (t == "end") out.set("text-align", ValueList{ Value::make_ident("right") });
+        else if (t == "middle") out.set("text-align", ValueList{ Value::make_ident("center") });
+    }
+    if (!declared_text_align) {
+        if (const ValueList* align = out.get("align")) {
+            std::string horizontal;
+            std::string vertical;
+            split_align(*align, horizontal, vertical);
+            if (!horizontal.empty()) out.set("text-align", ValueList{ Value::make_ident(horizontal) });
+        }
+    }
+
+    if (node.is_element() && ((node.tag() == "page" && !is_page_current(node)) || node.tag() == "modal")) {
+        out.set("display", ValueList{ Value::make_ident("none") });
     }
 
     if (const ValueList* fs = out.get("font-size")) {

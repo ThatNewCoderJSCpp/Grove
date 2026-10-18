@@ -1,6 +1,6 @@
 # Grove for Visual Studio Code
 
-Coloring, color pickers and error underlines for Grove (`.grove`) and Bark (`.bark`) files, plus comment toggling, bracket matching and auto-closing quotes.
+Coloring, color themes, a color designer, color pickers and error underlines for Grove (`.grove`) and Bark (`.bark`) files, plus comment toggling, bracket matching and auto-closing quotes.
 
 `.grove` files get a grove icon and `.bark` files a bark icon in the explorer and on tabs, whenever your file icon theme doesn't have its own icon for them.
 
@@ -88,12 +88,48 @@ Run **Grove: Edit Colors**. It opens the colors file in use, and every save show
 2. `Tools/vscode-grove/colors.json` in the Grove folder `grove` was built in.
 3. The copy that came with the extension. **Grove: Edit Colors** copies it to `~/.grove-colors.json` first, so your changes survive reinstalling.
 
+### Color themes
+
+`colors.json` is one set of colors; a color theme is another, kept in a `color-themes` folder. The extension looks in two of them: the one next to your colors file (`Tools/vscode-grove/color-themes`), and the one that came with it. A theme file looks just like `colors.json`, plus an optional `"name"` (otherwise the file name is used) and an optional `"extends"`, which starts from another theme and changes only what's listed:
+
+```json
+{
+    "name": "Neon Blue",
+    "extends": "Grove Neon",
+    "tags": "#33AAFF",
+    "properties": { "color": "#33AAFF", "bold": true }
+}
+```
+
+`colors.json` can use `"extends"` too.
+
+Run **Grove: Choose Color Theme...** to switch: moving through the list shows each theme on your open files right away, `Enter` keeps it, and `Escape` goes back. Picking `colors.json` goes back to your own file. The choice is the `grove.colorTheme` setting. **Grove: Save Colors as Theme...** saves the colors in use as a new theme.
+
+The extension comes with these, each in its own file you can copy and change. They match the Walnut extension's themes and Canopy's, so all three can look the same:
+
+| Theme | Looks like |
+|---|---|
+| `Grove Neon` | The bright colors `colors.json` started with |
+| `Grove Dark Modern` | VS Code's own Dark Modern colors |
+| `Grove Soft` | Pastels on a dark background |
+| `Grove Ember` | Warm oranges, reds and greens |
+| `Grove Amber` | Golds and oranges, like an old amber terminal |
+| `Grove Ocean` | Blues, teals and soft greens |
+| `Grove Forest` | Greens and earthy yellows |
+| `Grove Mono` | Grays, with bold and italic doing the work |
+| `Grove Light` | VS Code's Light+ colors, for light color themes |
+
+### The color designer
+
+**Grove: Open Color Designer** opens a page with a swatch, a hex box and bold, italic and underline buttons for every color name, next to a small Grove file (with a Bark `<style>` block and some math inside) that uses all of them, so each change shows at once. Pointing at a color (or clicking into its boxes) lights up, in orange, every piece of the code that color changes; clicking a word in the code jumps to its color. Under it is the JSON for those colors: copy it into `colors.json`, or paste colors into it to load them. **Start from** loads any theme or your colors file, **Show in the editor** puts the colors on your open Grove and Bark files while you work (they go back if you close the page without saving), **Save to colors.json** writes them to your colors file, and **Save as Theme...** makes a new theme from them.
+
 ## Settings
 
 | Setting | Does |
 |---|---|
 | `grove.path` | The `grove` program; empty means `grove` on your PATH |
 | `grove.colorsFile` | The colors file, as described above |
+| `grove.colorTheme` | The color theme to use, by name; empty means the colors file |
 | `grove.colors.enabled` | Whether to apply the colors file (default on) |
 | `grove.colorPickers` | Whether to show color swatches and pickers (default on) |
 | `grove.semanticHighlighting` | Whether to mark unknown names from `grove highlight` (default on) |

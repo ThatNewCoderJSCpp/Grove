@@ -1,8 +1,8 @@
 {
     "name": "grove-language",
     "displayName": "Grove",
-    "description": "Coloring, color pickers and error underlines for Grove (.grove) and Bark (.bark) files",
-    "version": "0.1.1",
+    "description": "Coloring, color themes, a color designer, color pickers and error underlines for Grove (.grove) and Bark (.bark) files",
+    "version": "0.1.2",
     "publisher": "grove",
     "repository": {
         "type": "git",
@@ -100,6 +100,21 @@
                 "command": "grove.refresh",
                 "title": "Refresh Highlighting",
                 "category": "Grove"
+            },
+            {
+                "command": "grove.chooseColorTheme",
+                "title": "Choose Color Theme...",
+                "category": "Grove"
+            },
+            {
+                "command": "grove.openColorDesigner",
+                "title": "Open Color Designer",
+                "category": "Grove"
+            },
+            {
+                "command": "grove.saveColorsAsTheme",
+                "title": "Save Colors as Theme...",
+                "category": "Grove"
             }
         ],
         "configuration": {
@@ -114,6 +129,11 @@
                     "type": "string",
                     "default": "",
                     "markdownDescription": "The colors file to use. Empty means `Tools/vscode-grove/colors.json` in the Grove folder the `grove` program was built in, or else the copy that came with the extension. Changes show up as soon as it's saved."
+                },
+                "grove.colorTheme": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "The Grove color theme to use, by name, from the `color-themes` folders (next to your colors file, and in the extension). Empty means your colors file. **Grove: Choose Color Theme...** sets it and previews each theme as you move through the list; **Grove: Open Color Designer** edits colors with a live preview."
                 },
                 "grove.colors.enabled": {
                     "type": "boolean",

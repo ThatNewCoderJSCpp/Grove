@@ -1,0 +1,28 @@
+{
+    "name": "Grove Neon",
+    "tags": "#AF00FF",
+    "input tags": "#FFEA00",
+    "custom tags": "#66BAFF",
+    "unknown names": {
+        "color": "#FFFFFF",
+        "underline": true
+    },
+    "attributes": "#00FFFF",
+    "attribute values": "#329600",
+    "ids and classes": "#FFFF00",
+    "properties": "#00FFFF",
+    "variables": "#FF00EA",
+    "variable declarations": "#FFFFFF",
+    "functions": "#FFFF00",
+    "values": "#F2F2F2",
+    "constants": "#FF0000",
+    "numbers": "#F2F2F2",
+    "units": "#AF00FF",
+    "strings": "#329600",
+    "escapes": "#FF0000",
+    "comments": "#646464",
+    "at-rules": "#FF00EA",
+    "math commands": "#FF0000",
+    "math functions": "#FFFF00",
+    "math names": "#00FFFF"
+}

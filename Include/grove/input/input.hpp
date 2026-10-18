@@ -38,6 +38,17 @@ std::optional<std::int64_t> parse_integer(std::string_view text) noexcept;
 std::optional<double> parse_float(std::string_view text) noexcept;
 std::string format_float(double value);
 std::string format_color(const bark::Rgba& color);
+std::string format_color(const bark::Rgba& color, std::string_view format);
+std::optional<bark::Rgba> parse_color_text(std::string_view text);
+
+struct ColorHsv {
+    double h = 0.0;
+    double s = 0.0;
+    double v = 0.0;
+};
+
+ColorHsv color_to_hsv(const bark::Rgba& color);
+bark::Rgba color_from_hsv(const ColorHsv& hsv, std::uint8_t alpha = 255);
 
 struct InputRange {
     double min = 0.0;

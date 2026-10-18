@@ -1,0 +1,31 @@
+{
+    "name": "Grove Light",
+    "tags": "#800000",
+    "input tags": "#267F99",
+    "custom tags": "#267F99",
+    "unknown names": {
+        "color": "#1F1F1F",
+        "underline": true
+    },
+    "attributes": "#E50000",
+    "attribute values": "#A31515",
+    "ids and classes": "#795E26",
+    "properties": "#0451A5",
+    "variables": "#001080",
+    "variable declarations": "#1F1F1F",
+    "functions": "#795E26",
+    "values": "#0000FF",
+    "constants": "#0070C1",
+    "numbers": "#098658",
+    "units": "#0000FF",
+    "strings": "#A31515",
+    "escapes": "#EE0000",
+    "comments": {
+        "color": "#008000",
+        "italic": true
+    },
+    "at-rules": "#AF00DB",
+    "math commands": "#0070C1",
+    "math functions": "#795E26",
+    "math names": "#001080"
+}

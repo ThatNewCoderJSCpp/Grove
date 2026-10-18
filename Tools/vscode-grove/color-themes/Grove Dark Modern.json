@@ -1,0 +1,31 @@
+{
+    "name": "Grove Dark Modern",
+    "tags": "#569CD6",
+    "input tags": "#4EC9B0",
+    "custom tags": "#4EC9B0",
+    "unknown names": {
+        "color": "#D4D4D4",
+        "underline": true
+    },
+    "attributes": "#9CDCFE",
+    "attribute values": "#CE9178",
+    "ids and classes": "#DCDCAA",
+    "properties": "#9CDCFE",
+    "variables": "#9CDCFE",
+    "variable declarations": "#D4D4D4",
+    "functions": "#DCDCAA",
+    "values": "#569CD6",
+    "constants": "#4FC1FF",
+    "numbers": "#B5CEA8",
+    "units": "#569CD6",
+    "strings": "#CE9178",
+    "escapes": "#D7BA7D",
+    "comments": {
+        "color": "#6A9955",
+        "italic": true
+    },
+    "at-rules": "#C586C0",
+    "math commands": "#4FC1FF",
+    "math functions": "#DCDCAA",
+    "math names": "#9CDCFE"
+}

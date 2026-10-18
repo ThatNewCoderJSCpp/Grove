@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const colorText = require('./colors');
+const designer = require('./color-designer');
 
 const tokenTypes = ['tag', 'property', 'variable', 'unresolved'];
 const tokenModifiers = ['declaration', 'input', 'custom'];
@@ -36,9 +37,11 @@ const categories = {
 };
 
 const rulePrefix = 'Grove: ';
+const themeKeys = new Set(['name', 'extends', '$schema']);
 const semanticSuffixes = languages.map(l => ':' + l);
 
 let extensionPath = '';
+let extensionContext = null;
 let output = null;
 let diagnostics = null;
 let warnedMissing = false;
@@ -134,6 +137,80 @@ function readColors(file) {
     return data;
 }
 
+function isBundledColorsFile(file) {
+    return path.resolve(file) === path.resolve(path.join(extensionPath, 'colors.json'));
+}
+
+function knownColorNames() {
+    return Object.keys(categories);
+}
+
+function themeFolders() {
+    const folders = [];
+    const file = colorsFile();
+    if (file && !isBundledColorsFile(file)) folders.push(path.join(path.dirname(file), 'color-themes'));
+    const bundled = path.join(extensionPath, 'color-themes');
+    if (!folders.some(f => path.resolve(f) === path.resolve(bundled))) folders.push(bundled);
+    return folders;
+}
+
+function listThemes() {
+    const themes = new Map();
+    for (const folder of themeFolders()) {
+        let names = [];
+        try {
+            names = fs.readdirSync(folder);
+        } catch (e) {
+            continue;
+        }
+        for (const name of names.sort()) {
+            if (!name.toLowerCase().endsWith('.json')) continue;
+            const file = path.join(folder, name);
+            let label = name.slice(0, -5);
+            try {
+                const data = readColors(file);
+                if (typeof data.name === 'string' && data.name.trim()) label = data.name.trim();
+            } catch (e) {
+            }
+            if (!themes.has(label)) themes.set(label, file);
+        }
+    }
+    return themes;
+}
+
+function resolveColors(data, seen) {
+    const out = {};
+    if (typeof data.extends === 'string' && data.extends.trim()) {
+        const name = data.extends.trim();
+        const file = listThemes().get(name);
+        if (!file) throw new Error(`there is no color theme named "${name}" to extend`);
+        const key = path.resolve(file);
+        if (seen.has(key)) throw new Error(`the color theme "${name}" ends up extending itself`);
+        seen.add(key);
+        Object.assign(out, resolveColors(readColors(file), seen));
+    }
+    for (const [name, value] of Object.entries(data)) if (!themeKeys.has(name)) out[name] = value;
+    return out;
+}
+
+function chosenTheme() {
+    return (settings().get('colorTheme') || '').trim();
+}
+
+function activeColorsFile() {
+    const theme = chosenTheme();
+    if (theme) {
+        const file = listThemes().get(theme);
+        if (file) return file;
+        log(`Grove: there is no color theme named "${theme}", so the colors file is used`);
+    }
+    return colorsFile();
+}
+
+function colorsFrom(file) {
+    return resolveColors(readColors(file), new Set([path.resolve(file)]));
+}
+
 function sameJson(a, b) {
     return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -142,14 +219,23 @@ function isOurSemanticKey(key) {
     return semanticSuffixes.some(s => key.endsWith(s));
 }
 
-async function applyColors(showErrors) {
+let applyQueue = Promise.resolve();
+
+function applyColors(showErrors, override) {
+    applyQueue = applyQueue.then(() => applyColorsNow(showErrors, override)).catch(e => log(`Grove couldn't apply the colors: ${e && e.message ? e.message : e}`));
+    return applyQueue;
+}
+
+async function applyColorsNow(showErrors, override) {
     const config = vscode.workspace.getConfiguration('editor');
     let colors = {};
 
-    if (settings().get('colors.enabled', true)) {
-        const file = colorsFile();
+    if (override) {
+        colors = override;
+    } else if (settings().get('colors.enabled', true)) {
+        const file = activeColorsFile();
         try {
-            colors = readColors(file);
+            colors = colorsFrom(file);
             lastColorsError = '';
         } catch (e) {
             const message = `Grove couldn't read the colors file ${file}: ${e.message}`;
@@ -203,7 +289,7 @@ function scheduleApply() {
 
 function watchColors() {
     if (watchedColorsFile) fs.unwatchFile(watchedColorsFile);
-    watchedColorsFile = colorsFile();
+    watchedColorsFile = activeColorsFile();
     if (watchedColorsFile) fs.watchFile(watchedColorsFile, { interval: 1000 }, scheduleApply);
 }
 
@@ -230,6 +316,146 @@ async function editColors() {
         return;
     }
     await vscode.window.showTextDocument(vscode.Uri.file(file));
+}
+
+function themeItems() {
+    const items = [{ label: 'colors.json', description: 'your own colors file', theme: '' }];
+    for (const [name, file] of listThemes()) {
+        const bundled = path.resolve(path.dirname(file)) === path.resolve(path.join(extensionPath, 'color-themes'));
+        items.push({ label: name, description: bundled ? 'came with the extension' : path.dirname(file), theme: name });
+    }
+    return items;
+}
+
+function themeFile(theme) {
+    return theme ? listThemes().get(theme) : colorsFile();
+}
+
+async function chooseColorTheme() {
+    const items = themeItems();
+    const current = chosenTheme();
+    const pick = vscode.window.createQuickPick();
+    pick.items = items;
+    pick.placeholder = 'Pick the Grove and Bark colors (moving through the list previews them)';
+    pick.activeItems = items.filter(i => i.theme === current);
+    let accepted = false;
+
+    pick.onDidChangeActive(active => {
+        const item = active[0];
+        if (!item) return;
+        try {
+            applyColors(false, colorsFrom(themeFile(item.theme)));
+        } catch (e) {
+            log(`Grove couldn't preview "${item.label}": ${e.message}`);
+        }
+    });
+
+    pick.onDidAccept(async () => {
+        const item = pick.selectedItems[0] || pick.activeItems[0];
+        accepted = true;
+        pick.hide();
+        if (!item) return;
+        if (!settings().get('colors.enabled', true)) await settings().update('colors.enabled', true, vscode.ConfigurationTarget.Global);
+        await settings().update('colorTheme', item.theme, vscode.ConfigurationTarget.Global);
+        watchColors();
+        await applyColors(true);
+    });
+
+    pick.onDidHide(() => {
+        if (!accepted) applyColors(false);
+        pick.dispose();
+    });
+
+    pick.show();
+}
+
+function orderedColors(colors) {
+    const out = {};
+    for (const name of knownColorNames()) if (colors[name] !== undefined) out[name] = colors[name];
+    for (const [name, value] of Object.entries(colors)) if (out[name] === undefined) out[name] = value;
+    return out;
+}
+
+async function writeColorsFile(file, colors, extra) {
+    const data = Object.assign({}, extra || {}, orderedColors(colors));
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    await fs.promises.writeFile(file, JSON.stringify(data, null, 4) + '\n', 'utf8');
+}
+
+async function saveColorsAsTheme(colors) {
+    const name = await vscode.window.showInputBox({
+        prompt: 'Name the new Grove color theme',
+        placeHolder: 'Ocean',
+        validateInput: v => !v.trim() ? 'Give the theme a name' : (/[\\/:*?"<>|]/.test(v) ? 'A theme name can\'t have \\ / : * ? " < > |' : null)
+    });
+    if (!name) return;
+
+    if (!colors) {
+        try {
+            colors = colorsFrom(activeColorsFile());
+        } catch (e) {
+            vscode.window.showWarningMessage(`Grove couldn't read the current colors: ${e.message}`);
+            return;
+        }
+    }
+
+    const folder = themeFolders()[0];
+    const file = path.join(folder, name.trim() + '.json');
+    if (fs.existsSync(file)) {
+        const answer = await vscode.window.showWarningMessage(`There is already a theme file named ${path.basename(file)}. Replace it?`, { modal: true }, 'Replace');
+        if (answer !== 'Replace') return;
+    }
+
+    try {
+        await writeColorsFile(file, colors, { name: name.trim() });
+    } catch (e) {
+        vscode.window.showWarningMessage(`Grove couldn't save ${file}: ${e.message}`);
+        return;
+    }
+
+    const where = path.resolve(folder) === path.resolve(path.join(extensionPath, 'color-themes'))
+        ? ' (inside the installed extension, so reinstalling it removes the file; pick your Grove folder\'s colors.json with "Grove: Choose Colors File..." to keep themes there)'
+        : '';
+    const choice = await vscode.window.showInformationMessage(`Saved the color theme "${name.trim()}" to ${file}${where}.`, 'Use It', 'Open File');
+    if (choice === 'Use It') await settings().update('colorTheme', name.trim(), vscode.ConfigurationTarget.Global);
+    if (choice === 'Open File') await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
+}
+
+function openColorDesigner() {
+    designer.open({
+        context: extensionContext,
+        names: knownColorNames(),
+        themes: () => themeItems().map(i => ({ label: i.label, theme: i.theme })),
+        colorsOf: theme => colorsFrom(themeFile(theme)),
+        current: () => ({ theme: chosenTheme(), colors: colorsFrom(activeColorsFile()) }),
+        preview: colors => applyColors(false, colors),
+        restore: () => applyColors(false),
+        saveToColorsFile: async colors => {
+            const file = colorsFile();
+            if (isBundledColorsFile(file)) {
+                const choice = await vscode.window.showWarningMessage('This would save into the colors file that came with the extension, which is replaced when it is reinstalled. Pick the colors.json in your Grove folder first?', 'Choose File...', 'Save Anyway');
+                if (choice === 'Choose File...') { await chooseColorsFile(); return saveDesignerColors(colors); }
+                if (choice !== 'Save Anyway') return false;
+            }
+            return saveDesignerColors(colors);
+        },
+        saveAsTheme: colors => saveColorsAsTheme(colors)
+    });
+}
+
+async function saveDesignerColors(colors) {
+    const file = colorsFile();
+    try {
+        await writeColorsFile(file, colors);
+    } catch (e) {
+        vscode.window.showWarningMessage(`Grove couldn't save ${file}: ${e.message}`);
+        return false;
+    }
+    if (chosenTheme()) await settings().update('colorTheme', '', vscode.ConfigurationTarget.Global);
+    watchColors();
+    await applyColors(true);
+    vscode.window.showInformationMessage(`Saved the colors to ${file}.`);
+    return true;
 }
 
 async function choosePath() {
@@ -414,6 +640,7 @@ const colorProvider = {
 
 function activate(context) {
     extensionPath = context.extensionPath;
+    extensionContext = context;
     output = vscode.window.createOutputChannel('Grove');
     diagnostics = vscode.languages.createDiagnosticCollection('grove');
     const selector = languages.map(language => ({ language }));
@@ -430,12 +657,15 @@ function activate(context) {
             if (languages.includes(doc.languageId)) { analyses.clear(); tokensChanged.fire(); }
         }),
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('grove.colorsFile') || e.affectsConfiguration('grove.colors.enabled') || e.affectsConfiguration('grove.path')) { watchColors(); applyColors(true); }
+            if (e.affectsConfiguration('grove.colorsFile') || e.affectsConfiguration('grove.colors.enabled') || e.affectsConfiguration('grove.path') || e.affectsConfiguration('grove.colorTheme')) { watchColors(); applyColors(true); }
             if (e.affectsConfiguration('grove')) { analyses.clear(); tokensChanged.fire(); }
         }),
         vscode.commands.registerCommand('grove.editColors', editColors),
         vscode.commands.registerCommand('grove.chooseColorsFile', chooseColorsFile),
         vscode.commands.registerCommand('grove.removeColors', removeColors),
+        vscode.commands.registerCommand('grove.chooseColorTheme', chooseColorTheme),
+        vscode.commands.registerCommand('grove.openColorDesigner', openColorDesigner),
+        vscode.commands.registerCommand('grove.saveColorsAsTheme', () => saveColorsAsTheme()),
         vscode.commands.registerCommand('grove.choosePath', choosePath),
         vscode.commands.registerCommand('grove.refresh', () => { warnedMissing = false; analyses.clear(); tokensChanged.fire(); }),
         { dispose: () => { if (watchedColorsFile) fs.unwatchFile(watchedColorsFile); for (const child of running.values()) child.kill(); } }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <sstream>
 
 namespace grove {
@@ -102,7 +103,108 @@ std::optional<double> viewport_unit_size(const std::string& unit, const Viewport
     return std::nullopt;
 }
 
+namespace {
+
+struct MathReader {
+    const std::vector<Value>& args;
+    std::size_t end;
+    double font_size;
+    const Viewport& viewport;
+    std::optional<double> base;
+    std::size_t at = 0;
+
+    bool is_op(const char* op) const { return at < end && args[at].is_ident(op); }
+
+    std::optional<double> leaf() {
+        if (at >= end) return std::nullopt;
+        const Value& v = args[at++];
+        if (v.is_ident("-")) {
+            const auto inner = leaf();
+            if (!inner) return std::nullopt;
+            return -*inner;
+        }
+        if (v.is_number() && v.unit.empty()) return v.number;
+        return evaluate_length(v, font_size, viewport, base);
+    }
+
+    std::optional<double> term() {
+        auto left = leaf();
+        while (left && (is_op("*") || is_op("/"))) {
+            const bool divide = is_op("/");
+            ++at;
+            const auto right = leaf();
+            if (!right) return std::nullopt;
+            if (divide) {
+                if (*right == 0.0) return std::nullopt;
+                *left /= *right;
+            } else {
+                *left *= *right;
+            }
+        }
+        return left;
+    }
+
+    std::optional<double> expression() {
+        auto total = term();
+        while (total && at < end) {
+            if (is_op("+") || is_op("-")) {
+                const bool minus = is_op("-");
+                ++at;
+                const auto right = term();
+                if (!right) return std::nullopt;
+                *total += minus ? -*right : *right;
+            } else if (args[at].is_number() && args[at].number < 0.0) {
+                const auto right = term();
+                if (!right) return std::nullopt;
+                *total += *right;
+            } else {
+                return std::nullopt;
+            }
+        }
+        return total;
+    }
+};
+
+std::optional<double> evaluate_range(const std::vector<Value>& args, std::size_t from, std::size_t to, double font_size, const Viewport& viewport, std::optional<double> base) {
+    if (from >= to) return std::nullopt;
+    MathReader reader{ args, to, font_size, viewport, base, from };
+    const auto value = reader.expression();
+    if (!value || reader.at != to) return std::nullopt;
+    return value;
+}
+
+} // namespace
+
+bool is_math_function(const Value& value) noexcept {
+    return value.is_function() && (value.text == "calc" || value.text == "min" || value.text == "max" || value.text == "clamp" || value.text.empty());
+}
+
+std::optional<double> evaluate_length(const Value& v, double font_size, const Viewport& viewport, std::optional<double> percent_base) noexcept {
+    if (v.is_number() && v.unit == "%") {
+        if (!percent_base) return std::nullopt;
+        return *percent_base * v.number / 100.0;
+    }
+    if (!is_math_function(v)) return as_length(v, font_size, viewport);
+    std::vector<std::optional<double>> parts;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= v.args.size(); ++i) {
+        if (i < v.args.size() && !v.args[i].is_ident(",")) continue;
+        parts.push_back(evaluate_range(v.args, start, i, font_size, viewport, percent_base));
+        if (!parts.back()) return std::nullopt;
+        start = i + 1;
+    }
+    if (v.text == "calc" || v.text.empty()) return parts.size() == 1 ? parts.front() : std::nullopt;
+    if (v.text == "clamp") {
+        if (parts.size() != 3) return std::nullopt;
+        return std::max(*parts[0], std::min(*parts[1], *parts[2]));
+    }
+    double out = *parts.front();
+    for (const auto& p : parts) out = v.text == "min" ? std::min(out, *p) : std::max(out, *p);
+    return out;
+}
+
 std::optional<double> as_length(const Value& v, double font_size, const Viewport& viewport) noexcept {
+    if (is_math_function(v)) return evaluate_length(v, font_size, viewport, std::nullopt);
     if (!v.is_number()) return std::nullopt;
     if (v.unit.empty() || v.unit == "px") return v.number;
     if (v.unit == "em") return v.number * font_size;
@@ -146,8 +248,17 @@ std::string to_string(const Value& value) {
         }
         case ValueKind::Function: {
             std::string s = value.text + "(";
+            const bool math = is_math_function(value);
             for (std::size_t i = 0; i < value.args.size(); ++i) {
-                if (i) s += ", ";
+                if (math) {
+                    if (value.args[i].is_ident(",")) {
+                        s += ",";
+                        continue;
+                    }
+                    if (i) s += ' ';
+                } else if (i) {
+                    s += ", ";
+                }
                 s += to_string(value.args[i]);
             }
             return s + ")";

@@ -2,6 +2,7 @@
 #define GROVE_INPUT_CODE_BUFFER_HPP
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -24,7 +25,8 @@ enum class CodeLanguage {
     Cpp,
     Walnut,
     Grove,
-    Bark
+    Bark,
+    CMake
 };
 
 enum class CodeTokenKind {
@@ -40,7 +42,10 @@ enum class CodeTokenKind {
     Tag,
     Attribute,
     Property,
-    Constant
+    Constant,
+    Namespace,
+    Variable,
+    Escape
 };
 
 struct CodeToken {
@@ -52,8 +57,16 @@ struct CodeToken {
 struct CodeLineState {
     bool block_comment = false;
     bool markup_comment = false;
+    bool string_open = false;
+    bool raw_string = false;
+    std::string raw_delimiter;
+    int bracket_level = -1;
+    bool bracket_comment = false;
 
-    bool operator==(const CodeLineState& o) const noexcept { return block_comment == o.block_comment && markup_comment == o.markup_comment; }
+    bool operator==(const CodeLineState& o) const noexcept {
+        return block_comment == o.block_comment && markup_comment == o.markup_comment && string_open == o.string_open && raw_string == o.raw_string &&
+               raw_delimiter == o.raw_delimiter && bracket_level == o.bracket_level && bracket_comment == o.bracket_comment;
+    }
     bool operator!=(const CodeLineState& o) const noexcept { return !(*this == o); }
 };
 
@@ -61,12 +74,24 @@ const char* to_string(CodeLanguage language) noexcept;
 const char* to_string(CodeTokenKind kind) noexcept;
 CodeLanguage code_language_from_name(std::string_view name) noexcept;
 CodeLanguage code_language_for_path(std::string_view path) noexcept;
+const std::vector<CodeLanguage>& code_languages() noexcept;
+const std::vector<CodeTokenKind>& code_token_kinds() noexcept;
+std::optional<CodeTokenKind> code_token_kind_from_name(std::string_view name) noexcept;
 
 std::vector<CodeToken> highlight_code_line(CodeLanguage language, std::string_view line, CodeLineState& state);
 
 std::size_t code_display_column(std::string_view line, std::size_t byte_column, std::size_t tab_size);
 std::size_t code_byte_column(std::string_view line, std::size_t display_column, std::size_t tab_size);
 std::string code_expand_tabs(std::string_view line, std::size_t tab_size);
+
+struct CodeCursor {
+    CodePos anchor;
+    CodePos caret;
+
+    bool has_selection() const noexcept { return anchor != caret; }
+    CodePos start() const noexcept { return anchor < caret ? anchor : caret; }
+    CodePos end() const noexcept { return anchor < caret ? caret : anchor; }
+};
 
 class CodeBuffer {
 public:
@@ -111,6 +136,17 @@ public:
     void indent(std::size_t tab_size, bool spaces);
     void outdent(std::size_t tab_size);
 
+    std::vector<CodeCursor> cursors() const;
+    std::size_t cursor_count() const noexcept { return m_extra.size() + 1; }
+    bool has_extra_cursors() const noexcept { return !m_extra.empty(); }
+    void clear_extra_cursors();
+    bool toggle_cursor(CodePos p);
+    void add_cursor(CodePos anchor, CodePos caret);
+    void column_select(CodePos from, std::size_t to_line);
+    bool any_selection() const noexcept;
+    std::string selected_texts() const;
+    void insert_each(const std::vector<std::string>& pieces);
+
     bool undo();
     bool redo();
     bool can_undo() const noexcept { return !m_undo.empty(); }
@@ -132,7 +168,21 @@ private:
         std::vector<std::string> lines;
         CodePos caret;
         CodePos anchor;
+        std::vector<CodeCursor> extra;
     };
+
+    struct Tracked {
+        CodeCursor cursor;
+        std::size_t preferred = 0;
+        bool has_preferred = false;
+    };
+
+    template <typename Fn>
+    void for_each_cursor(Fn&& fn);
+    void merge_cursors();
+    std::vector<CodeCursor> cursors_extra() const;
+    void track_erase(CodePos a, CodePos b);
+    void track_insert(CodePos at, CodePos end);
 
     void remember(EditKind kind);
     void changed();
@@ -147,6 +197,14 @@ private:
     std::vector<std::string> m_lines;
     CodePos m_caret;
     CodePos m_anchor;
+    std::vector<Tracked> m_extra;
+    std::vector<Tracked>* m_tracking = nullptr;
+    CodePos m_batch_caret;
+    CodePos m_batch_anchor;
+    std::vector<CodeCursor> m_batch_extra;
+    std::size_t m_current = 0;
+    bool m_batch = false;
+    bool m_batch_remembered = false;
     std::size_t m_preferred = 0;
     bool m_has_preferred = false;
     std::vector<Snapshot> m_undo;

@@ -105,3 +105,9 @@ const char*|grove_input_text|const grove_element* element
 const char*|grove_call_native|grove_document* document, const char* name, const char* const* args, size_t count
 bool|grove_has_native|grove_document* document, const char* name
 const char*|grove_file_dialog|grove_document* document, const char* mode, const char* title, const char* filter, bool multiple
+bool|grove_show_page|grove_document* document, grove_element* page
+bool|grove_go_back|grove_document* document
+bool|grove_open_modal|grove_document* document, grove_element* modal
+bool|grove_close_modal|grove_document* document, grove_element* modal
+bool|grove_navigate|grove_document* document, const char* target
+bool|grove_is_current|const grove_element* element

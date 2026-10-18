@@ -1,4 +1,5 @@
 #include "grove/runtime/runtime.hpp"
+#include "grove/pages.hpp"
 #include "grove/markup/tags.hpp"
 #include "grove/api/grove_api.h"
 #include "grove/input/input.hpp"
@@ -54,6 +55,79 @@ Box box_of(const bark::ComputedStyle& style, const std::string& property) {
         default: b.top = at(0); b.right = at(1); b.bottom = at(2); b.left = at(3); break;
     }
     return b;
+}
+
+struct AutoSides {
+    bool top = false;
+    bool right = false;
+    bool bottom = false;
+    bool left = false;
+};
+
+AutoSides auto_sides(const bark::ComputedStyle& style, const std::string& property) {
+    AutoSides a;
+    const bark::ValueList* v = style.get(property);
+    if (!v || v->empty()) return a;
+    auto is = [&](std::size_t i) { return (*v)[i].is_ident("auto"); };
+    switch (v->size()) {
+        case 1: a.top = a.right = a.bottom = a.left = is(0); break;
+        case 2: a.top = a.bottom = is(0); a.left = a.right = is(1); break;
+        case 3: a.top = is(0); a.left = a.right = is(1); a.bottom = is(2); break;
+        default: a.top = is(0); a.right = is(1); a.bottom = is(2); a.left = is(3); break;
+    }
+    return a;
+}
+
+std::string align_word(const std::string& w) {
+    if (w == "start" || w == "flex-start" || w == "self-start" || w == "left" || w == "top" || w == "baseline") return "start";
+    if (w == "end" || w == "flex-end" || w == "self-end" || w == "right" || w == "bottom") return "end";
+    if (w == "center" || w == "middle") return "center";
+    if (w == "stretch" || w == "space-between" || w == "space-around" || w == "space-evenly") return w;
+    return std::string();
+}
+
+struct Alignment {
+    std::string main = "start";
+    std::string cross = "stretch";
+};
+
+Alignment alignment_of(const bark::ComputedStyle& style, bool row) {
+    Alignment al;
+    std::string horizontal;
+    std::string vertical;
+    if (const bark::ValueList* a = style.get("align")) bark::split_align(*a, horizontal, vertical);
+    const std::string main = align_word(row ? horizontal : vertical);
+    const std::string cross = align_word(row ? vertical : horizontal);
+    if (!main.empty()) al.main = main;
+    if (!cross.empty()) al.cross = cross;
+    if (const auto j = style.text("justify-content")) {
+        const std::string w = align_word(*j);
+        if (!w.empty()) al.main = w;
+    }
+    if (const auto ai = style.text("align-items")) {
+        const std::string w = align_word(*ai);
+        if (!w.empty()) al.cross = w;
+    }
+    return al;
+}
+
+void spread(const std::string& how, float free, std::vector<float>& before, std::vector<float>& after) {
+    const std::size_t n = before.size();
+    if (n == 0 || free <= 0.0f) return;
+    const float count = static_cast<float>(n);
+    if (how == "center") before[0] += free / 2.0f;
+    else if (how == "end") before[0] += free;
+    else if (how == "space-between") {
+        if (n == 1) return;
+        for (std::size_t i = 0; i + 1 < n; ++i) after[i] += free / (count - 1.0f);
+    } else if (how == "space-around") {
+        for (std::size_t i = 0; i < n; ++i) {
+            before[i] += free / (2.0f * count);
+            after[i] += free / (2.0f * count);
+        }
+    } else if (how == "space-evenly") {
+        for (std::size_t i = 0; i < n; ++i) before[i] += free / (count + 1.0f);
+    }
 }
 
 std::string collapse_whitespace(const std::string& text) {
@@ -126,6 +200,11 @@ std::optional<float> resolve_length(const bark::ComputedStyle& style, const std:
     if (value.is_number() && value.unit == "%") {
         if (base < 0.0f) return std::nullopt;
         return base * static_cast<float>(value.number) / 100.0f;
+    }
+    if (bark::is_math_function(value)) {
+        const auto v = bark::evaluate_length(value, style.font_size(), style.viewport(), base < 0.0f ? std::nullopt : std::optional<double>(base));
+        if (!v) return std::nullopt;
+        return static_cast<float>(*v);
     }
     const auto len = style.length(property, index);
     if (!len) return std::nullopt;
@@ -225,7 +304,68 @@ struct CodeColors {
     Color attribute{ 249, 226, 175, 255 };
     Color property{ 137, 220, 235, 255 };
     Color constant{ 250, 179, 135, 255 };
+    Color name_space{ 148, 226, 213, 255 };
+    Color variable{ 242, 205, 205, 255 };
+    Color escape{ 245, 194, 231, 255 };
 };
+
+struct CodeTokenLook {
+    std::optional<Color> color;
+    bool bold = false;
+    bool italic = false;
+    bool underline = false;
+};
+
+CodeTokenLook code_token_look(const bark::ComputedStyle& style, CodeTokenKind kind) {
+    CodeTokenLook look;
+    const CodeColors palette;
+    switch (kind) {
+        case CodeTokenKind::Keyword: look.color = palette.keyword; break;
+        case CodeTokenKind::Type: look.color = palette.type; break;
+        case CodeTokenKind::String: look.color = palette.string; break;
+        case CodeTokenKind::Number: look.color = palette.number; break;
+        case CodeTokenKind::Comment: look.color = palette.comment; look.italic = true; break;
+        case CodeTokenKind::Preprocessor: look.color = palette.preprocessor; break;
+        case CodeTokenKind::Function: look.color = palette.function; break;
+        case CodeTokenKind::Operator: look.color = palette.op; break;
+        case CodeTokenKind::Tag: look.color = palette.tag; break;
+        case CodeTokenKind::Attribute: look.color = palette.attribute; break;
+        case CodeTokenKind::Property: look.color = palette.property; break;
+        case CodeTokenKind::Constant: look.color = palette.constant; break;
+        case CodeTokenKind::Namespace: look.color = palette.name_space; break;
+        case CodeTokenKind::Variable: look.color = palette.variable; break;
+        case CodeTokenKind::Escape: look.color = palette.escape; break;
+        case CodeTokenKind::Plain: break;
+    }
+    const bark::ValueList* values = style.get(std::string("code-") + to_string(kind));
+    if (!values || values->empty()) return look;
+    look.bold = false;
+    look.italic = false;
+    look.underline = false;
+    for (const bark::Value& v : *values) {
+        if (v.is_ident("bold")) look.bold = true;
+        else if (v.is_ident("italic")) look.italic = true;
+        else if (v.is_ident("underline")) look.underline = true;
+        else if (v.is_ident("normal") || v.is_ident("inherit")) continue;
+        else if (auto c = bark::as_color(bark::ValueList{ v })) look.color = to_color(*c);
+    }
+    return look;
+}
+
+std::vector<CodeTokenKind> code_marks(std::string_view text) {
+    std::vector<CodeTokenKind> out;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        while (i < text.size() && (text[i] == ' ' || text[i] == ',')) ++i;
+        std::size_t end = i;
+        while (end < text.size() && text[end] != ' ' && text[end] != ',') ++end;
+        if (end > i) {
+            if (auto kind = code_token_kind_from_name(text.substr(i, end - i))) out.push_back(*kind);
+        }
+        i = end;
+    }
+    return out;
+}
 
 struct CodeEditor {
     CodeBuffer buffer;
@@ -245,6 +385,9 @@ struct CodeEditor {
     std::size_t tab_size = 4;
     CodePos last_reported{ static_cast<std::size_t>(-1), 0 };
     std::string caret_request;
+    bool column_mode = false;
+    CodePos column_anchor;
+    std::size_t column_head = 0;
 };
 
 struct Scroller {
@@ -281,6 +424,65 @@ struct DrawOp {
     const fizmo::text::FancyText* math = nullptr;
     const fizmo::graphics::Texture* texture = nullptr;
     float alpha = 1.0f;
+};
+
+bool same_color(const bark::Rgba& a, const bark::Rgba& b) noexcept {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+std::shared_ptr<fizmo::images::BitmapImage> make_color_wheel(unsigned size) {
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(size) * size * 4u, 0);
+    const double r = size / 2.0;
+    for (unsigned y = 0; y < size; ++y) {
+        for (unsigned x = 0; x < size; ++x) {
+            const double dx = x + 0.5 - r;
+            const double dy = y + 0.5 - r;
+            const double d = std::sqrt(dx * dx + dy * dy);
+            if (d > r) continue;
+            ColorHsv hsv;
+            hsv.h = std::fmod(std::atan2(-dy, dx) * 180.0 / 3.14159265358979323846 + 360.0, 360.0);
+            hsv.s = std::min(1.0, d / (r - 1.0));
+            hsv.v = 1.0;
+            const bark::Rgba c = color_from_hsv(hsv);
+            const std::size_t i = (static_cast<std::size_t>(y) * size + x) * 4u;
+            rgba[i] = c.r;
+            rgba[i + 1] = c.g;
+            rgba[i + 2] = c.b;
+            rgba[i + 3] = static_cast<std::uint8_t>(std::lround(std::clamp(r - d, 0.0, 1.0) * 255.0));
+        }
+    }
+    return std::make_shared<fizmo::images::BitmapImage>(fizmo::images::BitmapImage::from_rgba(size, size, rgba.data()));
+}
+
+enum class PickerPart {
+    None,
+    Wheel,
+    Value,
+    Alpha
+};
+
+struct ColorSwatch {
+    const Node* node = nullptr;
+    Rect swatch;
+    Rect box;
+};
+
+struct ColorPicker {
+    const Node* node = nullptr;
+    ColorHsv hsv;
+    std::uint8_t alpha = 255;
+    bark::Rgba original;
+    bark::Rgba last;
+    std::string committed;
+    PickerPart drag = PickerPart::None;
+    bool show_alpha = true;
+    Rect panel;
+    float wheel_cx = 0;
+    float wheel_cy = 0;
+    float wheel_r = 0;
+    Rect value_bar;
+    Rect alpha_bar;
+    std::vector<std::pair<Rect, std::string>> formats;
 };
 
 struct Hit {
@@ -394,6 +596,11 @@ public:
     std::string title_now() {
         const bark::ComputedStyle& style = style_of(m_window);
         std::string title = m_window.attribute_or("title", style.text("title").value_or(""));
+        std::string page_title;
+        mutable_node(m_window).walk([&page_title](const Node& n) {
+            if (is_page(n) && n.has_attribute("title") && is_page_shown(n)) page_title = n.attribute_or("title", "");
+        });
+        if (!page_title.empty()) return page_title;
         if (title.empty()) {
             if (const Node* t = document().first_by_tag("title")) title = collapse_whitespace(t->inner_text());
         }
@@ -438,6 +645,8 @@ public:
         }
 
         poll_dialogs();
+        if (m_picker.node && !document().is_attached(*m_picker.node)) m_picker = ColorPicker{};
+        m_swatches.clear();
         m_ops.clear();
         m_hits.clear();
         m_boxes.clear();
@@ -455,6 +664,8 @@ public:
         m_content_height = (y - start) + pad.top + pad.bottom;
         const float max_scroll = std::max(0.0f, m_content_height - h);
         if (m_scroll > max_scroll) m_scroll = max_scroll;
+        layout_modals(r, w, h);
+        layout_picker(r, w, h);
         std::vector<Rect> clips;
         auto apply = [&r](const Rect& c) {
             const int cx = static_cast<int>(std::floor(c.x));
@@ -500,6 +711,7 @@ public:
                 m_mouse_y = py;
                 if (m_dragging) drag_to(px);
                 if (m_code_drag) code_drag_to(px, py);
+                if (m_picker.drag != PickerPart::None) picker_drag(px, py);
                 hover_at(px, py);
                 if (document().events().has_listeners("mouse_move")) {
                     Event ev = pointer_event("mouse_move", px, py, 0);
@@ -526,10 +738,11 @@ public:
                 Event ev = pointer_event("wheel", m_mouse_x, m_mouse_y, 0);
                 ev.delta_x = e.scroll_x;
                 ev.delta_y = dy;
+                if (m_modal && !m_modal_panel.contains(m_mouse_x, m_mouse_y)) break;
                 if (dispatch(hit_element(m_mouse_x, m_mouse_y), ev)) {
                     const bool horizontal = (m_mods & ModifierShift) != 0 || (e.scroll_x != 0.0f && e.scroll_y == 0.0f && e.scroll_delta == 0.0f);
                     const double amount = horizontal && e.scroll_x != 0.0f ? static_cast<double>(e.scroll_x) : dy;
-                    if (!scroll_inner(m_mouse_x, m_mouse_y, static_cast<float>(amount) * 48.0f, horizontal)) m_scroll = std::max(0.0f, m_scroll - static_cast<float>(dy) * 48.0f);
+                    if (!scroll_inner(m_mouse_x, m_mouse_y, static_cast<float>(amount) * 48.0f, horizontal) && !m_modal) m_scroll = std::max(0.0f, m_scroll - static_cast<float>(dy) * 48.0f);
                     hover_at(m_mouse_x, m_mouse_y);
                 }
                 break;
@@ -737,9 +950,10 @@ private:
         std::size_t boxes = 0;
         std::size_t scrollers = 0;
         std::size_t clips = 0;
+        std::size_t swatches = 0;
     };
 
-    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size() }; }
+    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size() }; }
 
     void rewind(const Mark& m) {
         m_ops.resize(m.ops);
@@ -747,6 +961,7 @@ private:
         m_boxes.resize(m.boxes);
         m_scrollers.resize(m.scrollers);
         m_clips.resize(m.clips);
+        m_swatches.resize(m.swatches);
     }
 
     bool is_row(const Node& element, const bark::ComputedStyle& style) {
@@ -809,10 +1024,29 @@ private:
         }
         flush();
 
+        const bark::ComputedStyle& parent_style = style_of(parent);
+        const Alignment al = alignment_of(parent_style, false);
+        auto place_item = [&](int o, float& yy, float forced_h) {
+            if (o < 0) {
+                const std::vector<const Node*>& one_run = runs[static_cast<std::size_t>(-o - 1)];
+                if (al.cross == "center" || al.cross == "end") {
+                    const float rw = run_width(r, parent, one_run, width);
+                    if (rw > 0.0f && rw < width) {
+                        const float off = al.cross == "center" ? (width - rw) / 2.0f : width - rw;
+                        layout_inline(r, parent, one_run, x + off, yy, rw);
+                        return;
+                    }
+                }
+                layout_inline(r, parent, one_run, x, yy, width);
+            } else {
+                place_block(r, *blocks[static_cast<std::size_t>(o - 1)], x, yy, width, al.cross, forced_h);
+            }
+        };
+
         std::vector<float> forced(blocks.size(), -1.0f);
         const float avail = m_avail_h;
+        float total_flex = 0.0f;
         if (avail >= 0.0f) {
-            float total_flex = 0.0f;
             for (const Node* b : blocks) total_flex += flex_of(style_of(*b));
             if (total_flex > 0.0f) {
                 float used = 0.0f;
@@ -821,7 +1055,7 @@ private:
                 for (int o : order) {
                     float my = 0.0f;
                     if (o < 0) {
-                        layout_inline(r, parent, runs[static_cast<std::size_t>(-o - 1)], x, my, width);
+                        place_item(o, my, -1.0f);
                     } else {
                         const Node* b = blocks[static_cast<std::size_t>(o - 1)];
                         const bark::ComputedStyle& bs = style_of(*b);
@@ -830,7 +1064,7 @@ private:
                             my = m.top + m.bottom;
                         } else {
                             m_avail_h = saved_avail;
-                            layout_element(r, *b, x, my, width);
+                            place_item(o, my, -1.0f);
                         }
                     }
                     used += my;
@@ -845,16 +1079,134 @@ private:
             }
         }
 
-        for (int o : order) {
-            if (o < 0) {
-                layout_inline(r, parent, runs[static_cast<std::size_t>(-o - 1)], x, y, width);
-            } else {
-                const std::size_t i = static_cast<std::size_t>(o - 1);
+        std::vector<float> lead(order.size(), 0.0f);
+        std::vector<float> trail(order.size(), 0.0f);
+        if (avail >= 0.0f && total_flex <= 0.0f && !order.empty()) {
+            std::size_t autos = 0;
+            for (const Node* b : blocks) {
+                const AutoSides a = auto_sides(style_of(*b), "margin");
+                autos += (a.top ? 1u : 0u) + (a.bottom ? 1u : 0u);
+            }
+            if (autos > 0 || al.main != "start") {
+                const Mark before = mark();
+                float used = 0.0f;
+                for (int o : order) {
+                    float my = 0.0f;
+                    m_avail_h = avail;
+                    place_item(o, my, -1.0f);
+                    used += my;
+                }
+                rewind(before);
                 m_avail_h = avail;
-                layout_element(r, *blocks[i], x, y, width, false, forced[i]);
+                const float free = std::max(0.0f, avail - used);
+                if (autos > 0) {
+                    const float share = free / static_cast<float>(autos);
+                    for (std::size_t k = 0; k < order.size(); ++k) {
+                        if (order[k] < 0) continue;
+                        const AutoSides a = auto_sides(style_of(*blocks[static_cast<std::size_t>(order[k] - 1)]), "margin");
+                        if (a.top) lead[k] += share;
+                        if (a.bottom) trail[k] += share;
+                    }
+                } else {
+                    spread(al.main, free, lead, trail);
+                }
             }
         }
+
+        for (std::size_t k = 0; k < order.size(); ++k) {
+            const int o = order[k];
+            y += lead[k];
+            m_avail_h = avail;
+            place_item(o, y, o > 0 ? forced[static_cast<std::size_t>(o - 1)] : -1.0f);
+            y += trail[k];
+        }
         m_avail_h = avail;
+    }
+
+    float run_width(fizmo::graphics::Renderer& r, const Node& parent, const std::vector<const Node*>& run, float width) {
+        float total = 0.0f;
+        for (const Node* n : run) {
+            const float w = natural_width(r, parent, *n, width);
+            if (w < 0.0f) return -1.0f;
+            total += w + 4.0f;
+        }
+        return total;
+    }
+
+    float fit_width(fizmo::graphics::Renderer& r, const Node& node, float width) {
+        const float natural = natural_width(r, node.parent() ? *node.parent() : node, node, width);
+        if (natural >= 0.0f) return natural;
+        const bark::ComputedStyle& style = style_of(node);
+        if (is_row(node, style)) return -1.0f;
+        const Box pad = box_of(style, "padding");
+        const Box margin = box_of(style, "margin");
+        float best = 0.0f;
+        float line = 0.0f;
+        bool any = false;
+        for (const auto& c : node.children()) {
+            if (skipped(*c)) continue;
+            if (c->is_text() && collapse_whitespace(c->text()).empty()) continue;
+            if (c->is_text() || is_inline_flow(*c)) {
+                const float w = natural_width(r, node, *c, width);
+                if (w < 0.0f) return -1.0f;
+                line += w + 4.0f;
+            } else {
+                best = std::max(best, line);
+                line = 0.0f;
+                const float w = fit_width(r, *c, width);
+                if (w < 0.0f) return -1.0f;
+                best = std::max(best, w);
+            }
+            any = true;
+        }
+        best = std::max(best, line);
+        if (!any) return -1.0f;
+        return best + pad.left + pad.right + margin.left + margin.right + 1.0f;
+    }
+
+    float outer_width(fizmo::graphics::Renderer& r, const Node& b, float width, bool fit) {
+        const bark::ComputedStyle& s = style_of(b);
+        const Box m = box_of(s, "margin");
+        const float avail = std::max(0.0f, width - m.left - m.right);
+        float bw = avail;
+        const bool fixed_kind = b.tag() == "img" || input_kind_of(b).has_value();
+        if (fixed_kind) {
+            const float n = natural_width(r, b.parent() ? *b.parent() : b, b, width);
+            if (n >= 0.0f) bw = std::min(avail, n - m.left - m.right);
+            return bw + m.left + m.right;
+        }
+        if (const auto w = resolve_length(s, "width", width)) {
+            bw = std::min(avail, *w);
+        } else if (fit || is_inline_block(b, s)) {
+            const float n = fit_width(r, b, width);
+            if (n >= 0.0f) bw = std::min(avail, n - m.left - m.right);
+        }
+        if (const auto mx = resolve_length(s, "max-width", width)) bw = std::min(bw, *mx);
+        if (const auto mn = resolve_length(s, "min-width", width)) bw = std::max(bw, std::min(*mn, avail));
+        return bw + m.left + m.right;
+    }
+
+    void place_block(fizmo::graphics::Renderer& r, const Node& b, float x, float& y, float width, const std::string& cross, float forced) {
+        const bark::ComputedStyle& bs = style_of(b);
+        std::string self = cross;
+        if (const auto s = bs.text("align-self")) {
+            const std::string w = align_word(*s);
+            if (!w.empty()) self = w;
+        }
+        const AutoSides au = auto_sides(bs, "margin");
+        if (self == "stretch" && !au.left && !au.right) {
+            layout_element(r, b, x, y, width, false, forced);
+            return;
+        }
+        const float ow = outer_width(r, b, width, self != "stretch");
+        const float free = std::max(0.0f, width - ow);
+        float off = 0.0f;
+        if (au.left && au.right) off = free / 2.0f;
+        else if (au.left) off = free;
+        else if (au.right) off = 0.0f;
+        else if (self == "center") off = free / 2.0f;
+        else if (self == "end") off = free;
+        layout_element(r, b, x + std::round(off), y, ow, true, forced);
     }
 
     bool preserves_space(const Node& owner) {
@@ -999,35 +1351,91 @@ private:
             any_flexible = any_flexible || widths[i] < 0.0f;
             used += final_w[i];
         }
-        float cx = x;
-        float step_gap = gap;
+        const Alignment al = alignment_of(style, true);
+        std::vector<float> pre(items.size(), 0.0f);
+        std::vector<float> post(items.size(), 0.0f);
         if (!any_flexible) {
             const float free = std::max(0.0f, width - used);
-            const std::string justify = style.text("justify-content").value_or("start");
-            if (justify == "end" || justify == "flex-end" || justify == "right") cx = x + free;
-            else if (justify == "center") cx = x + free / 2.0f;
-            else if (justify == "space-between" && items.size() > 1) step_gap = gap + free / static_cast<float>(items.size() - 1);
+            std::size_t autos = 0;
+            for (const Node* n : items) {
+                if (!n->is_element()) continue;
+                const AutoSides a = auto_sides(style_of(*n), "margin");
+                autos += (a.left ? 1u : 0u) + (a.right ? 1u : 0u);
+            }
+            if (autos > 0) {
+                const float share = free / static_cast<float>(autos);
+                for (std::size_t i = 0; i < items.size(); ++i) {
+                    if (!items[i]->is_element()) continue;
+                    const AutoSides a = auto_sides(style_of(*items[i]), "margin");
+                    if (a.left) pre[i] += share;
+                    if (a.right) post[i] += share;
+                }
+            } else {
+                spread(al.main, free, pre, post);
+            }
         }
         const float row_h = m_avail_h;
-        float bottom = y;
+        std::vector<std::string> self(items.size(), al.cross);
+        bool measure = false;
         for (std::size_t i = 0; i < items.size(); ++i) {
-            const float w = std::min(final_w[i], std::max(0.0f, x + width - cx));
-            float cy = y;
+            if (items[i]->is_element()) {
+                const bark::ComputedStyle& cs = style_of(*items[i]);
+                if (const auto s = cs.text("align-self")) {
+                    const std::string w = align_word(*s);
+                    if (!w.empty()) self[i] = w;
+                }
+                const AutoSides a = auto_sides(cs, "margin");
+                if (a.top && a.bottom) self[i] = "center";
+                else if (a.top) self[i] = "end";
+                else if (a.bottom) self[i] = "start";
+            }
+            if (self[i] != "stretch" && self[i] != "start") measure = true;
+        }
+        auto forced_for = [&](std::size_t i) {
+            if (self[i] != "stretch" || row_h < 0.0f || !items[i]->is_element()) return -1.0f;
+            const Box m = box_of(style_of(*items[i]), "margin");
+            return std::max(0.0f, row_h - m.top - m.bottom);
+        };
+        auto lay_item = [&](std::size_t i, float px, float& py, float w) {
             m_avail_h = row_h;
             if (items[i]->is_text()) {
                 std::vector<const Node*> one{ items[i] };
-                layout_inline(r, element, one, cx, cy, w);
+                layout_inline(r, element, one, px, py, w);
             } else {
-                float forced = -1.0f;
-                if (row_h >= 0.0f) {
-                    const Box m = box_of(style_of(*items[i]), "margin");
-                    forced = std::max(0.0f, row_h - m.top - m.bottom);
-                }
-                layout_element(r, *items[i], cx, cy, w, true, forced);
+                layout_element(r, *items[i], px, py, w, true, forced_for(i));
             }
-            bottom = std::max(bottom, cy);
-            cx += w + step_gap;
+        };
+        std::vector<float> heights(items.size(), -1.0f);
+        float row_height = row_h;
+        if (measure) {
+            const Mark before = mark();
+            float tallest = 0.0f;
+            for (std::size_t i = 0; i < items.size(); ++i) {
+                float my = y;
+                lay_item(i, x, my, final_w[i]);
+                heights[i] = my - y;
+                tallest = std::max(tallest, heights[i]);
+            }
+            rewind(before);
+            if (row_height < 0.0f) row_height = tallest;
         }
+        float cx = x;
+        float bottom = y;
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            cx += pre[i];
+            const float w = std::min(final_w[i], std::max(0.0f, x + width - cx));
+            float offset = 0.0f;
+            if (measure && heights[i] >= 0.0f && self[i] != "stretch") {
+                const float free = std::max(0.0f, row_height - heights[i]);
+                if (self[i] == "center") offset = std::round(free / 2.0f);
+                else if (self[i] == "end") offset = free;
+            }
+            float cy = y + offset;
+            lay_item(i, cx, cy, w);
+            bottom = std::max(bottom, cy);
+            cx += w + gap + post[i];
+        }
+        if (measure && row_height >= 0.0f) bottom = std::max(bottom, y + row_height);
         m_avail_h = row_h;
         y = bottom;
     }
@@ -1297,8 +1705,17 @@ private:
         if (kind == InputKind::Color) {
             const float sw = lh - 4;
             const bark::Rgba c = input_color(element).value_or(bark::Rgba{});
+            if (c.a < 255) {
+                const float half = sw / 2.0f;
+                push_rect(DrawOp::Kind::Fill, tx, y + pad.top + 2, sw, sw, Color(255, 255, 255, 255), 1, 3);
+                push_rect(DrawOp::Kind::Fill, tx, y + pad.top + 2, half, half, Color(190, 190, 190, 255));
+                push_rect(DrawOp::Kind::Fill, tx + half, y + pad.top + 2 + half, half, half, Color(190, 190, 190, 255));
+            }
             push_rect(DrawOp::Kind::Fill, tx, y + pad.top + 2, sw, sw, to_color(c), 1, 3);
             push_rect(DrawOp::Kind::Stroke, tx, y + pad.top + 2, sw, sw, with_alpha(text_color(element), 0.4), 1, 3);
+            if (!disabled && element.attribute_or("picker", "true") != "false") {
+                m_swatches.push_back(ColorSwatch{ &element, Rect{ x, y, tx + sw + 4 - x, h }, Rect{ x, y, w, h } });
+            }
             tx += sw + 8;
         }
         const float tw = std::max(1.0f, x + w - pad.right - tx);
@@ -1312,6 +1729,7 @@ private:
             if (disabled) shown.set_fg_color(with_alpha(raw_text_color(element), fade));
             push_text(tx, y + pad.top, tw, lh, text, shown);
         }
+        if (focused && m_edit_all && !text.empty()) push_rect(DrawOp::Kind::Fill, tx - 1, y + pad.top + 1, std::min(text_width(r, text, ts) + 2, tw), lh - 2, with_alpha(accent_color(element), 0.35), 1, 2);
         if (focused) {
             const float cx = std::min(tx + text_width(r, text, ts) + 1, x + w - pad.right);
             push_rect(DrawOp::Kind::Fill, cx, y + pad.top + 2, 2, lh - 4, accent_color(element));
@@ -1542,10 +1960,13 @@ private:
         const std::size_t first = static_cast<std::size_t>(std::max(0.0f, std::floor(ed.scroll_y / lh)));
         const std::size_t last = std::min(count, first + static_cast<std::size_t>(std::ceil(inner_h / lh)) + 1);
         const CodePos caret = ed.buffer.caret();
-        const auto [sel_a, sel_b] = ed.buffer.selection();
-        const bool selecting = ed.buffer.has_selection();
+        const std::vector<CodeCursor> cursors = ed.buffer.cursors();
         const CodeLanguage lang = code_language_from_name(element.attribute_or("language", "plain"));
-        const CodeColors palette;
+        std::vector<CodeTokenLook> looks;
+        for (std::size_t k = 0; k <= static_cast<std::size_t>(CodeTokenKind::Escape); ++k) looks.push_back(code_token_look(style, static_cast<CodeTokenKind>(k)));
+        if (auto plain = style.color("code-plain")) looks[0].color = to_color(*plain);
+        const std::vector<CodeTokenKind> marks = code_marks(element.attribute_or("mark", ""));
+        const Color mark_color = to_color(style.color("code-mark").value_or(bark::Rgba{ 255, 166, 77, 110 }));
         fizmo::text::TextStyle number_style = ts;
         number_style.set_bold(false);
         number_style.set_italic(false);
@@ -1555,8 +1976,14 @@ private:
         for (std::size_t li = first; li < last; ++li) {
             const float ly = inner_y + static_cast<float>(li) * lh - ed.scroll_y;
             const std::string& line = ed.buffer.line(li);
-            if (focused && li == caret.line && !selecting) push_rect(DrawOp::Kind::Fill, inner_x + gutter, ly, inner_w - gutter, lh, with_alpha(Color(255, 255, 255, 255), 0.04));
-            if (selecting && li >= sel_a.line && li <= sel_b.line) {
+            bool caret_line = false;
+            for (const CodeCursor& cur : cursors) caret_line = caret_line || (cur.caret.line == li && !cur.has_selection());
+            if (focused && caret_line) push_rect(DrawOp::Kind::Fill, inner_x + gutter, ly, inner_w - gutter, lh, with_alpha(Color(255, 255, 255, 255), 0.04));
+            for (const CodeCursor& cur : cursors) {
+                if (!cur.has_selection()) continue;
+                const CodePos sel_a = cur.start();
+                const CodePos sel_b = cur.end();
+                if (li < sel_a.line || li > sel_b.line) continue;
                 const std::size_t from = li == sel_a.line ? code_display_column(line, sel_a.column, ed.tab_size) : 0;
                 const std::size_t to = li == sel_b.line ? code_display_column(line, sel_b.column, ed.tab_size) : code_display_column(line, line.size(), ed.tab_size) + 1;
                 const float sx = text_x + static_cast<float>(from) * cw - ed.scroll_x;
@@ -1579,21 +2006,17 @@ private:
                 const float pw = static_cast<float>(code_display_column(line, t.end, ed.tab_size) - col) * cw;
                 if (px + pw < text_x - cw) continue;
                 fizmo::text::TextStyle tok = ts;
-                Color c = fg;
-                switch (t.kind) {
-                    case CodeTokenKind::Keyword: c = palette.keyword; break;
-                    case CodeTokenKind::Type: c = palette.type; break;
-                    case CodeTokenKind::String: c = palette.string; break;
-                    case CodeTokenKind::Number: c = palette.number; break;
-                    case CodeTokenKind::Comment: c = palette.comment; tok.set_italic(true); break;
-                    case CodeTokenKind::Preprocessor: c = palette.preprocessor; break;
-                    case CodeTokenKind::Function: c = palette.function; break;
-                    case CodeTokenKind::Operator: c = palette.op; break;
-                    case CodeTokenKind::Tag: c = palette.tag; break;
-                    case CodeTokenKind::Attribute: c = palette.attribute; break;
-                    case CodeTokenKind::Property: c = palette.property; break;
-                    case CodeTokenKind::Constant: c = palette.constant; break;
-                    case CodeTokenKind::Plain: break;
+                const CodeTokenLook& look = looks[static_cast<std::size_t>(t.kind)];
+                const Color c = look.color.value_or(fg);
+                if (look.bold) tok.set_bold(true);
+                if (look.italic) tok.set_italic(true);
+                if (look.underline) tok.set_underline(true);
+                if (std::find(marks.begin(), marks.end(), t.kind) != marks.end()) {
+                    const std::size_t lead = piece.find_first_not_of(" \t");
+                    const std::size_t trail = piece.find_last_not_of(" \t");
+                    const float mx = px + static_cast<float>(code_display_column(line, t.begin + lead, ed.tab_size) - col) * cw;
+                    const float mw = static_cast<float>(code_display_column(line, t.begin + trail + 1, ed.tab_size) - code_display_column(line, t.begin + lead, ed.tab_size)) * cw;
+                    push_rect(DrawOp::Kind::Fill, mx - 2, ly - 1, mw + 4, line_height(r, ts) + 2, with_alpha(mark_color, fade), 1, 3);
                 }
                 tok.set_fg_color(with_alpha(c, fade));
                 push_text(px, ly, pw + cw, lh, shown, tok);
@@ -1605,9 +2028,11 @@ private:
             push_text(text_x, inner_y, view_w, lh, element.attribute_or("placeholder", ""), muted);
         }
         if (focused) {
-            const float cx = text_x + static_cast<float>(code_display_column(ed.buffer.line(caret.line), caret.column, ed.tab_size)) * cw - ed.scroll_x;
-            const float cy = inner_y + static_cast<float>(caret.line) * lh - ed.scroll_y;
-            push_rect(DrawOp::Kind::Fill, cx - 1, cy + 1, 2, lh - 2, accent);
+            for (const CodeCursor& cur : cursors) {
+                const float cx = text_x + static_cast<float>(code_display_column(ed.buffer.line(cur.caret.line), cur.caret.column, ed.tab_size)) * cw - ed.scroll_x;
+                const float cy = inner_y + static_cast<float>(cur.caret.line) * lh - ed.scroll_y;
+                push_rect(DrawOp::Kind::Fill, cx - 1, cy + 1, 2, lh - 2, accent);
+            }
         }
         pop_clip();
         if (numbers) {
@@ -1832,10 +2257,11 @@ private:
     }
 
     const Node* hit_element(float px, float py) const {
-        for (auto it = m_boxes.rbegin(); it != m_boxes.rend(); ++it) {
-            if (it->contains(px, py)) return it->node;
+        const std::size_t floor = m_modal ? m_modal_boxes : 0;
+        for (std::size_t i = m_boxes.size(); i > floor; --i) {
+            if (m_boxes[i - 1].contains(px, py)) return m_boxes[i - 1].node;
         }
-        return &m_window;
+        return m_modal ? m_modal : &m_window;
     }
 
     void update_chain(std::vector<const Node*>& chain, const Node* target, unsigned bit, const char* enter, const char* leave) {
@@ -1930,6 +2356,7 @@ private:
         m_edit = input_text(*node);
         m_focus_start = m_edit;
         m_invalid = false;
+        m_edit_all = input_kind_of(*node) == InputKind::Color && !m_edit.empty();
         if (m_native) m_native->start_text_input();
         set_focused(node);
     }
@@ -1954,18 +2381,341 @@ private:
         m_focus = nullptr;
         m_edit.clear();
         m_invalid = false;
+        m_edit_all = false;
         if (m_native) m_native->stop_text_input();
     }
 
+    void layout_modals(fizmo::graphics::Renderer& r, float view_w, float view_h) {
+        const Node* was = m_modal;
+        m_modal = nullptr;
+        m_modal_boxes = 0;
+        m_modal_hits = 0;
+        std::vector<const Node*> open;
+        std::function<void(const Node&)> collect = [&](const Node& n) {
+            for (const auto& c : n.children()) {
+                if (!c->is_element() || c->tag() == "window") continue;
+                if (is_modal(*c) && c->has_attribute("open") && is_page_shown(*c)) open.push_back(c.get());
+                collect(*c);
+            }
+        };
+        collect(m_window);
+        for (const Node* modal : open) {
+            const bark::ComputedStyle& style = style_of(*modal);
+            push_rect(DrawOp::Kind::Fill, 0, 0, view_w, view_h, to_color(style.color("backdrop").value_or(bark::Rgba{ 0, 0, 0, 140 })));
+            const Box pad = box_of(style, "padding");
+            float width = resolve_length(style, "width", view_w).value_or(480.0f);
+            if (const auto mn = resolve_length(style, "min-width", view_w)) width = std::max(width, *mn);
+            if (const auto mx = resolve_length(style, "max-width", view_w)) width = std::min(width, *mx);
+            width = std::max(80.0f, std::min(width, view_w - 24.0f));
+            float max_h = view_h - 24.0f;
+            if (const auto mx = resolve_length(style, "max-height", view_h)) max_h = std::min(max_h, *mx);
+            const float inner_w = std::max(1.0f, width - pad.left - pad.right);
+            const float saved_avail = m_avail_h;
+            m_avail_h = std::max(0.0f, max_h - pad.top - pad.bottom);
+            const Mark before = mark();
+            float my = 0.0f;
+            lay_content(r, *modal, style, pad.left, my, inner_w);
+            rewind(before);
+            float height = my + pad.top + pad.bottom;
+            if (const auto fixed = resolve_length(style, "height", view_h)) height = *fixed;
+            if (const auto mn = resolve_length(style, "min-height", view_h)) height = std::max(height, *mn);
+            height = std::min(height, max_h);
+            const float x = std::round((view_w - width) / 2.0f);
+            const float y = std::round(std::max(12.0f, (view_h - height) / 2.0f));
+            const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
+            push_rect(DrawOp::Kind::Fill, x + 3, y + 6, width, height, Color(0, 0, 0, 90), 1, radius);
+            if (auto bg = style.color("background")) push_rect(DrawOp::Kind::Fill, x, y, width, height, to_color(*bg), 1, radius);
+            if (auto border = style.color("border-color")) push_rect(DrawOp::Kind::Stroke, x, y, width, height, to_color(*border), static_cast<unsigned>(style.length("border-width").value_or(1.0)), radius);
+            m_modal_boxes = m_boxes.size();
+            m_modal_hits = m_hits.size();
+            add_box(ElementBox{ modal, x, y, width, height });
+            push_clip(Rect{ x, y, width, height });
+            float cy = y + pad.top;
+            lay_content(r, *modal, style, x + pad.left, cy, inner_w);
+            pop_clip();
+            m_avail_h = saved_avail;
+            m_modal = modal;
+            m_modal_panel = Rect{ x, y, width, height };
+        }
+        if (m_modal && m_modal != was) {
+            if (m_focus && !m_focus->is_inside(m_modal)) blur(true);
+            if (m_code_focus && !m_code_focus->is_inside(m_modal)) blur_code();
+            if (m_focused && !m_focused->is_inside(m_modal)) set_focused(nullptr);
+        }
+    }
+
+    std::size_t live_hits() const { return m_modal ? m_modal_hits : 0; }
+
+    void follow_link(const Node* from) {
+        if (from && !is_disabled(from)) grove::follow_link(document(), &mutable_node(*from));
+    }
+
+    const ColorSwatch* swatch_at(float px, float py) const {
+        for (const ColorSwatch& s : m_swatches) {
+            if (s.swatch.contains(px, py)) return &s;
+        }
+        return nullptr;
+    }
+
+    void open_picker(const Node* node) {
+        m_picker = ColorPicker{};
+        const bark::Rgba c = input_color(*node).value_or(bark::Rgba{});
+        m_picker.node = node;
+        m_picker.hsv = color_to_hsv(c);
+        m_picker.alpha = c.a;
+        m_picker.original = c;
+        m_picker.last = c;
+        m_picker.committed = input_text(*node);
+        m_picker.show_alpha = node->attribute_or("alpha", "true") != "false";
+    }
+
+    void picker_change() {
+        if (!m_picker.node) return;
+        const std::string now = input_text(*m_picker.node);
+        if (now == m_picker.committed) return;
+        m_picker.committed = now;
+        Event change;
+        change.type = "change";
+        dispatch(m_picker.node, change);
+    }
+
+    void close_picker(bool keep) {
+        if (!m_picker.node) return;
+        if (!keep) picker_set(m_picker.original);
+        picker_change();
+        m_picker = ColorPicker{};
+    }
+
+    void picker_set(const bark::Rgba& c) {
+        if (!m_picker.node) return;
+        Node& node = mutable_node(*m_picker.node);
+        m_picker.last = c;
+        const std::optional<bark::Rgba> before = input_color(node);
+        if (before && same_color(*before, c)) return;
+        set_input_color(document(), node, c);
+        if (m_focus == m_picker.node) m_edit = input_text(node);
+        fire_value(node, false);
+    }
+
+    void picker_apply() {
+        picker_set(color_from_hsv(m_picker.hsv, m_picker.show_alpha ? m_picker.alpha : 255));
+    }
+
+    void picker_drag(float px, float py) {
+        ColorPicker& p = m_picker;
+        if (p.drag == PickerPart::Wheel) {
+            const float dx = px - p.wheel_cx;
+            const float dy = py - p.wheel_cy;
+            const double d = std::sqrt(static_cast<double>(dx) * dx + static_cast<double>(dy) * dy);
+            p.hsv.h = std::fmod(std::atan2(-static_cast<double>(dy), static_cast<double>(dx)) * 180.0 / 3.14159265358979323846 + 360.0, 360.0);
+            p.hsv.s = std::clamp(d / std::max(1.0f, p.wheel_r), 0.0, 1.0);
+            if (p.hsv.v <= 0.0) p.hsv.v = 1.0;
+        } else if (p.drag == PickerPart::Value) {
+            p.hsv.v = std::clamp(1.0 - (py - p.value_bar.y) / std::max(1.0f, p.value_bar.h), 0.0, 1.0);
+        } else if (p.drag == PickerPart::Alpha) {
+            p.alpha = static_cast<std::uint8_t>(std::lround(std::clamp(1.0 - (py - p.alpha_bar.y) / std::max(1.0f, p.alpha_bar.h), 0.0, 1.0) * 255.0));
+        } else {
+            return;
+        }
+        picker_apply();
+    }
+
+    void picker_press(float px, float py) {
+        ColorPicker& p = m_picker;
+        const float dx = px - p.wheel_cx;
+        const float dy = py - p.wheel_cy;
+        if (dx * dx + dy * dy <= (p.wheel_r + 4) * (p.wheel_r + 4)) p.drag = PickerPart::Wheel;
+        else if (Rect{ p.value_bar.x - 4, p.value_bar.y - 6, p.value_bar.w + 8, p.value_bar.h + 12 }.contains(px, py)) p.drag = PickerPart::Value;
+        else if (p.show_alpha && Rect{ p.alpha_bar.x - 4, p.alpha_bar.y - 6, p.alpha_bar.w + 8, p.alpha_bar.h + 12 }.contains(px, py)) p.drag = PickerPart::Alpha;
+        if (p.drag != PickerPart::None) {
+            picker_drag(px, py);
+            return;
+        }
+        for (const auto& [rect, format] : p.formats) {
+            if (!rect.contains(px, py)) continue;
+            Node& node = mutable_node(*p.node);
+            node.set_attribute("format", format);
+            if (m_focus == p.node) m_edit = input_text(node);
+            p.committed = input_text(node);
+            document().touch();
+            return;
+        }
+    }
+
+    void layout_picker(fizmo::graphics::Renderer& r, float view_w, float view_h) {
+        ColorPicker& p = m_picker;
+        if (!p.node) return;
+        const ColorSwatch* anchor = nullptr;
+        for (const ColorSwatch& s : m_swatches) {
+            if (s.node == p.node) anchor = &s;
+        }
+        if (!anchor) {
+            p = ColorPicker{};
+            return;
+        }
+        const bark::Rgba current = input_color(*p.node).value_or(bark::Rgba{});
+        if (!same_color(current, p.last)) {
+            const ColorHsv hsv = color_to_hsv(current);
+            if (hsv.s > 0.0 && hsv.v > 0.0) p.hsv.h = hsv.h;
+            if (hsv.v > 0.0) p.hsv.s = hsv.s;
+            p.hsv.v = hsv.v;
+            p.alpha = current.a;
+            p.last = current;
+        }
+
+        const fizmo::text::TextStyle base = text_style(*p.node);
+        const Color fg = raw_text_color(*p.node);
+        const Color accent = accent_color(*p.node);
+        const float pad = 12.0f;
+        const float wheel = 168.0f;
+        const float bar = 16.0f;
+        fizmo::text::TextStyle mono(12.0, with_alpha(fg, 0.95));
+        mono.set_font(fizmo::text::to_font(fizmo::text::MonospaceFont::CascadiaMono));
+        fizmo::text::TextStyle label(11.0, with_alpha(fg, 0.55));
+        const float row_h = std::max(20.0f, line_height(r, mono) + 6.0f);
+        const float panel_w = pad + wheel + 14 + bar + (p.show_alpha ? 10 + bar : 0.0f) + 14 + 56 + pad;
+        const float panel_h = pad + wheel + 12 + row_h * 5 + pad - 4;
+        float px = anchor->box.x;
+        float py = anchor->box.y + anchor->box.h + 4;
+        if (py + panel_h > view_h && anchor->box.y - 4 - panel_h >= 0) py = anchor->box.y - 4 - panel_h;
+        px = std::clamp(px, 4.0f, std::max(4.0f, view_w - panel_w - 4));
+        py = std::clamp(py, 4.0f, std::max(4.0f, view_h - panel_h - 4));
+        p.panel = Rect{ px, py, panel_w, panel_h };
+
+        const Color window_bg = to_color(style_of(m_window).color("background").value_or(bark::Rgba{ 30, 30, 46, 255 }));
+        const Color panel_bg = mix(window_bg, fg, 0.06f);
+        push_rect(DrawOp::Kind::Fill, px + 2, py + 3, panel_w, panel_h, Color(0, 0, 0, 70), 1, 8);
+        push_rect(DrawOp::Kind::Fill, px, py, panel_w, panel_h, panel_bg, 1, 8);
+        push_rect(DrawOp::Kind::Stroke, px, py, panel_w, panel_h, with_alpha(fg, 0.22), 1, 8);
+
+        if (!m_color_wheel) {
+            m_color_wheel_image = make_color_wheel(256);
+            m_color_wheel = std::make_shared<fizmo::graphics::Texture>(std::shared_ptr<const fizmo::images::BitmapImage>(m_color_wheel_image), fizmo::graphics::SampleFilter::Bilinear);
+        }
+        const float wx = px + pad;
+        const float wy = py + pad;
+        p.wheel_r = wheel / 2.0f;
+        p.wheel_cx = wx + p.wheel_r;
+        p.wheel_cy = wy + p.wheel_r;
+        DrawOp& disc = push(DrawOp::Kind::Image, wx, wy, wheel, wheel, Color());
+        disc.texture = m_color_wheel.get();
+        disc.alpha = 1.0f;
+        if (p.hsv.v < 1.0) push(DrawOp::Kind::Circle, p.wheel_cx, p.wheel_cy, 0, 0, Color(0, 0, 0, static_cast<std::uint8_t>(std::lround((1.0 - p.hsv.v) * 255.0)))).radius = p.wheel_r;
+        const double angle = p.hsv.h * 3.14159265358979323846 / 180.0;
+        const float mx = p.wheel_cx + static_cast<float>(std::cos(angle) * p.hsv.s * p.wheel_r);
+        const float my = p.wheel_cy - static_cast<float>(std::sin(angle) * p.hsv.s * p.wheel_r);
+        DrawOp& ring_dark = push(DrawOp::Kind::CircleStroke, mx, my, 0, 0, Color(0, 0, 0, 200));
+        ring_dark.radius = 7;
+        ring_dark.stroke = 2;
+        DrawOp& ring = push(DrawOp::Kind::CircleStroke, mx, my, 0, 0, Color(255, 255, 255, 255));
+        ring.radius = 6;
+        ring.stroke = 2;
+
+        auto checker = [&](const Rect& rc) {
+            push_rect(DrawOp::Kind::Fill, rc.x, rc.y, rc.w, rc.h, Color(255, 255, 255, 255));
+            const float cell = 6.0f;
+            for (float cy = 0; cy < rc.h; cy += cell) {
+                for (float cx = 0; cx < rc.w; cx += cell) {
+                    if ((static_cast<int>(cx / cell) + static_cast<int>(cy / cell)) % 2 == 0) continue;
+                    push_rect(DrawOp::Kind::Fill, rc.x + cx, rc.y + cy, std::min(cell, rc.w - cx), std::min(cell, rc.h - cy), Color(200, 200, 200, 255));
+                }
+            }
+        };
+        auto marker = [&](const Rect& rc, double t) {
+            const float y = rc.y + static_cast<float>((1.0 - t) * rc.h);
+            push_rect(DrawOp::Kind::Fill, rc.x - 3, y - 3, rc.w + 6, 6, Color(0, 0, 0, 160), 1, 3);
+            push_rect(DrawOp::Kind::Stroke, rc.x - 3, y - 3, rc.w + 6, 6, Color(255, 255, 255, 255), 2, 3);
+        };
+        const int steps = 48;
+        p.value_bar = Rect{ wx + wheel + 14, wy, bar, wheel };
+        ColorHsv top = p.hsv;
+        top.v = 1.0;
+        for (int i = 0; i < steps; ++i) {
+            ColorHsv at = top;
+            at.v = 1.0 - static_cast<double>(i) / (steps - 1);
+            const float sy = p.value_bar.y + p.value_bar.h * static_cast<float>(i) / steps;
+            push_rect(DrawOp::Kind::Fill, p.value_bar.x, sy, bar, p.value_bar.h / steps + 1, to_color(color_from_hsv(at)));
+        }
+        push_rect(DrawOp::Kind::Stroke, p.value_bar.x, p.value_bar.y, bar, wheel, with_alpha(fg, 0.25));
+        marker(p.value_bar, p.hsv.v);
+        float right = p.value_bar.x + bar;
+        const bark::Rgba solid = color_from_hsv(p.hsv);
+        if (p.show_alpha) {
+            p.alpha_bar = Rect{ right + 10, wy, bar, wheel };
+            checker(p.alpha_bar);
+            for (int i = 0; i < steps; ++i) {
+                const float sy = p.alpha_bar.y + p.alpha_bar.h * static_cast<float>(i) / steps;
+                const double a = 1.0 - static_cast<double>(i) / (steps - 1);
+                push_rect(DrawOp::Kind::Fill, p.alpha_bar.x, sy, bar, p.alpha_bar.h / steps + 1, Color(solid.r, solid.g, solid.b, static_cast<std::uint8_t>(std::lround(a * 255.0))));
+            }
+            push_rect(DrawOp::Kind::Stroke, p.alpha_bar.x, p.alpha_bar.y, bar, wheel, with_alpha(fg, 0.25));
+            marker(p.alpha_bar, p.alpha / 255.0);
+            right = p.alpha_bar.x + bar;
+        }
+
+        const float sx = right + 14;
+        const bark::Rgba now = color_from_hsv(p.hsv, p.show_alpha ? p.alpha : 255);
+        const float lh_label = line_height(r, label);
+        push_text(sx, wy, 56, lh_label, "New", label);
+        const Rect fresh{ sx, wy + lh_label + 4, 56, 40 };
+        checker(fresh);
+        push_rect(DrawOp::Kind::Fill, fresh.x, fresh.y, fresh.w, fresh.h, to_color(now));
+        push_rect(DrawOp::Kind::Stroke, fresh.x, fresh.y, fresh.w, fresh.h, with_alpha(fg, 0.25));
+        push_text(sx, fresh.y + fresh.h + 10, 56, lh_label, "Before", label);
+        const Rect old{ sx, fresh.y + fresh.h + 14 + lh_label, 56, 40 };
+        checker(old);
+        push_rect(DrawOp::Kind::Fill, old.x, old.y, old.w, old.h, to_color(p.original));
+        push_rect(DrawOp::Kind::Stroke, old.x, old.y, old.w, old.h, with_alpha(fg, 0.25));
+
+        p.formats.clear();
+        const std::string chosen = p.node->attribute_or("format", "hex");
+        const std::vector<std::pair<std::string, std::string>> rows = { { "hex", "HEX" }, { "rgb", "RGB" }, { "rgba", "RGBA" }, { "hsl", "HSL" }, { "hsla", "HSLA" } };
+        float ry = wy + wheel + 12;
+        for (const auto& [format, name] : rows) {
+            const Rect row{ px + 6, ry, panel_w - 12, row_h };
+            if (format == chosen) push_rect(DrawOp::Kind::Fill, row.x, row.y, row.w, row.h, with_alpha(accent, 0.22), 1, 4);
+            else if (row.contains(m_mouse_x, m_mouse_y)) push_rect(DrawOp::Kind::Fill, row.x, row.y, row.w, row.h, with_alpha(fg, 0.07), 1, 4);
+            const float ty = row.y + (row_h - line_height(r, mono)) / 2.0f;
+            push_text(row.x + 8, row.y + (row_h - line_height(r, label)) / 2.0f, 44, line_height(r, label), name, label);
+            push_text(row.x + 56, ty, row.w - 60, line_height(r, mono), format == "hex" ? format_color(now) : format_color(now, format), mono);
+            p.formats.emplace_back(row, format);
+            ry += row_h;
+        }
+        (void)base;
+    }
+
     void mouse_down(float px, float py) {
+        if (m_picker.node) {
+            if (m_picker.panel.contains(px, py)) {
+                picker_press(px, py);
+                return;
+            }
+            const Node* was = m_picker.node;
+            close_picker(true);
+            const ColorSwatch* again = swatch_at(px, py);
+            if (again && again->node == was) return;
+        }
+        if (const ColorSwatch* s = swatch_at(px, py)) {
+            blur(true);
+            blur_code();
+            set_focused(s->node);
+            open_picker(s->node);
+            return;
+        }
         const Node* target = hit_element(px, py);
+        if (m_modal && !m_modal_panel.contains(px, py)) {
+            Event down = pointer_event("mouse_down", px, py, 1);
+            if (dispatch(m_modal, down) && !m_modal->has_attribute("persistent")) close_modal(document(), mutable_node(*m_modal));
+            return;
+        }
         m_pressed = target;
         update_chain(m_active, target, StateActive, nullptr, nullptr);
         Event down = pointer_event("mouse_down", px, py, 1);
         const bool allowed = dispatch(target, down);
 
         if (allowed) {
-            for (const Hit& hit : m_hits) {
+            for (std::size_t hi = live_hits(); hi < m_hits.size(); ++hi) {
+                const Hit& hit = m_hits[hi];
                 if (!hit.contains(px, py)) continue;
                 Node& node = mutable_node(*hit.node);
                 switch (hit.kind) {
@@ -1986,8 +2736,29 @@ private:
                     case InputKind::Code: {
                         focus_code(hit.node);
                         CodeEditor& ed = m_code[hit.node];
-                        ed.buffer.set_caret(code_pos_at(ed, px, py), (m_mods & ModifierShift) != 0);
+                        const CodePos at = code_pos_at(ed, px, py);
+                        const bool shift = (m_mods & ModifierShift) != 0;
+                        const bool alt = (m_mods & ModifierAlt) != 0;
+                        ed.column_mode = false;
                         ed.reveal = true;
+                        if (alt && !shift) {
+                            ed.buffer.toggle_cursor(at);
+                            return;
+                        }
+                        if (shift && !ed.buffer.has_selection() && !ed.buffer.has_extra_cursors()) {
+                            const CodePos from = ed.buffer.caret();
+                            const float cell = std::max(1.0f, ed.char_w);
+                            const long clicked = std::lround((px - ed.text_x + ed.scroll_x) / cell);
+                            const long column = static_cast<long>(code_display_column(ed.buffer.line(from.line), from.column, ed.tab_size));
+                            if (at.line != from.line && clicked == column) {
+                                ed.buffer.column_select(from, at.line);
+                                ed.column_mode = true;
+                                ed.column_anchor = from;
+                                ed.column_head = at.line;
+                                return;
+                            }
+                        }
+                        ed.buffer.set_caret(at, shift);
                         m_code_drag = hit.node;
                         return;
                     }
@@ -2025,6 +2796,11 @@ private:
     }
 
     void mouse_up(float px, float py, int button) {
+        if (button == 1 && m_picker.drag != PickerPart::None) {
+            m_picker.drag = PickerPart::None;
+            picker_change();
+            return;
+        }
         const Node* target = hit_element(px, py);
         Event up = pointer_event("mouse_up", px, py, button);
         dispatch(target, up);
@@ -2050,6 +2826,7 @@ private:
         if (!common || is_disabled(common)) return;
         Event click = pointer_event("click", px, py, 1);
         if (!dispatch(common, click)) return;
+        follow_link(common);
         for (const Node* n = common; n && n != &m_window; n = n->parent()) {
             if (input_kind_of(*n) == InputKind::File) {
                 open_dialog(n);
@@ -2081,6 +2858,7 @@ private:
             }
             if (clean.empty()) return;
             CodeEditor& ed = m_code[m_code_focus];
+            ed.column_mode = false;
             ed.buffer.insert(clean);
             code_changed(m_code_focus, clean);
             return;
@@ -2088,6 +2866,10 @@ private:
         if (!m_focus) return;
         bool changed = false;
         for (const std::string& cp : split_code_points(text)) {
+            if (m_edit_all && input_accepts(*m_focus, "", cp)) {
+                m_edit.clear();
+                m_edit_all = false;
+            }
             if (input_accepts(*m_focus, m_edit, cp)) {
                 m_edit += cp;
                 m_invalid = false;
@@ -2104,8 +2886,8 @@ private:
 
     void focus_next(int direction) {
         std::vector<const Node*> order;
-        for (const Hit& h : m_hits) {
-            if (is_text_input(h.kind)) order.push_back(h.node);
+        for (std::size_t hi = live_hits(); hi < m_hits.size(); ++hi) {
+            if (is_text_input(m_hits[hi].kind)) order.push_back(m_hits[hi].node);
         }
         if (order.empty()) return;
         auto it = std::find(order.begin(), order.end(), m_focus);
@@ -2125,6 +2907,14 @@ private:
         Event ev = key_event("key_down", e);
         if (!dispatch(key_target(), ev)) return;
         const Key key = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
+        if (m_picker.node && !m_focus && (key == Key::Enter || key == Key::Escape)) {
+            close_picker(key == Key::Enter);
+            return;
+        }
+        if (m_modal && key == Key::Escape && !m_focus && !m_code_focus && !m_modal->has_attribute("persistent")) {
+            close_modal(document(), mutable_node(*m_modal));
+            return;
+        }
         if (is_popup(m_window) && (key == Key::Enter || key == Key::Escape)) {
             Node& popup = mutable_node(m_window);
             if (key == Key::Escape) {
@@ -2154,15 +2944,29 @@ private:
             if (m_focused && (key == Key::Enter || key == Key::Space) && (m_focused->tag() == "button" || input_kind_of(*m_focused) == InputKind::File) && !is_disabled(m_focused)) {
                 Event click;
                 click.type = "click";
-                if (dispatch(m_focused, click) && input_kind_of(*m_focused) == InputKind::File) open_dialog(m_focused);
+                const Node* clicked = m_focused;
+                if (dispatch(clicked, click)) {
+                    if (input_kind_of(*clicked) == InputKind::File) open_dialog(clicked);
+                    else follow_link(clicked);
+                }
             }
             return;
         }
         Node& node = mutable_node(*m_focus);
+        const bool select_all = key == Key::A && (fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Meta));
+        if (select_all) {
+            m_edit_all = !m_edit.empty();
+            return;
+        }
+        const bool was_all = m_edit_all;
+        if (key == Key::Backspace || key == Key::Delete || key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End) m_edit_all = false;
         switch (key) {
+            case Key::Delete:
             case Key::Backspace:
-                if (!m_edit.empty()) {
-                    pop_code_point(m_edit);
+                if (key == Key::Delete && !was_all) break;
+                if (was_all) m_edit.clear();
+                if (!m_edit.empty() || was_all) {
+                    if (!was_all) pop_code_point(m_edit);
                     m_invalid = false;
                     Event input;
                     input.type = "input";
@@ -2316,6 +3120,20 @@ private:
         const bool spaces = node->attribute_or("indent", "spaces") != "tabs";
         const std::size_t page = static_cast<std::size_t>(std::max(1.0f, ed.view_h / std::max(1.0f, ed.line_h) - 1.0f));
         bool edited = false;
+        const bool vertical = key == Key::Up || key == Key::Down;
+        if (vertical && shift && !ctrl && (ed.column_mode || (!buf.any_selection() && !buf.has_extra_cursors()))) {
+            if (!ed.column_mode) {
+                ed.column_mode = true;
+                ed.column_anchor = buf.caret();
+                ed.column_head = buf.caret().line;
+            }
+            if (key == Key::Up && ed.column_head > 0) --ed.column_head;
+            if (key == Key::Down && ed.column_head + 1 < buf.line_count()) ++ed.column_head;
+            buf.column_select(ed.column_anchor, ed.column_head);
+            ed.reveal = true;
+            return;
+        }
+        if (key != Key::LeftShift && key != Key::RightShift) ed.column_mode = false;
         switch (key) {
             case Key::Left: buf.move_left(shift, ctrl); break;
             case Key::Right: buf.move_right(shift, ctrl); break;
@@ -2342,13 +3160,30 @@ private:
                     edited = true;
                 }
                 break;
-            case Key::Escape: buf.set_caret(buf.caret()); break;
+            case Key::Escape:
+                if (buf.has_extra_cursors()) buf.clear_extra_cursors();
+                else buf.set_caret(buf.caret());
+                break;
             case Key::A: if (ctrl) buf.select_all(); break;
             case Key::C:
-                if (ctrl && m_native) m_native->set_clipboard_text(buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
+                if (ctrl && m_native) {
+                    if (buf.has_extra_cursors()) {
+                        if (buf.any_selection()) m_native->set_clipboard_text(buf.selected_texts());
+                    } else {
+                        m_native->set_clipboard_text(buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
+                    }
+                }
                 break;
             case Key::X:
                 if (ctrl && m_native && !ro) {
+                    if (buf.has_extra_cursors()) {
+                        if (buf.any_selection()) {
+                            m_native->set_clipboard_text(buf.selected_texts());
+                            buf.delete_selection();
+                            edited = true;
+                        }
+                        break;
+                    }
                     if (!buf.has_selection()) buf.select_line(buf.caret().line);
                     m_native->set_clipboard_text(buf.selected_text());
                     buf.delete_selection();
@@ -2359,7 +3194,19 @@ private:
                 if (ctrl && m_native && !ro) {
                     const std::string text = m_native->clipboard_text();
                     if (!text.empty()) {
-                        buf.insert(text);
+                        if (buf.has_extra_cursors()) {
+                            std::vector<std::string> pieces(1);
+                            for (char c : text) {
+                                if (c == '\r') continue;
+                                if (c == '\n') pieces.emplace_back();
+                                else pieces.back() += c;
+                            }
+                            if (pieces.size() > 1 && pieces.back().empty()) pieces.pop_back();
+                            if (pieces.size() == buf.cursor_count()) buf.insert_each(pieces);
+                            else buf.insert(text);
+                        } else {
+                            buf.insert(text);
+                        }
                         edited = true;
                     }
                 }
@@ -2423,6 +3270,14 @@ private:
     std::unordered_map<const Node*, MathEntry> m_math;
     std::vector<DrawOp> m_ops;
     std::vector<Hit> m_hits;
+    std::vector<ColorSwatch> m_swatches;
+    const Node* m_modal = nullptr;
+    Rect m_modal_panel;
+    std::size_t m_modal_boxes = 0;
+    std::size_t m_modal_hits = 0;
+    ColorPicker m_picker;
+    std::shared_ptr<fizmo::images::BitmapImage> m_color_wheel_image;
+    std::shared_ptr<fizmo::graphics::Texture> m_color_wheel;
     std::vector<ElementBox> m_boxes;
     std::vector<const Node*> m_hover;
     std::vector<const Node*> m_active;
@@ -2432,6 +3287,7 @@ private:
     std::string m_edit;
     std::string m_focus_start;
     bool m_invalid = false;
+    bool m_edit_all = false;
     const Node* m_dragging = nullptr;
     std::string m_drag_start;
     float m_drag_track_x = 0;
@@ -2565,6 +3421,16 @@ public:
             void* parent = wh && wh->window && wh->window->is_open() ? wh->window->native_handle() : nullptr;
             return show_file_dialog(request, parent);
         };
+        host.set_clipboard = [this](const std::string& text) {
+            WindowHost* wh = host_for(&m_main);
+            if (!wh || !wh->window || !wh->window->is_open()) return false;
+            return wh->window->set_clipboard_text(text);
+        };
+        host.clipboard = [this]() {
+            WindowHost* wh = host_for(&m_main);
+            if (!wh || !wh->window || !wh->window->is_open()) return std::string();
+            return wh->window->clipboard_text();
+        };
     }
 
     ~WindowManager() {
@@ -2577,6 +3443,8 @@ public:
         host.move_window = nullptr;
         host.focus_window = nullptr;
         host.file_dialog = nullptr;
+        host.set_clipboard = nullptr;
+        host.clipboard = nullptr;
         host.main_window = nullptr;
     }
 

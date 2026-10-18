@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.6 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.7 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -11,8 +11,8 @@ option(GROVE_BUILD_RUNTIME "Build grove_runtime, which opens documents in a Fizm
 option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\"> blocks" ON)
 option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.2.25" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.1.8" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.2.26" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.9" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -75,6 +75,7 @@ add_library(grove_core STATIC
     Source/dom_tools.cpp
     Source/bundle.cpp
     Source/windowing.cpp
+    Source/pages.cpp
     Source/app.cpp
     Source/highlight.cpp)
 add_library(grove::core ALIAS grove_core)
@@ -124,6 +125,10 @@ if(GROVE_BUILD_TESTS)
     add_test(NAME grove_check_todo COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove")
     add_test(NAME grove_check_windows COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/windows/windows.grove")
     add_test(NAME grove_check_editor COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/editor/editor.grove")
+    add_test(NAME grove_check_pages COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/pages/pages.grove")
+    add_test(NAME grove_check_align COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/align/align.grove")
+    add_test(NAME grove_exec_pages COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/pages/pages.grove" --event "click #notes-tab" --event "click #starred-tab" --event "click #back-tab")
+    set_tests_properties(grove_exec_pages PROPERTIES PASS_REGULAR_EXPRESSION "<page id=\"all-notes\" current")
     if(GROVE_WITH_WALNUT AND TARGET walnut)
         add_test(NAME grove_exec_todo COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove" --event "click #clear-done")
         set_tests_properties(grove_exec_todo PROPERTIES

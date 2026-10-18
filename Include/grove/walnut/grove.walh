@@ -60,6 +60,10 @@ extern "C++" from "<grove/dom.hpp>" {
         function focus_window() -> bool;
         function answer(bool: ok) -> bool;
         function answer_value() const -> string;
+        function show_page() -> bool;
+        function open_modal() -> bool;
+        function close_modal() -> bool;
+        function is_current() const -> bool;
     } end class NativeElement
 
     class NativeElementList as "grove::ElementList" {
@@ -121,6 +125,8 @@ extern "C++" from "<grove/dom.hpp>" {
         function has_native(const string&: name) const -> bool;
         function call(const string&: name, const string&: argument) const -> string;
         function choose_file(const string&: mode, const string&: title, const string&: filter) const -> string;
+        function navigate(const string&: target) const -> bool;
+        function go_back() const -> bool;
         function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> NativeElement;
         function popup_info(const string&: title, const string&: message) const -> NativeElement;
         function popup_warning(const string&: title, const string&: message) const -> NativeElement;
@@ -396,6 +402,22 @@ public:
         return raw.answer_value();
     } end function answer_value
 
+    function show_page() -> bool {
+        return raw.show_page();
+    } end function show_page
+
+    function open_modal() -> bool {
+        return raw.open_modal();
+    } end function open_modal
+
+    function close_modal() -> bool {
+        return raw.close_modal();
+    } end function close_modal
+
+    function is_current() const -> bool {
+        return raw.is_current();
+    } end function is_current
+
     function children() const -> ElementList {
         ElementList: out;
         out.raw = NativeElementList::children_of(raw);
@@ -662,6 +684,14 @@ public:
         return raw.choose_file(mode, title, filter);
     } end function choose_file
 
+    function navigate(const string&: target) const -> bool {
+        return raw.navigate(target);
+    } end function navigate
+
+    function go_back() const -> bool {
+        return raw.go_back();
+    } end function go_back
+
     function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> Element {
         Element: out;
         out.raw = raw.popup(kind, title, message, input, value, options);
@@ -893,6 +923,16 @@ function choose_file(const string&: mode, const string&: title, const string&: f
     Document: d;
     return d.choose_file(mode, title, filter);
 } end function choose_file
+
+function navigate(const string&: target) -> bool {
+    Document: d;
+    return d.navigate(target);
+} end function navigate
+
+function go_back() -> bool {
+    Document: d;
+    return d.go_back();
+} end function go_back
 
 function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) -> Element {
     Document: d;

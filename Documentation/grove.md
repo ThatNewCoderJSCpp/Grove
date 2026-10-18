@@ -37,7 +37,10 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 |---|---|
 | `grove`, `head`, `body`, `title` | document structure |
 | `window` | a separate window, set up like `<body>`; it isn't drawn inside the window it sits in. See [Windows](#windows) |
-| `panel`, `div`, `row`, `column`, `list`, `item`, `pre` | blocks; `pre` keeps its spaces and line breaks |
+| `panel`, `div`, `container`, `row`, `column`, `list`, `item`, `pre` | blocks; `container` is the same as `div`, and `pre` keeps its spaces and line breaks |
+| `center` | a block that fills the space left over and puts its contents in the middle. See [Centering and alignment](bark.md#centering-and-alignment) |
+| `page` | one screen of the app; only one page in a group shows at a time. See [Pages, tabs and modals](#pages-tabs-and-modals) |
+| `modal` | a dialog drawn on top of the window. See [Pages, tabs and modals](#pages-tabs-and-modals) |
 | `h1`–`h4`, `p` | headings and paragraphs |
 | `text`, `span`, `b`, `i`, `u`, `code`, `link` | inline text |
 | `input_integer`, `input_float`, `input_string`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
@@ -48,6 +51,8 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 | `math` | MathText, see below |
 | `style` | Bark, inline or `src="file.bark"` |
 | `script` | Walnut, C++ or C, inline or `src="..."` |
+
+Any block can also take `center` (`<div center>`) or `align="..."` (`<p align="right">`, `<div align="bottom right">`) to place what's inside it, the same as Bark's `align`.
 
 `grove run` lays out blocks, headings, paragraphs, wrapped text with inline elements, math, buttons, images and every input. Bark's [Layout](bark.md#layout) section covers widths, `flex`, scrolling and wrapping.
 
@@ -62,6 +67,59 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 ```
 
 `app-id` names the app to the desktop (on Linux it's the window's `WM_CLASS`, which a `.desktop` file matches with `StartupWMClass=notes`). `grove check` warns about an `icon` or `src` file it can't find.
+
+## Pages, tabs and modals
+
+An app with several screens keeps them all in one document as `<page>` elements. Pages that are next to each other form a group, and only one page in a group shows at a time: the one with the `current` attribute, or the first one if none has it. Any element with `to="id"` switches to that page when it's clicked (or when Enter or Space is pressed on a focused button), so a row of buttons and a few pages make tabs:
+
+```html
+<row class="tabs">
+    <button class="tab" to="home">Home</button>
+    <button class="tab" to="settings">Settings</button>
+    <button class="tab" to="back">Back</button>
+</row>
+<page id="home" title="My app">...</page>
+<page id="settings" src="pages/settings.grove" />
+```
+
+```css
+.tab:current { background: #1e1e2e; color: #cdd6f4; }
+```
+
+| | |
+|---|---|
+| `to="settings"` | show that page (`#settings` works too). Pages around it are shown as well, so a link can go straight to a page inside another page |
+| `to="pages/settings.grove"` | show the page whose `src` is that file |
+| `to="back"` | go back to the page that was showing before, like a browser's back button |
+| `to="about"` on a `<modal>`'s id | open that modal |
+| `to="close"` | close the modal the element is in |
+| `:current` | matches the shown page in each group, and every element whose `to` points at a page that's showing (or a modal that's open), for highlighting the current tab |
+| `title` on a page | the window's title while that page shows |
+
+`<page src="file.grove">` fills the page from another file, so each screen can have its own file the way a website has one HTML file per page. The file is an ordinary Grove document: whatever is in its `<body>` goes into the page, its `<style>` and `<script>` elements come along, its `<title>` becomes the page's `title`, and paths in it (`src`, `icon`) still work relative to that file. Included files can have pages of their own, and a file that ends up including itself is an error. `grove build` bundles them like any other file.
+
+A `<modal>` stays hidden until it's opened. Then it's drawn in the middle of the window with everything behind it dimmed (the `backdrop` color), and only the modal takes clicks and keys. Clicking outside it or pressing Escape closes it, unless it has the `persistent` attribute. Its size comes from `width` (480px by default), `min-width`, `max-width`, `height` and `max-height`, and it's styled like any block: `background`, `padding`, `border-color`, `border-radius`. A link inside a modal that goes to a page also closes the modal.
+
+```html
+<button to="confirm-delete">Delete…</button>
+<modal id="confirm-delete">
+    <h3>Delete this note?</h3>
+    <button to="close">Cancel</button>
+    <button id="really-delete">Delete</button>
+</modal>
+```
+
+Pages fire `page_show` and `page_hide`, and modals fire `open` and `close`. Scripts can do the same things:
+
+| Walnut and C++ | C | |
+|---|---|---|
+| `navigate("settings")` | `grove_navigate(doc, "settings")` | anything `to` accepts |
+| `go_back()` | `grove_go_back` | |
+| `element.show_page()` | `grove_show_page` | |
+| `element.open_modal()`, `element.close_modal()` | `grove_open_modal`, `grove_close_modal` | |
+| `element.is_current()` | `grove_is_current` | what `:current` matches |
+
+From C++ outside a script, `grove/pages.hpp` has `grove::navigate`, `show_page`, `go_back`, `open_modal`, `close_modal` and `open_modals`.
 
 ## Inputs
 
@@ -101,6 +159,13 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `switch` | bool | draw it as a switch instead of a checkbox |
 | `name` | radio | the group |
 | `disabled` | all | greyed out and not editable |
+| `format` | color | how the value is written in the box: `hex` (default), `rgb`, `rgba`, `hsl` or `hsla`. Any of them can be typed whatever the format; a see-through color written as `rgb` or `hsl` shows as `rgba` or `hsla` so the alpha isn't lost |
+| `picker` | color | `false` turns off the picker |
+| `alpha` | color | `false` hides the picker's alpha slider |
+
+Clicking the swatch at the left of an `input_color` opens a picker under it: a wheel for hue and saturation, a brightness slider, an alpha slider, the new color next to the one it started as, and the color written as hex, RGB, RGBA, HSL and HSLA. Clicking one of those rows sets the box's `format`. Dragging fires `input`, letting go fires `change`. Clicking outside the picker or pressing Enter keeps the color, and Escape puts the old one back.
+
+While one of these has focus, typing adds to the end and Backspace takes the last character away. Ctrl+A selects the whole value so the next key replaces it (or Backspace clears it); a color input starts out selected, so clicking it and typing a new hex code replaces the old one.
 
 A bool input looks like a checkbox by default. To draw it as a switch (a pill with a circle that slides left for off and right for on), either add the `switch` attribute or set `appearance: switch` in Bark; `appearance: checkbox` goes back. The attribute wins over Bark. `<input type="toggle">` is a switch too. Only the look changes: the value is the same `bool` either way.
 
@@ -139,15 +204,29 @@ Type safety holds at every layer:
 
 | Attribute | |
 |---|---|
-| `language` | `c`, `cpp`, `walnut`, `grove`, `bark` or `plain` (default); file extensions like `hpp` or `wal` work too |
+| `language` | `c`, `cpp`, `walnut`, `grove`, `bark`, `cmake` or `plain` (default); file extensions like `hpp` or `wal` work too |
 | `tab-size` | columns per tab (default 4) |
 | `indent` | `spaces` (default) or `tabs`: what Tab and Enter insert |
 | `line-numbers` | `false` hides them |
 | `readonly` | can be selected and copied but not changed |
 | `placeholder` | shown while it's empty |
+| `mark` | token kinds like `"keyword string"`: draws a box behind every token of those kinds, to show what a color changes |
 | `caret` | `line:column` (1-based) moves the caret there and scrolls to it whenever the attribute changes; anything after a `#` is ignored, so `"12:1#2"` moves there again |
 
-Keys: arrows, Home (to the indent, then the line start), End, Page Up/Down, Ctrl+Home/End, Ctrl+Left/Right by word, Shift with any of them to select; Backspace and Delete (Ctrl for a whole word; Backspace between `()`, `[]`, `{}`, `""` or `''` removes both); Enter keeps the indent and indents after `{`, `(` or `[`; Tab and Shift+Tab indent and outdent (every selected line when the selection spans lines); Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V (with nothing selected, copy and cut take the whole line); Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z undo and redo. Click to move the caret, drag or Shift+click to select, double-click selects a word, and the wheel scrolls (Shift+wheel sideways). `input` fires on every edit, `change` when it loses focus with different text, and `cursor` whenever the caret moves, with `x()` as the line and `y()` as the column. Listen for `key_down` and call `prevent_default()` to take a key for yourself. Its colors follow `color`, `background`, `border-color` and `accent-color` (caret, selection and focus).
+Keys: arrows, Home (to the indent, then the line start), End, Page Up/Down, Ctrl+Home/End, Ctrl+Left/Right by word, Shift with any of them to select; Backspace and Delete (Ctrl for a whole word; Backspace between `()`, `[]`, `{}`, `""` or `''` removes both); Enter keeps the indent and indents after `{`, `(` or `[`; Tab and Shift+Tab indent and outdent (every selected line when the selection spans lines); Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V (with nothing selected, copy and cut take the whole line); Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z undo and redo. Click to move the caret, drag or Shift+click to select, double-click selects a word, and the wheel scrolls (Shift+wheel sideways).
+
+It can have more than one caret. Alt+click adds one (or removes the one you click on). Shift+click straight above or below the caret, in the same column, puts a caret on every line in between; anywhere else Shift+click selects as usual. Shift+Up and Shift+Down do the same from the keyboard while nothing is selected, adding a caret on the next line each time (go back the other way to take them off again). Once something is selected they extend the selection, so Shift+Right then Shift+Down still selects whole lines. With several carets, typing, Backspace, Delete, Enter, Tab, the arrows, Home and End act at every caret and count as one step for undo. Copy and cut take every selection, one per line, and pasting as many lines as there are carets puts one line at each. Escape goes back to one caret. `input` fires on every edit, `change` when it loses focus with different text, and `cursor` whenever the caret moves, with `x()` as the line and `y()` as the column. Listen for `key_down` and call `prevent_default()` to take a key for yourself. Its colors follow `color`, `background`, `border-color` and `accent-color` (caret, selection and focus), and each kind of token takes its color from a `code-*` property, so a theme is a few lines of Bark:
+
+```css
+input_code {
+    background: #101014;
+    code-keyword: #ff4fd8 bold;
+    code-string: #4dff9a;
+    code-comment: #5c6370 italic;
+}
+```
+
+The kinds are `keyword`, `type`, `function`, `namespace`, `variable`, `constant`, `string`, `escape`, `number`, `comment`, `preprocessor`, `operator`, `tag`, `attribute` and `property`. C and C++ pick out namespaces (`std::`), standard types, escapes in strings, raw strings, `[[attributes]]` and macros; CMake (`CMakeLists.txt` and `.cmake`) colors commands, `${variables}`, `$<generator expressions>`, argument keywords like `PRIVATE`, and `#[[ ]]` comments. From C++, `grove::code_token_kinds()`, `grove::code_languages()` and `grove::code_token_kind_from_name()` list and look them up.
 
 ### File picker
 
@@ -278,6 +357,8 @@ if (grove::has_native("app.save")) then {
 }
 ```
 
+The host can also use the clipboard: `grove::set_clipboard_text(document, text)` and `grove::clipboard_text(document)` (both from `grove/native.hpp`) work while the document is running in a window.
+
 C++ scripts call `grove::document.call("app.save", "notes.txt")` with any number of string arguments (or `call_with(name, vector)`), and C scripts call `grove_call_native(doc, "app.save", args, count)`, which returns `NULL` when there's no such function. A function that throws reports a script error and returns `""`. `grove::has_native` and `grove::native_names` list what's there.
 
 ### Events
@@ -301,6 +382,8 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `open` | a `<window>` opens; the target is the `<window>` | |
 | `close` | a window closes; `prevent_default()` keeps it open when the user closed it | |
 | `window_focus`, `window_blur` | a window gains or loses the keyboard | |
+| `page_show`, `page_hide` | a page starts or stops being the one showing | |
+| `open`, `close` | a modal opens or closes | |
 | `ok`, `cancel` | a popup is answered; the target is the popup. `cancel` also fires on an `input_file` whose dialog was closed without picking | |
 
 Any other name is a custom event, fired with `dispatch`. Names ignore case, `_` and `-`, so `mouse_down`, `mousedown` and `MouseDown` are the same.

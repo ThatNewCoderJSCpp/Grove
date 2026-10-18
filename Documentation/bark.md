@@ -62,6 +62,7 @@ Comments are `// line` and `/* block */`.
 | `:active` | an element while the mouse is pressed on it |
 | `:focus` | the element that has the keyboard |
 | `:checked` | a checked `input_bool` or `input_radio` |
+| `:current` | the `page` showing in its group, and any element whose `to` points at a page that's showing or a modal that's open (for tabs) |
 | `:disabled`, `:enabled` | with or without the `disabled` attribute |
 | `:first-child`, `:last-child`, `:only-child` | by position among its parent's elements |
 | `:empty` | an element with no children |
@@ -78,7 +79,7 @@ Inside a rule, a nested rule is a descendant of its parent. Start it with `>` fo
 | colors | `#fff`, `#ffffff`, `#ffffff80`, `rgb(1, 2, 3)`, `rgba(1, 2, 3, 50%)`, `hsl(210, 80%, 60%)`, names like `white` or `walnut` |
 | strings | `"Hello"`, `'Hello'` |
 | identifiers | `bold`, `center`, `none` |
-| functions | `name(args)`; anything other than the color functions is kept for the property to interpret |
+| functions | `rgb()`, `rgba()`, `hsl()`, `hsla()` for colors; `calc()`, `min()`, `max()` and `clamp()` for lengths (see below); anything else is kept for the property to interpret |
 
 ### Viewport units
 
@@ -94,13 +95,28 @@ These are percentages of the window, so `50vwidth` is half the window's width:
 
 They update as the window is resized. For `body { size: ... }` they're measured against the screen instead, since the window doesn't exist yet: `size: 60vwidth 80vheight` opens a window 60% of the screen wide and 80% tall. Font sizes in viewport units resolve before `em` children inherit them. `grove computed --viewport 1280x720` shows the result for a given window size.
 
+### Percentages and math
+
+A `%` length is a share of the space the element is in: `width: 50%` is half the width it has, and `height: 50%` is half its parent's height when that height is known (otherwise it's ignored, like `auto`). `font-size: 120%` is relative to the parent's font size.
+
+Lengths can be worked out with `calc()`, `min()`, `max()` and `clamp()`, mixing any units:
+
+| | |
+|---|---|
+| `calc(100% - 40px)` | `+`, `-`, `*` and `/`, with `*` and `/` first and `( )` to group: `calc((100% - 2em) / 3)` |
+| `min(100%, 600px)` | the smallest, so never wider than 600px |
+| `max(50%, 200px)` | the largest |
+| `clamp(200px, 40vw, 500px)` | the middle value, kept between the first and last |
+
+They work in `width`, `height`, `min-`/`max-` sizes, `padding`, `margin` and `gap`, and a `%` inside one means the same as it would on its own. A formula that can't be worked out, like `calc(100% +)` or `clamp(1px, 2px)`, is an error when the stylesheet loads.
+
 `!important` after a value wins over anything without it. `inherit` copies the parent's value.
 
 ## Cascade
 
-For each property the winner is decided by, in order: `!important`, then `style="..."` attributes, then selector specificity (ids, then classes, then tags), then whichever came last. `color`, `font-*`, `line-height`, `text-align`, `letter-spacing`, `white-space`, `math-color`, `accent-color` and `cursor` inherit; nothing else does. `em` and `%` font sizes resolve against the parent.
+For each property the winner is decided by, in order: `!important`, then `style="..."` attributes, then selector specificity (ids, then classes, then tags), then whichever came last. `color`, `font-*`, `line-height`, `text-align`, `letter-spacing`, `white-space`, `math-color`, `accent-color`, `cursor` and the `code-*` colors inherit; nothing else does. `em` and `%` font sizes resolve against the parent.
 
-Grove ships a small default sheet first: heading sizes and weights, `display: none` for `head`/`style`/`script` and for a `<window>` inside `<body>`, a `button` look with `:hover`, `:active`, `:focus` and `:disabled` states (shared by `input_file`), the `input_code` look, `pre { white-space: pre; font-family: monospace; }`, `code` in monospace, `link` in blue, `u` underlined, `row { display: row; gap: 8px; }`, and the popup look (`window.popup`, `.popup-icon`, `.popup-buttons`, `.popup-ok` and friends), which your own rules can override.
+Grove ships a small default sheet first: heading sizes and weights, `display: none` for `head`/`style`/`script` and for a `<window>` inside `<body>`, a `button` look with `:hover`, `:active`, `:focus` and `:disabled` states (shared by `input_file`), the `input_code` look, `pre { white-space: pre; font-family: monospace; }`, `code` in monospace, `link` in blue, `u` underlined, `row { display: row; gap: 8px; }`, the popup look (`window.popup`, `.popup-icon`, `.popup-buttons`, `.popup-ok` and friends) and the `modal` look, which your own rules can override. A `page` that isn't showing and a closed `modal` are always hidden, whatever `display` says.
 
 ## Properties the runtime reads today
 
@@ -127,11 +143,18 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `appearance` | `input_bool` | `checkbox` (default) or `switch` |
 | `accent-color` | inputs | checked boxes and radios, slider fill and thumb, focused border, the caret and selection of `input_code` |
 | `gap` | blocks, `row` | extra space after a block; space between the items of a row |
-| `justify-content` | `row` | `start` (default), `center`, `end` or `space-between`, when nothing in the row stretches |
+| `align` | blocks, `row` | the easy way to place everything inside: `center`, or a side and/or a corner like `top`, `bottom right`, `center left`. See [Centering and alignment](#centering-and-alignment) |
+| `justify-content` | blocks, `row` | along the direction things are laid out (down a column, across a row): `start` (default), `center`, `end`, `space-between`, `space-around`, `space-evenly` |
+| `align-items` | blocks, `row` | across it: `stretch` (default), `start`, `center`, `end` |
+| `align-self` | a child | its own `align-items` |
 | `line-height` | `input_code` | a multiple of the font size (`1.4`) or a length |
+| `code-keyword`, `code-type`, `code-function`, `code-namespace`, `code-variable`, `code-constant`, `code-string`, `code-escape`, `code-number`, `code-comment`, `code-preprocessor`, `code-operator`, `code-tag`, `code-attribute`, `code-property` | `input_code` | how that kind of token looks: a color, then any of `bold`, `italic` and `underline` (`code-comment: #6a737d italic;`). Leaving one out keeps Grove's own color |
+| `code-plain` | `input_code` | text that isn't any kind of token (defaults to `color`) |
+| `backdrop` | `modal` | the color drawn over the window behind an open modal (default a see-through black) |
+| `code-mark` | `input_code` | the box drawn behind tokens named in the `mark` attribute (default a see-through orange) |
 | `opacity` | any | 0 to 1; fades the element and everything inside it |
 | `cursor` | any | `pointer`, `text`, `default`, `crosshair`, `move`, `not-allowed`, ... while the mouse is over it |
-| `text-align` | text, `math` | `left`, `center`, `right` |
+| `text-align` | text, `math` | `left`, `center`, `right` (`start` and `end` mean left and right) |
 | `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content, `inline` puts it in the flow of the text around it |
 
 ### Layout
@@ -149,5 +172,41 @@ body { size: 1000px 700px; padding: 0; }
 ```
 
 fills the window: `#app` takes all of `body` that's left, the sidebar and the main column stretch to its height, and the editor gets whatever the terminal doesn't.
+
+### Centering and alignment
+
+There are two ways to place things, and they're the same machinery underneath.
+
+**The easy way** is one property, `align`, on the box whose contents you want to place. It moves the children and the text together:
+
+```css
+.dialog { height: 300px; align: center; }        /* dead center, both ways */
+.toolbar { align: right; }                        /* everything to the right */
+.badge-holder { height: 80px; align: bottom right; }
+```
+
+| `align:` | puts the contents |
+|---|---|
+| `center` | in the middle, both ways |
+| `top`, `bottom`, `left`, `right` | against that side; the other direction is left alone |
+| `top left`, `top center`, `top right` | along the top |
+| `center left`, `center right` (or `middle left`) | halfway down, against a side |
+| `bottom left`, `bottom center`, `bottom right` | along the bottom |
+
+Markup has the same shortcuts: `<div center>` is `align: center`, `<p align="right">` and `<div align="bottom right">` set `align`, and `<center>...</center>` is a box that fills the space left over (`flex: 1`) and centers what's in it, so `<body><center>...</center></body>` puts something in the middle of the window. A stylesheet rule wins over the attributes.
+
+**The full-control way** is the CSS flexbox set, on any block or row:
+
+| Property | |
+|---|---|
+| `justify-content` | spacing along the direction children are laid out (down a column, across a `row`): `start`, `center`, `end`, `space-between` (first and last at the edges), `space-around` (equal space around each), `space-evenly` (equal gaps, edges included) |
+| `align-items` | where children sit across that direction: `stretch` (full width in a column, the row's height in a row), `start`, `center`, `end`. Anything not stretched is only as wide as its content |
+| `align-self` | the same for one child |
+| `margin: auto` | an `auto` margin takes the free space on its side: `margin: 0 auto` centers a box across, `margin: auto` centers it both ways, `margin: 0 0 0 auto` pushes it to the right (or to the end of a row) |
+| `text-align` | lines of text inside their box |
+
+`align` is a shortcut for these: in a column, its vertical part sets `justify-content` and its horizontal part sets `align-items` and `text-align`; in a row it's the other way round. If you also set them yourself, yours win.
+
+Up-and-down placement needs to know how tall the box is: give it a `height` (or `%`, `calc()`), make it a `flex` child of something with a known height, or use `body`, which is the window. Without that a box is exactly as tall as its contents and there's nothing to center in. Across is always known.
 
 Everything else is parsed, cascaded and visible in `grove computed`, ready for the runtime to grow into. Bark also knows `font`, `letter-spacing` and `math-syntax`; any other property name is a warning (`unknown property 'colr'`), and so is a selector naming an element that doesn't exist (custom elements need a `-` in their name).

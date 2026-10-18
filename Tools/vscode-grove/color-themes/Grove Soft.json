@@ -1,0 +1,31 @@
+{
+    "name": "Grove Soft",
+    "tags": "#CBA6F7",
+    "input tags": "#F9E2AF",
+    "custom tags": "#FAB387",
+    "unknown names": {
+        "color": "#F5E0DC",
+        "underline": true
+    },
+    "attributes": "#94E2D5",
+    "attribute values": "#A6E3A1",
+    "ids and classes": "#89B4FA",
+    "properties": "#B4BEFE",
+    "variables": "#B4BEFE",
+    "variable declarations": "#F5E0DC",
+    "functions": "#89B4FA",
+    "values": "#CBA6F7",
+    "constants": "#FAB387",
+    "numbers": "#FAB387",
+    "units": "#CBA6F7",
+    "strings": "#A6E3A1",
+    "escapes": "#F5C2E7",
+    "comments": {
+        "color": "#7F849C",
+        "italic": true
+    },
+    "at-rules": "#F5C2E7",
+    "math commands": "#FAB387",
+    "math functions": "#89B4FA",
+    "math names": "#B4BEFE"
+}

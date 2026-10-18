@@ -71,6 +71,8 @@ std::optional<Rgba> as_color(const ValueList& values) noexcept;
 std::optional<double> as_length(const ValueList& values, double font_size = 16.0, std::size_t index = 0) noexcept;
 std::optional<double> as_length(const ValueList& values, double font_size, const Viewport& viewport, std::size_t index = 0) noexcept;
 std::optional<double> as_length(const Value& value, double font_size, const Viewport& viewport) noexcept;
+std::optional<double> evaluate_length(const Value& value, double font_size, const Viewport& viewport, std::optional<double> percent_base) noexcept;
+bool is_math_function(const Value& value) noexcept;
 std::optional<std::string> as_text(const ValueList& values);
 
 } // namespace bark

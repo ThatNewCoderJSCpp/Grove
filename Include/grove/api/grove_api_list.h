@@ -110,6 +110,12 @@
     X(const char*, grove_input_text, (const grove_element* element), (element)) \
     X(const char*, grove_call_native, (grove_document* document, const char* name, const char* const* args, size_t count), (document, name, args, count)) \
     X(bool, grove_has_native, (grove_document* document, const char* name), (document, name)) \
-    X(const char*, grove_file_dialog, (grove_document* document, const char* mode, const char* title, const char* filter, bool multiple), (document, mode, title, filter, multiple))
+    X(const char*, grove_file_dialog, (grove_document* document, const char* mode, const char* title, const char* filter, bool multiple), (document, mode, title, filter, multiple)) \
+    X(bool, grove_show_page, (grove_document* document, grove_element* page), (document, page)) \
+    X(bool, grove_go_back, (grove_document* document), (document)) \
+    X(bool, grove_open_modal, (grove_document* document, grove_element* modal), (document, modal)) \
+    X(bool, grove_close_modal, (grove_document* document, grove_element* modal), (document, modal)) \
+    X(bool, grove_navigate, (grove_document* document, const char* target), (document, target)) \
+    X(bool, grove_is_current, (const grove_element* element), (element))
 
 #endif // GROVE_API_LIST_H

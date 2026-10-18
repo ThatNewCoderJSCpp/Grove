@@ -155,6 +155,12 @@ GROVE_API const char* grove_input_text(const grove_element* element);
 GROVE_API const char* grove_call_native(grove_document* document, const char* name, const char* const* args, size_t count);
 GROVE_API bool grove_has_native(grove_document* document, const char* name);
 GROVE_API const char* grove_file_dialog(grove_document* document, const char* mode, const char* title, const char* filter, bool multiple);
+GROVE_API bool grove_show_page(grove_document* document, grove_element* page);
+GROVE_API bool grove_go_back(grove_document* document);
+GROVE_API bool grove_open_modal(grove_document* document, grove_element* modal);
+GROVE_API bool grove_close_modal(grove_document* document, grove_element* modal);
+GROVE_API bool grove_navigate(grove_document* document, const char* target);
+GROVE_API bool grove_is_current(const grove_element* element);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,19 @@
+<!grove>
+<grove>
+    <head>
+        <title>Notes - Notes</title>
+    </head>
+    <body>
+        <h2>Notes</h2>
+        <row class="actions" style="justify-content: start">
+            <button to="all-notes">All</button>
+            <button id="starred-tab" to="starred">Starred</button>
+        </row>
+        <page id="all-notes">
+            <p>Pages can hold their own pages: these two switch inside the Notes tab.</p>
+        </page>
+        <page id="starred">
+            <p>Nothing starred yet.</p>
+        </page>
+    </body>
+</grove>

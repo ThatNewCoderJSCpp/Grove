@@ -1,6 +1,7 @@
 #include "grove/input/code_buffer.hpp"
 
 #include <algorithm>
+#include <numeric>
 
 namespace grove {
 
@@ -107,6 +108,7 @@ CodeBuffer::CodeBuffer(std::string_view text) : m_lines(split_lines(text)) {}
 void CodeBuffer::set_text(std::string_view text) {
     m_lines = split_lines(text);
     m_caret = m_anchor = CodePos{};
+    m_extra.clear();
     m_undo.clear();
     m_redo.clear();
     m_last_edit = EditKind::None;
@@ -155,6 +157,7 @@ CodePos CodeBuffer::clamp(CodePos p) const noexcept {
 }
 
 void CodeBuffer::set_caret(CodePos p, bool extend) {
+    if (!m_batch) m_extra.clear();
     m_caret = clamp(p);
     if (!extend) m_anchor = m_caret;
     forget_preferred();
@@ -162,6 +165,7 @@ void CodeBuffer::set_caret(CodePos p, bool extend) {
 }
 
 void CodeBuffer::select(CodePos anchor, CodePos caret) {
+    if (!m_batch) m_extra.clear();
     m_anchor = clamp(anchor);
     m_caret = clamp(caret);
     forget_preferred();
@@ -169,6 +173,7 @@ void CodeBuffer::select(CodePos anchor, CodePos caret) {
 }
 
 void CodeBuffer::select_all() {
+    m_extra.clear();
     m_anchor = CodePos{};
     m_caret = CodePos{ m_lines.size() - 1, m_lines.back().size() };
     forget_preferred();
@@ -245,16 +250,28 @@ CodePos CodeBuffer::word_right(CodePos p) const noexcept {
 }
 
 void CodeBuffer::move_left(bool extend, bool word) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { move_left(extend, word); });
+        return;
+    }
     if (has_selection() && !extend) set_caret(selection().first);
     else set_caret(word ? word_left(m_caret) : step_left(m_caret), extend);
 }
 
 void CodeBuffer::move_right(bool extend, bool word) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { move_right(extend, word); });
+        return;
+    }
     if (has_selection() && !extend) set_caret(selection().second);
     else set_caret(word ? word_right(m_caret) : step_right(m_caret), extend);
 }
 
 void CodeBuffer::move_up(bool extend, std::size_t lines) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { move_up(extend, lines); });
+        return;
+    }
     const std::size_t want = m_has_preferred ? m_preferred : code_points_before(m_lines[m_caret.line], m_caret.column);
     CodePos p = m_caret;
     if (p.line == 0) p.column = 0;
@@ -268,6 +285,10 @@ void CodeBuffer::move_up(bool extend, std::size_t lines) {
 }
 
 void CodeBuffer::move_down(bool extend, std::size_t lines) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { move_down(extend, lines); });
+        return;
+    }
     const std::size_t want = m_has_preferred ? m_preferred : code_points_before(m_lines[m_caret.line], m_caret.column);
     CodePos p = m_caret;
     if (p.line + 1 >= m_lines.size()) p.column = m_lines[p.line].size();
@@ -281,21 +302,39 @@ void CodeBuffer::move_down(bool extend, std::size_t lines) {
 }
 
 void CodeBuffer::move_home(bool extend) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { move_home(extend); });
+        return;
+    }
     const std::size_t indent = leading_whitespace(m_lines[m_caret.line]);
     const std::size_t target = m_caret.column == indent ? 0 : indent;
     set_caret(CodePos{ m_caret.line, target }, extend);
 }
 
-void CodeBuffer::move_end(bool extend) { set_caret(CodePos{ m_caret.line, m_lines[m_caret.line].size() }, extend); }
+void CodeBuffer::move_end(bool extend) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { move_end(extend); });
+        return;
+    }
+    set_caret(CodePos{ m_caret.line, m_lines[m_caret.line].size() }, extend);
+}
 
 void CodeBuffer::move_start(bool extend) { set_caret(CodePos{}, extend); }
 
 void CodeBuffer::move_finish(bool extend) { set_caret(CodePos{ m_lines.size() - 1, m_lines.back().size() }, extend); }
 
 void CodeBuffer::remember(EditKind kind) {
+    if (m_batch) {
+        if (m_batch_remembered) {
+            m_last_edit = kind;
+            return;
+        }
+        m_batch_remembered = true;
+    }
     const bool coalesce = kind != EditKind::Other && kind == m_last_edit && !m_undo.empty();
     if (!coalesce) {
-        m_undo.push_back(Snapshot{ m_lines, m_caret, m_anchor });
+        if (m_batch) m_undo.push_back(Snapshot{ m_lines, m_batch_caret, m_batch_anchor, m_batch_extra });
+        else m_undo.push_back(Snapshot{ m_lines, m_caret, m_anchor, cursors_extra() });
         if (m_undo.size() > k_undo_limit) m_undo.erase(m_undo.begin());
     }
     m_redo.clear();
@@ -307,6 +346,7 @@ void CodeBuffer::changed() { ++m_revision; }
 void CodeBuffer::erase_range(CodePos a, CodePos b) {
     if (b < a) std::swap(a, b);
     if (a == b) return;
+    track_erase(a, b);
     if (a.line == b.line) {
         m_lines[a.line].erase(a.column, b.column - a.column);
     } else {
@@ -322,16 +362,24 @@ CodePos CodeBuffer::insert_at(CodePos p, std::string_view text) {
     line = line.substr(0, p.column) + parts.front();
     if (parts.size() == 1) {
         line += tail;
-        return CodePos{ p.line, p.column + parts.front().size() };
+        const CodePos end{ p.line, p.column + parts.front().size() };
+        track_insert(p, end);
+        return end;
     }
     std::vector<std::string> added(parts.begin() + 1, parts.end());
     const std::size_t end_column = added.back().size();
     added.back() += tail;
     m_lines.insert(m_lines.begin() + static_cast<std::ptrdiff_t>(p.line) + 1, added.begin(), added.end());
-    return CodePos{ p.line + added.size(), end_column };
+    const CodePos end{ p.line + added.size(), end_column };
+    track_insert(p, end);
+    return end;
 }
 
 void CodeBuffer::insert(std::string_view text) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { insert(text); });
+        return;
+    }
     const bool typing = text.size() <= 4 && text.find('\n') == std::string_view::npos && !(text.size() == 1 && space_char(text[0]));
     remember(typing && !has_selection() ? EditKind::Typing : EditKind::Other);
     if (has_selection()) {
@@ -346,6 +394,10 @@ void CodeBuffer::insert(std::string_view text) {
 }
 
 void CodeBuffer::new_line(std::size_t tab_size, bool spaces) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { new_line(tab_size, spaces); });
+        return;
+    }
     remember(EditKind::Other);
     if (has_selection()) {
         const auto [a, b] = selection();
@@ -366,7 +418,7 @@ void CodeBuffer::new_line(std::size_t tab_size, bool spaces) {
     std::string text = "\n" + indent + (opens ? unit : std::string());
     const std::size_t caret_offset = text.size();
     if (closes) text += "\n" + indent;
-    m_lines[m_caret.line].erase(m_caret.column, after - m_caret.column);
+    erase_range(m_caret, CodePos{ m_caret.line, after });
     const CodePos start = m_caret;
     insert_at(start, text);
     m_caret = m_anchor = CodePos{ start.line + 1, caret_offset - 1 };
@@ -376,6 +428,10 @@ void CodeBuffer::new_line(std::size_t tab_size, bool spaces) {
 }
 
 void CodeBuffer::delete_selection() {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { delete_selection(); });
+        return;
+    }
     if (!has_selection()) return;
     remember(EditKind::Other);
     const auto [a, b] = selection();
@@ -387,6 +443,10 @@ void CodeBuffer::delete_selection() {
 }
 
 void CodeBuffer::backspace(bool word) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { backspace(word); });
+        return;
+    }
     if (has_selection()) {
         delete_selection();
         return;
@@ -414,6 +474,10 @@ void CodeBuffer::backspace(bool word) {
 }
 
 void CodeBuffer::delete_forward(bool word) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { delete_forward(word); });
+        return;
+    }
     if (has_selection()) {
         delete_selection();
         return;
@@ -428,6 +492,10 @@ void CodeBuffer::delete_forward(bool word) {
 }
 
 void CodeBuffer::indent(std::size_t tab_size, bool spaces) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { indent(tab_size, spaces); });
+        return;
+    }
     if (tab_size == 0) tab_size = 4;
     const auto [a, b] = selection();
     if (a.line == b.line) {
@@ -451,7 +519,7 @@ void CodeBuffer::indent(std::size_t tab_size, bool spaces) {
     const std::string unit = spaces ? std::string(tab_size, ' ') : std::string("\t");
     const std::size_t last = b.column == 0 ? b.line - 1 : b.line;
     for (std::size_t l = a.line; l <= last; ++l) {
-        if (!m_lines[l].empty()) m_lines[l].insert(0, unit);
+        if (!m_lines[l].empty()) insert_at(CodePos{ l, 0 }, unit);
     }
     auto shift = [&](CodePos& p) {
         if (p.line >= a.line && p.line <= last && !m_lines[p.line].empty() && !(p.column == 0 && p.line == b.line && b.column == 0)) p.column += unit.size();
@@ -463,6 +531,10 @@ void CodeBuffer::indent(std::size_t tab_size, bool spaces) {
 }
 
 void CodeBuffer::outdent(std::size_t tab_size) {
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { outdent(tab_size); });
+        return;
+    }
     if (tab_size == 0) tab_size = 4;
     const auto [a, b] = selection();
     const std::size_t last = (b.column == 0 && b.line > a.line) ? b.line - 1 : b.line;
@@ -478,7 +550,7 @@ void CodeBuffer::outdent(std::size_t tab_size) {
     }
     if (!any) return;
     remember(EditKind::Other);
-    for (std::size_t l = a.line; l <= last; ++l) m_lines[l].erase(0, removed[l]);
+    for (std::size_t l = a.line; l <= last; ++l) erase_range(CodePos{ l, 0 }, CodePos{ l, removed[l] });
     auto shift = [&](CodePos& p) {
         if (p.line < removed.size()) p.column -= std::min(p.column, removed[p.line]);
     };
@@ -488,14 +560,234 @@ void CodeBuffer::outdent(std::size_t tab_size) {
     changed();
 }
 
+template <typename Fn>
+void CodeBuffer::for_each_cursor(Fn&& fn) {
+    std::vector<Tracked> all;
+    all.push_back(Tracked{ CodeCursor{ m_anchor, m_caret }, m_preferred, m_has_preferred });
+    for (const Tracked& t : m_extra) all.push_back(t);
+    std::vector<std::size_t> order(all.size());
+    std::iota(order.begin(), order.end(), std::size_t{ 0 });
+    std::sort(order.begin(), order.end(), [&](std::size_t x, std::size_t y) { return all[x].cursor.start() < all[y].cursor.start(); });
+    m_batch_caret = m_caret;
+    m_batch_anchor = m_anchor;
+    m_batch_extra = cursors_extra();
+    m_batch = true;
+    m_batch_remembered = false;
+    m_tracking = &all;
+    for (std::size_t rank = 0; rank < order.size(); ++rank) {
+        const std::size_t i = order[rank];
+        m_current = i;
+        m_anchor = all[i].cursor.anchor;
+        m_caret = all[i].cursor.caret;
+        m_preferred = all[i].preferred;
+        m_has_preferred = all[i].has_preferred;
+        fn(rank);
+        all[i].cursor = CodeCursor{ m_anchor, m_caret };
+        all[i].preferred = m_preferred;
+        all[i].has_preferred = m_has_preferred;
+    }
+    m_tracking = nullptr;
+    m_batch = false;
+    m_anchor = all[0].cursor.anchor;
+    m_caret = all[0].cursor.caret;
+    m_preferred = all[0].preferred;
+    m_has_preferred = all[0].has_preferred;
+    m_extra.assign(all.begin() + 1, all.end());
+    merge_cursors();
+}
+
+void CodeBuffer::track_erase(CodePos a, CodePos b) {
+    if (!m_tracking) return;
+    auto fix = [&](CodePos& p) {
+        if (!(a < p)) return;
+        if (p < b) {
+            p = a;
+            return;
+        }
+        if (p.line == b.line) {
+            p.column = a.column + (p.column - b.column);
+            p.line = a.line;
+        } else {
+            p.line -= b.line - a.line;
+        }
+    };
+    for (std::size_t j = 0; j < m_tracking->size(); ++j) {
+        if (j == m_current) continue;
+        fix((*m_tracking)[j].cursor.anchor);
+        fix((*m_tracking)[j].cursor.caret);
+    }
+}
+
+void CodeBuffer::track_insert(CodePos at, CodePos end) {
+    if (!m_tracking) return;
+    auto fix = [&](CodePos& p) {
+        if (p < at) return;
+        if (p.line == at.line) {
+            p.column = end.column + (p.column - at.column);
+            p.line = end.line;
+        } else {
+            p.line += end.line - at.line;
+        }
+    };
+    for (std::size_t j = 0; j < m_tracking->size(); ++j) {
+        if (j == m_current) continue;
+        fix((*m_tracking)[j].cursor.anchor);
+        fix((*m_tracking)[j].cursor.caret);
+    }
+}
+
+std::vector<CodeCursor> CodeBuffer::cursors_extra() const {
+    std::vector<CodeCursor> out;
+    for (const Tracked& t : m_extra) out.push_back(t.cursor);
+    return out;
+}
+
+void CodeBuffer::merge_cursors() {
+    if (m_extra.empty()) return;
+    struct Item {
+        Tracked t;
+        bool primary;
+    };
+    std::vector<Item> items;
+    items.push_back(Item{ Tracked{ CodeCursor{ m_anchor, m_caret }, m_preferred, m_has_preferred }, true });
+    for (const Tracked& t : m_extra) items.push_back(Item{ t, false });
+    std::stable_sort(items.begin(), items.end(), [](const Item& x, const Item& y) { return x.t.cursor.start() < y.t.cursor.start(); });
+    std::vector<Item> merged;
+    for (Item& item : items) {
+        item.t.cursor.anchor = clamp(item.t.cursor.anchor);
+        item.t.cursor.caret = clamp(item.t.cursor.caret);
+        if (!merged.empty()) {
+            Item& last = merged.back();
+            const CodeCursor& a = last.t.cursor;
+            const CodeCursor& b = item.t.cursor;
+            if (b.start() < a.end() || b.start() == a.start()) {
+                const bool forward = !(a.caret < a.anchor);
+                const CodePos lo = a.start();
+                const CodePos hi = a.end() < b.end() ? b.end() : a.end();
+                last.t.cursor = forward ? CodeCursor{ lo, hi } : CodeCursor{ hi, lo };
+                last.primary = last.primary || item.primary;
+                continue;
+            }
+        }
+        merged.push_back(item);
+    }
+    m_extra.clear();
+    bool have_primary = false;
+    for (const Item& item : merged) {
+        if (item.primary && !have_primary) {
+            m_anchor = item.t.cursor.anchor;
+            m_caret = item.t.cursor.caret;
+            have_primary = true;
+        } else {
+            m_extra.push_back(item.t);
+        }
+    }
+}
+
+std::vector<CodeCursor> CodeBuffer::cursors() const {
+    std::vector<CodeCursor> out;
+    out.push_back(CodeCursor{ m_anchor, m_caret });
+    for (const Tracked& t : m_extra) out.push_back(t.cursor);
+    return out;
+}
+
+void CodeBuffer::clear_extra_cursors() {
+    m_extra.clear();
+}
+
+bool CodeBuffer::toggle_cursor(CodePos p) {
+    p = clamp(p);
+    for (std::size_t i = 0; i < m_extra.size(); ++i) {
+        if (m_extra[i].cursor.caret == p && !m_extra[i].cursor.has_selection()) {
+            m_extra.erase(m_extra.begin() + static_cast<std::ptrdiff_t>(i));
+            return false;
+        }
+    }
+    if (m_caret == p && !has_selection() && !m_extra.empty()) {
+        const Tracked last = m_extra.back();
+        m_extra.pop_back();
+        m_anchor = last.cursor.anchor;
+        m_caret = last.cursor.caret;
+        return false;
+    }
+    m_extra.push_back(Tracked{ CodeCursor{ p, p }, 0, false });
+    merge_cursors();
+    m_last_edit = EditKind::None;
+    return true;
+}
+
+void CodeBuffer::add_cursor(CodePos anchor, CodePos caret) {
+    m_extra.push_back(Tracked{ CodeCursor{ clamp(anchor), clamp(caret) }, 0, false });
+    merge_cursors();
+    m_last_edit = EditKind::None;
+}
+
+void CodeBuffer::column_select(CodePos from, std::size_t to_line) {
+    from = clamp(from);
+    if (to_line >= m_lines.size()) to_line = m_lines.size() - 1;
+    const std::size_t want = code_points_before(m_lines[from.line], from.column);
+    m_extra.clear();
+    const std::size_t lo = std::min(from.line, to_line);
+    const std::size_t hi = std::max(from.line, to_line);
+    for (std::size_t l = lo; l <= hi; ++l) {
+        const CodePos p{ l, byte_for_code_point(m_lines[l], want) };
+        if (l == to_line) {
+            m_caret = m_anchor = p;
+            m_preferred = want;
+            m_has_preferred = true;
+        } else {
+            m_extra.push_back(Tracked{ CodeCursor{ p, p }, want, true });
+        }
+    }
+    m_last_edit = EditKind::None;
+}
+
+bool CodeBuffer::any_selection() const noexcept {
+    if (has_selection()) return true;
+    for (const Tracked& t : m_extra) {
+        if (t.cursor.has_selection()) return true;
+    }
+    return false;
+}
+
+std::string CodeBuffer::selected_texts() const {
+    std::vector<CodeCursor> all = cursors();
+    std::sort(all.begin(), all.end(), [](const CodeCursor& x, const CodeCursor& y) { return x.start() < y.start(); });
+    std::string out;
+    bool first = true;
+    for (const CodeCursor& c : all) {
+        if (!c.has_selection()) continue;
+        if (!first) out += '\n';
+        out += text_between(c.start(), c.end());
+        first = false;
+    }
+    return out;
+}
+
+void CodeBuffer::insert_each(const std::vector<std::string>& pieces) {
+    if (pieces.empty()) return;
+    if (m_extra.empty() || pieces.size() != cursor_count()) {
+        std::string joined;
+        for (std::size_t i = 0; i < pieces.size(); ++i) {
+            if (i) joined += '\n';
+            joined += pieces[i];
+        }
+        insert(joined);
+        return;
+    }
+    for_each_cursor([&](std::size_t rank) { insert(pieces[rank]); });
+}
+
 bool CodeBuffer::undo() {
     if (m_undo.empty()) return false;
-    m_redo.push_back(Snapshot{ m_lines, m_caret, m_anchor });
+    m_redo.push_back(Snapshot{ m_lines, m_caret, m_anchor, cursors_extra() });
     Snapshot s = std::move(m_undo.back());
     m_undo.pop_back();
     m_lines = std::move(s.lines);
     m_caret = clamp(s.caret);
     m_anchor = clamp(s.anchor);
+    m_extra.clear();
+    for (const CodeCursor& c : s.extra) m_extra.push_back(Tracked{ CodeCursor{ clamp(c.anchor), clamp(c.caret) }, 0, false });
     m_last_edit = EditKind::None;
     forget_preferred();
     changed();
@@ -504,12 +796,14 @@ bool CodeBuffer::undo() {
 
 bool CodeBuffer::redo() {
     if (m_redo.empty()) return false;
-    m_undo.push_back(Snapshot{ m_lines, m_caret, m_anchor });
+    m_undo.push_back(Snapshot{ m_lines, m_caret, m_anchor, cursors_extra() });
     Snapshot s = std::move(m_redo.back());
     m_redo.pop_back();
     m_lines = std::move(s.lines);
     m_caret = clamp(s.caret);
     m_anchor = clamp(s.anchor);
+    m_extra.clear();
+    for (const CodeCursor& c : s.extra) m_extra.push_back(Tracked{ CodeCursor{ clamp(c.anchor), clamp(c.caret) }, 0, false });
     m_last_edit = EditKind::None;
     forget_preferred();
     changed();

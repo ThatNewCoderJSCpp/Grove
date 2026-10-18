@@ -1,0 +1,37 @@
+{
+    "name": "Grove Forest",
+    "tags": "#A3D977",
+    "input tags": "#E0C97A",
+    "custom tags": "#B5C99A",
+    "unknown names": {
+        "color": "#DFE8D8",
+        "underline": true
+    },
+    "attributes": "#E0C97A",
+    "attribute values": "#C3E88D",
+    "ids and classes": "#8FD3C2",
+    "properties": "#8FD3C2",
+    "variables": "#D8E6C3",
+    "variable declarations": "#DFE8D8",
+    "functions": "#8FD3C2",
+    "values": {
+        "color": "#A3D977",
+        "bold": true
+    },
+    "constants": "#F0A868",
+    "numbers": "#F0A868",
+    "units": {
+        "color": "#A3D977",
+        "bold": true
+    },
+    "strings": "#C3E88D",
+    "escapes": "#F78C6C",
+    "comments": {
+        "color": "#6B7D63",
+        "italic": true
+    },
+    "at-rules": "#D4A5D9",
+    "math commands": "#F0A868",
+    "math functions": "#8FD3C2",
+    "math names": "#D8E6C3"
+}

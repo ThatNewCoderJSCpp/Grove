@@ -1,0 +1,40 @@
+{
+    "name": "Grove Amber",
+    "tags": "#FFCC33",
+    "input tags": "#FFD77A",
+    "custom tags": "#E6A23C",
+    "unknown names": {
+        "color": "#FFB000",
+        "underline": true
+    },
+    "attributes": "#FFD77A",
+    "attribute values": "#F2C46B",
+    "ids and classes": "#FFE6A3",
+    "properties": "#FFBE4D",
+    "variables": "#FFBE4D",
+    "variable declarations": "#FFB000",
+    "functions": "#FFE6A3",
+    "values": {
+        "color": "#FFCC33",
+        "bold": true
+    },
+    "constants": "#FF8C00",
+    "numbers": "#FFA64D",
+    "units": {
+        "color": "#FFCC33",
+        "bold": true
+    },
+    "strings": "#F2C46B",
+    "escapes": {
+        "color": "#FF7B00",
+        "bold": true
+    },
+    "comments": {
+        "color": "#7A5A20",
+        "italic": true
+    },
+    "at-rules": "#FF9E1F",
+    "math commands": "#FF8C00",
+    "math functions": "#FFE6A3",
+    "math names": "#FFBE4D"
+}

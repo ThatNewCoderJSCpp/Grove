@@ -1,0 +1,49 @@
+{
+    "name": "Grove Mono",
+    "tags": {
+        "color": "#FFFFFF",
+        "bold": true
+    },
+    "input tags": {
+        "color": "#E6E6E6",
+        "italic": true
+    },
+    "custom tags": "#B8B8B8",
+    "unknown names": {
+        "color": "#D0D0D0",
+        "underline": true
+    },
+    "attributes": "#B8B8B8",
+    "attribute values": "#9E9E9E",
+    "ids and classes": "#F2F2F2",
+    "properties": "#E6E6E6",
+    "variables": "#D0D0D0",
+    "variable declarations": "#D0D0D0",
+    "functions": "#F2F2F2",
+    "values": {
+        "color": "#FFFFFF",
+        "bold": true
+    },
+    "constants": "#FFFFFF",
+    "numbers": "#E6E6E6",
+    "units": {
+        "color": "#FFFFFF",
+        "bold": true
+    },
+    "strings": "#9E9E9E",
+    "escapes": {
+        "color": "#D8D8D8",
+        "bold": true
+    },
+    "comments": {
+        "color": "#666666",
+        "italic": true
+    },
+    "at-rules": {
+        "color": "#B8B8B8",
+        "bold": true
+    },
+    "math commands": "#FFFFFF",
+    "math functions": "#F2F2F2",
+    "math names": "#D0D0D0"
+}

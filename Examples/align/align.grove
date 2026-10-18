@@ -1,0 +1,48 @@
+<!grove>
+<grove>
+    <head>
+        <title>Centering</title>
+        <style src="align.bark" />
+    </head>
+    <body>
+        <h2>The easy way</h2>
+        <row class="grid">
+            <column class="demo">
+                <div class="cell" center><div class="box"></div></div>
+                <code>&lt;div center&gt;</code>
+            </column>
+            <column class="demo">
+                <div class="cell" style="align: bottom right"><div class="box"></div></div>
+                <code>align: bottom right</code>
+            </column>
+            <column class="demo">
+                <div class="cell" style="align: top center"><div class="box"></div></div>
+                <code>align: top center</code>
+            </column>
+            <column class="demo">
+                <div class="cell"><center>Hello there</center></div>
+                <code>&lt;center&gt;</code>
+            </column>
+        </row>
+
+        <h2>Full control</h2>
+        <row class="grid">
+            <column class="demo">
+                <div class="cell" style="justify-content: space-evenly; align-items: end"><div class="box"></div><div class="box"></div></div>
+                <code>space-evenly, end</code>
+            </column>
+            <column class="demo">
+                <div class="cell"><div class="box" style="margin: auto"></div></div>
+                <code>margin: auto</code>
+            </column>
+            <column class="demo">
+                <row class="cell" style="align-items: center; justify-content: space-between"><div class="box"></div><div class="box tall"></div><div class="box"></div></row>
+                <code>row: align-items: center</code>
+            </column>
+            <column class="demo">
+                <div class="cell" style="padding: 10px"><div class="bar" style="width: calc(100% - 40px)"></div><div class="bar" style="width: clamp(60px, 50%, 120px)"></div><div class="bar" style="width: min(100%, 70px)"></div></div>
+                <code>calc / clamp / min</code>
+            </column>
+        </row>
+    </body>
+</grove>

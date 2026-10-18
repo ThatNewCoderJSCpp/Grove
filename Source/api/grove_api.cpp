@@ -5,6 +5,7 @@
 #include "grove/dom_tools.hpp"
 #include "grove/windowing.hpp"
 #include "grove/native.hpp"
+#include "grove/pages.hpp"
 
 #include <array>
 #include <cstring>
@@ -607,6 +608,30 @@ const char* grove_file_dialog(grove_document* document, const char* mode, const 
         joined += p;
     }
     return keep(joined);
+}
+
+bool grove_show_page(grove_document* document, grove_element* page) {
+    return document && page && grove::show_page(*doc_of(document), *node_of(page));
+}
+
+bool grove_go_back(grove_document* document) {
+    return document && grove::go_back(*doc_of(document));
+}
+
+bool grove_open_modal(grove_document* document, grove_element* modal) {
+    return document && modal && grove::open_modal(*doc_of(document), *node_of(modal));
+}
+
+bool grove_close_modal(grove_document* document, grove_element* modal) {
+    return document && modal && grove::close_modal(*doc_of(document), *node_of(modal));
+}
+
+bool grove_navigate(grove_document* document, const char* target) {
+    return document && target && grove::navigate(*doc_of(document), target);
+}
+
+bool grove_is_current(const grove_element* element) {
+    return element && grove::is_navigation_current(*node_of(element));
 }
 
 const grove_host_api* grove_host_table(void) {

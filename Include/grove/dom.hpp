@@ -220,6 +220,10 @@ public:
     bool move_window(double x, double y) { return grove_window_move(doc(), m_element, x, y); }
     bool focus_window() { return grove_window_focus(doc(), m_element); }
     bool answer(bool ok) { return grove_popup_answer(doc(), m_element, ok); }
+    bool show_page() { return grove_show_page(doc(), m_element); }
+    bool open_modal() { return grove_open_modal(doc(), m_element); }
+    bool close_modal() { return grove_close_modal(doc(), m_element); }
+    bool is_current() const { return grove_is_current(m_element); }
     std::string answer_value() const { return get_attribute("value"); }
 
 private:
@@ -370,6 +374,9 @@ public:
         }
         return out;
     }
+
+    bool navigate(const std::string& target) const { return grove_navigate(handle(), target.c_str()); }
+    bool go_back() const { return grove_go_back(handle()); }
 
     Element popup(const std::string& kind, const std::string& title, const std::string& message, const std::string& input, const std::string& value, const std::string& options) const {
         return Element(grove_popup(handle(), nullptr, kind.c_str(), title.c_str(), message.c_str(), input.c_str(), value.c_str(), options.c_str()));

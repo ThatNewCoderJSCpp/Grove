@@ -33,6 +33,7 @@ private:
 };
 
 bool is_inherited_property(const std::string& property) noexcept;
+void split_align(const ValueList& align, std::string& horizontal, std::string& vertical);
 const Stylesheet& default_stylesheet();
 
 class StyleEngine {

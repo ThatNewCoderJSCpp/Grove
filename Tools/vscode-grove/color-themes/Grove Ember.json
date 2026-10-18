@@ -1,0 +1,31 @@
+{
+    "name": "Grove Ember",
+    "tags": "#E76F51",
+    "input tags": "#F4A261",
+    "custom tags": "#E9C46A",
+    "unknown names": {
+        "color": "#FFF1D6",
+        "underline": true
+    },
+    "attributes": "#8AB17D",
+    "attribute values": "#A7C957",
+    "ids and classes": "#FFD166",
+    "properties": "#F2C48D",
+    "variables": "#F2C48D",
+    "variable declarations": "#FFF1D6",
+    "functions": "#FFD166",
+    "values": "#E76F51",
+    "constants": "#FF8F5A",
+    "numbers": "#90BE6D",
+    "units": "#E76F51",
+    "strings": "#A7C957",
+    "escapes": "#F2E8CF",
+    "comments": {
+        "color": "#8C7B6B",
+        "italic": true
+    },
+    "at-rules": "#C9ADA7",
+    "math commands": "#FF8F5A",
+    "math functions": "#FFD166",
+    "math names": "#F2C48D"
+}

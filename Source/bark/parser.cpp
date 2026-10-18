@@ -34,6 +34,9 @@ enum class Tok {
     Equals,
     Bang,
     Ampersand,
+    Plus,
+    Minus,
+    Slash,
     Invalid
 };
 
@@ -137,6 +140,9 @@ private:
             case '=': m_cursor.advance(); return make(Tok::Equals, start, "=");
             case '!': m_cursor.advance(); return make(Tok::Bang, start, "!");
             case '&': m_cursor.advance(); return make(Tok::Ampersand, start, "&");
+            case '+': m_cursor.advance(); return make(Tok::Plus, start, "+");
+            case '-': m_cursor.advance(); return make(Tok::Minus, start, "-");
+            case '/': m_cursor.advance(); return make(Tok::Slash, start, "/");
             default: break;
         }
         m_cursor.advance();
@@ -547,7 +553,64 @@ private:
         return p;
     }
 
+    static bool is_math_name(const std::string& name) {
+        return name == "calc" || name == "min" || name == "max" || name == "clamp" || name.empty();
+    }
+
+    void parse_function_args(Value& v) {
+        const bool keep_commas = is_math_name(v.text) && !v.text.empty() && v.text != "calc";
+        while (!at(Tok::RParen) && !at(Tok::End) && !at(Tok::Semicolon) && !at(Tok::RBrace)) {
+            if (at(Tok::Comma)) {
+                const Token& comma = advance();
+                if (keep_commas) {
+                    Value c = Value::make_ident(",");
+                    c.span = comma.span;
+                    v.args.push_back(std::move(c));
+                }
+                continue;
+            }
+            if (at(Tok::Plus) || at(Tok::Minus) || at(Tok::Star) || at(Tok::Slash)) {
+                const Token& op = advance();
+                Value o = Value::make_ident(op.text);
+                o.span = op.span;
+                v.args.push_back(std::move(o));
+                continue;
+            }
+            if (at(Tok::LParen)) {
+                const Token& open = advance();
+                Value group;
+                group.kind = ValueKind::Function;
+                group.span = open.span;
+                parse_function_args(group);
+                if (!accept(Tok::RParen)) m_diag.error(m_file, open.span, "'(' is never closed with ')'");
+                group.span = Span{ open.span.begin, prev_end() };
+                v.args.push_back(std::move(group));
+                continue;
+            }
+            if (at(Tok::Variable)) {
+                const Token& var = advance();
+                auto it = m_sheet.variables().find(var.text);
+                mark_variable_use(var, it != m_sheet.variables().end());
+                if (it == m_sheet.variables().end()) m_diag.error(m_file, var.span, "unknown variable $" + var.text);
+                else v.args.insert(v.args.end(), it->second.begin(), it->second.end());
+                continue;
+            }
+            Value arg;
+            if (parse_value(arg)) v.args.push_back(std::move(arg));
+        }
+    }
+
     bool evaluate_function(Value& v) {
+        if (v.text == "rgb" || v.text == "rgba" || v.text == "hsl" || v.text == "hsla") {
+            v.args.erase(std::remove_if(v.args.begin(), v.args.end(), [](const Value& a) { return a.is_ident("/"); }), v.args.end());
+        }
+        if (is_math_name(v.text)) {
+            if (!evaluate_length(v, 16.0, Viewport{ 1000.0, 1000.0 }, 100.0)) {
+                m_diag.error(m_file, v.span, v.text + "() can't be worked out; it takes lengths like 100%, 16px, 2em or 10vw joined with + - * / (and commas for min, max and clamp)");
+                return false;
+            }
+            return true;
+        }
         const auto all_numbers = std::all_of(v.args.begin(), v.args.end(), [](const Value& a) { return a.is_number(); });
         if ((v.text == "rgb" || v.text == "rgba") && all_numbers && (v.args.size() == 3 || v.args.size() == 4)) {
             Rgba c{ channel(v.args[0]), channel(v.args[1]), channel(v.args[2]), 255 };
@@ -612,19 +675,7 @@ private:
                     advance();
                     v.kind = ValueKind::Function;
                     v.text = t.text;
-                    while (!at(Tok::RParen) && !at(Tok::End) && !at(Tok::Semicolon) && !at(Tok::RBrace)) {
-                        if (accept(Tok::Comma)) continue;
-                        if (at(Tok::Variable)) {
-                            const Token& var = advance();
-                            auto it = m_sheet.variables().find(var.text);
-                            mark_variable_use(var, it != m_sheet.variables().end());
-                            if (it == m_sheet.variables().end()) m_diag.error(m_file, var.span, "unknown variable $" + var.text);
-                            else v.args.insert(v.args.end(), it->second.begin(), it->second.end());
-                            continue;
-                        }
-                        Value arg;
-                        if (parse_value(arg)) v.args.push_back(std::move(arg));
-                    }
+                    parse_function_args(v);
                     if (!accept(Tok::RParen)) m_diag.error(m_file, t.span, t.text + "( is never closed with ')'");
                     v.span = Span{ t.span.begin, prev_end() };
                     const bool ok = evaluate_function(v);

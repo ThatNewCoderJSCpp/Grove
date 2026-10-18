@@ -55,4 +55,14 @@ std::vector<std::string> run_file_dialog(Document& document, const FileDialogReq
     return dialog(request);
 }
 
+bool set_clipboard_text(Document& document, const std::string& text) {
+    const auto& fn = document.host().set_clipboard;
+    return fn ? fn(text) : false;
+}
+
+std::string clipboard_text(Document& document) {
+    const auto& fn = document.host().clipboard;
+    return fn ? fn() : std::string();
+}
+
 } // namespace grove

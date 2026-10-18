@@ -3,6 +3,7 @@
 #include "grove/bark/parser.hpp"
 #include "grove/input/input.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -63,6 +64,98 @@ void check_structure(Project& project) {
     if (bodies > 1) project.diagnostics.error(project.path, root.span(), "a document can only have one <body>");
     if (project.document.elements_by_tag("body").empty() && project.document.elements_by_tag("window").empty()) {
         project.diagnostics.note(project.path, Span{}, "document has no <body>; the whole document is drawn in the window");
+    }
+}
+
+void rebase_sources(Node& root, const std::string& from_dir, const std::string& base_dir) {
+    root.walk([&](Node& n) {
+        if (!n.is_element()) return;
+        for (const char* attr : { "src", "icon" }) {
+            const std::optional<std::string> value = n.attribute(attr);
+            if (!value || value->empty()) continue;
+            std::vector<std::string> parts = std::string(attr) == "icon" ? split_asset_list(*value) : std::vector<std::string>{ *value };
+            std::string joined;
+            for (const std::string& part : parts) {
+                std::filesystem::path full(resolve_path(from_dir, part));
+                std::filesystem::path shown = full;
+                if (!base_dir.empty() && !std::filesystem::path(part).is_absolute()) {
+                    const std::filesystem::path rel = full.lexically_relative(base_dir);
+                    if (!rel.empty()) shown = rel;
+                }
+                if (!joined.empty()) joined += ' ';
+                joined += shown.generic_string();
+            }
+            n.set_attribute(attr, joined);
+        }
+    });
+}
+
+void include_pages(Project& project, Node& scope, std::vector<std::string>& chain) {
+    std::vector<Node*> pages;
+    scope.walk([&pages](Node& n) {
+        if (n.is_element() && n.tag() == "page" && n.has_attribute("src")) pages.push_back(&n);
+    });
+    for (Node* page : pages) {
+        if (page->has_attribute("included")) continue;
+        const std::string src = page->attribute_or("src", "");
+        const std::string path = resolve_path(project.base_dir, src);
+        const std::string key = std::filesystem::path(path).lexically_normal().generic_string();
+        if (std::find(chain.begin(), chain.end(), key) != chain.end()) {
+            project.diagnostics.error(project.path, page->span(), "page '" + src + "' includes itself");
+            continue;
+        }
+        const std::optional<std::string> text = read_file(path);
+        if (!text) {
+            project.diagnostics.error(project.path, page->span(), "can't read page '" + src + "'");
+            continue;
+        }
+        if (!page->children().empty()) {
+            bool only_space = true;
+            for (const auto& c : page->children()) {
+                if (!c->is_text() || c->text().find_first_not_of(" \t\r\n") != std::string::npos) only_space = false;
+            }
+            if (!only_space) project.diagnostics.warning(project.path, page->span(), "page '" + src + "' has its own content too; the content of '" + src + "' goes after it");
+        }
+        Document sub = parse_markup(*text, path, project.diagnostics);
+        rebase_sources(sub.root(), std::filesystem::path(path).parent_path().string(), project.base_dir);
+        Node* from = sub.first_by_tag("body");
+        if (!from) from = &sub.root();
+        if (Node* head = sub.first_by_tag("head")) {
+            if (!page->has_attribute("title")) {
+                if (const Node* t = sub.first_by_tag("title")) page->set_attribute("title", t->inner_text());
+            }
+            std::vector<const Node*> keep;
+            for (const auto& c : head->children()) {
+                if (c->is_element() && (c->tag() == "style" || c->tag() == "script")) keep.push_back(c.get());
+            }
+            for (const Node* c : keep) page->append_child(head->remove_child(c));
+        }
+        if (from != &sub.root()) {
+            for (const char* attr : { "class", "style" }) {
+                if (from->has_attribute(attr) && !page->has_attribute(attr)) page->set_attribute(attr, from->attribute_or(attr, ""));
+            }
+        }
+        std::vector<const Node*> moving;
+        for (const auto& c : from->children()) {
+            if (c->is_element() && (c->tag() == "head" || c->tag() == "grove")) continue;
+            moving.push_back(c.get());
+        }
+        if (from == &sub.root()) {
+            if (Node* grove = sub.first_by_tag("grove")) {
+                moving.clear();
+                for (const auto& c : grove->children()) {
+                    if (c->is_element() && c->tag() == "head") continue;
+                    moving.push_back(c.get());
+                }
+                from = grove;
+            }
+        }
+        for (const Node* c : moving) page->append_child(from->remove_child(c));
+        page->set_attribute("included", "");
+        chain.push_back(key);
+        include_pages(project, *page, chain);
+        chain.pop_back();
+        page->remove_attribute("included");
     }
 }
 
@@ -170,6 +263,8 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     project.path = path;
     project.base_dir = base_dir;
     project.document = parse_markup(source, path, project.diagnostics);
+    std::vector<std::string> chain{ std::filesystem::path(path).lexically_normal().generic_string() };
+    include_pages(project, project.document.root(), chain);
     check_structure(project);
     project.styles.add(bark::default_stylesheet());
     load_styles(project);

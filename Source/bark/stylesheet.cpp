@@ -1,10 +1,11 @@
 #include "grove/bark/stylesheet.hpp"
+#include "grove/pages.hpp"
 
 namespace grove {
 namespace bark {
 
 bool is_known_pseudo_class(std::string_view name) noexcept {
-    static const std::string_view names[] = { "hover", "active", "focus", "checked", "disabled", "enabled", "first-child", "last-child", "only-child", "empty" };
+    static const std::string_view names[] = { "hover", "active", "focus", "checked", "disabled", "enabled", "first-child", "last-child", "only-child", "empty", "current" };
     for (std::string_view n : names) {
         if (n == name) return true;
     }
@@ -37,6 +38,7 @@ bool pseudo_matches(const std::string& p, const Node& node) {
     if (p == "last-child") return element_index(node, true) == 0;
     if (p == "only-child") return element_index(node, false) == 0 && element_index(node, true) == 0;
     if (p == "empty") return node.children().empty();
+    if (p == "current") return is_navigation_current(node);
     return false;
 }
 

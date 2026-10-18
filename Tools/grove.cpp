@@ -287,7 +287,7 @@ int main(int argc, char** argv) {
             }
             grove::Event e;
             e.type = type;
-            doc.events().dispatch(doc, target, e);
+            if (doc.events().dispatch(doc, target, e) && type == "click" && target) grove::follow_link(doc, target);
             doc.events().run_due_timers();
         }
         const double until = doc.events().now() + run_for;

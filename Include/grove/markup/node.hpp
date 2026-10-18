@@ -127,6 +127,8 @@ struct DocumentHost {
     std::function<bool(Node&)> focus_window;
     std::map<std::string, NativeFunction, std::less<>> natives;
     std::function<std::vector<std::string>(const FileDialogRequest&)> file_dialog;
+    std::function<bool(const std::string&)> set_clipboard;
+    std::function<std::string()> clipboard;
 };
 
 class Document {
@@ -162,6 +164,8 @@ public:
     Marks& marks() noexcept { return m_marks; }
     const Marks& marks() const noexcept { return m_marks; }
 
+    std::vector<std::string>& page_history() noexcept { return m_page_history; }
+
     std::uint64_t revision() const noexcept { return m_revision; }
     void touch() noexcept { ++m_revision; }
 
@@ -172,6 +176,7 @@ private:
     std::string m_path;
     Marks m_marks;
     std::vector<std::unique_ptr<Node>> m_detached;
+    std::vector<std::string> m_page_history;
     std::unique_ptr<EventRegistry> m_events = std::make_unique<EventRegistry>();
     std::unique_ptr<DocumentHost> m_host = std::make_unique<DocumentHost>();
     std::uint64_t m_revision = 0;

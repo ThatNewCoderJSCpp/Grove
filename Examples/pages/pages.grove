@@ -1,0 +1,34 @@
+<!grove>
+<grove>
+    <head>
+        <title>Notes</title>
+        <style src="pages.bark" />
+    </head>
+    <body>
+        <row class="tabs">
+            <button class="tab" to="home">Home</button>
+            <button id="notes-tab" class="tab" to="pages/notes.grove">Notes</button>
+            <button class="tab" to="pages/settings.grove">Settings</button>
+            <button id="back-tab" class="tab back" to="back">Back</button>
+        </row>
+
+        <page id="home" title="Notes - Home">
+            <h2>Welcome</h2>
+            <p>Each tab above is a <code>page</code>. Only the current one is shown, and the tab that points at it matches <code>:current</code>.</p>
+            <p>Notes and Settings live in their own files under <code>pages/</code>; this file pulls them in with <code>src</code>.</p>
+            <button to="about">About this app…</button>
+        </page>
+
+        <page id="notes" src="pages/notes.grove" />
+        <page id="settings" src="pages/settings.grove" />
+
+        <modal id="about">
+            <h3>About</h3>
+            <p>A modal sits on top of the window and dims everything behind it. Escape or clicking outside closes it.</p>
+            <row class="actions">
+                <button to="settings">Open Settings</button>
+                <button class="primary" to="close">OK</button>
+            </row>
+        </modal>
+    </body>
+</grove>

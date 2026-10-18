@@ -1,5 +1,6 @@
 #include "grove/grove.hpp"
 #include "grove/api/grove_api.h"
+#include "grove/bark/properties.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -763,6 +764,229 @@ void test_code_highlight() {
     CHECK(grove::code_language_for_path("theme.bark") == grove::CodeLanguage::Bark);
 }
 
+void test_multi_cursor() {
+    grove::CodeBuffer buf("int a;\nint b;\nint c;");
+    buf.set_caret(grove::CodePos{ 0, 4 });
+    CHECK(buf.toggle_cursor(grove::CodePos{ 2, 4 }));
+    CHECK(buf.cursor_count() == 2);
+    buf.insert("x");
+    CHECK(buf.text() == "int xa;\nint b;\nint xc;");
+    buf.backspace();
+    CHECK(buf.text() == "int a;\nint b;\nint c;");
+    CHECK(buf.undo() && buf.text() == "int xa;\nint b;\nint xc;");
+    CHECK(buf.cursor_count() == 2);
+    buf.clear_extra_cursors();
+    CHECK(buf.cursor_count() == 1);
+
+    grove::CodeBuffer col("abcd\nab\nabcd");
+    col.column_select(grove::CodePos{ 0, 3 }, 2);
+    CHECK(col.cursor_count() == 3);
+    col.insert("|");
+    CHECK(col.text() == "abc|d\nab|\nabc|d");
+    col.move_left(true);
+    CHECK(col.any_selection() && col.selected_texts() == "|\n|\n|");
+    col.insert_each({ "1", "2", "3" });
+    CHECK(col.text() == "abc1d\nab2\nabc3d");
+    col.move_start(false);
+    CHECK(col.cursor_count() == 1);
+
+    grove::CodeBuffer merge("hello");
+    merge.set_caret(grove::CodePos{ 0, 2 });
+    merge.toggle_cursor(grove::CodePos{ 0, 3 });
+    merge.move_left(false);
+    merge.move_left(false);
+    merge.move_left(false);
+    CHECK(merge.cursor_count() == 1);
+    merge.toggle_cursor(merge.caret());
+    CHECK(merge.cursor_count() == 1);
+}
+
+void test_pages_and_modals() {
+    grove::set_virtual_files({
+        { "/app/main.grove", "<grove><body><row id=\"tabs\"><button id=\"go-home\" to=\"home\">Home</button><button id=\"go-about\" to=\"pages/about.grove\">About</button></row>"
+                             "<page id=\"home\" title=\"Home\"><p>Home</p><button id=\"ask\" to=\"confirm\">Ask</button></page>"
+                             "<page id=\"about\" src=\"pages/about.grove\" />"
+                             "<modal id=\"confirm\"><p>Sure?</p><button id=\"no\" to=\"close\">No</button></modal></body></grove>" },
+        { "/app/pages/about.grove", "<grove><head><title>About us</title><style>p { color: red; }</style></head><body><p id=\"about-text\">About</p><img src=\"logo.png\" /><page id=\"deep\"><p>Deep</p></page></body></grove>" },
+        { "/app/pages/logo.png", "x" },
+    });
+    grove::Project project = grove::load_project("/app/main.grove");
+    grove::set_virtual_files({});
+    grove::Document& doc = project.document;
+    CHECK(project.diagnostics.ok());
+    grove::Node* home = doc.find_by_id("home");
+    grove::Node* about = doc.find_by_id("about");
+    CHECK(home && about && doc.find_by_id("about-text") && doc.find_by_id("about-text")->parent() == about);
+    CHECK(about && about->attribute_or("title", "") == "About us");
+    const grove::Node* img = doc.first_by_tag("img");
+    CHECK(img && img->attribute_or("src", "") == "pages/logo.png");
+    CHECK(grove::is_page_current(*home) && !grove::is_page_current(*about));
+    CHECK(grove::is_navigation_current(*doc.find_by_id("go-home")) && !grove::is_navigation_current(*doc.find_by_id("go-about")));
+    CHECK(project.styles.style_of(*about, project.diagnostics).text("display").value_or("") == "none");
+
+    int shown = 0;
+    doc.events().add_listener(about, "page_show", [&shown](grove::Event&) { ++shown; });
+    CHECK(grove::navigate(doc, "pages/about.grove"));
+    CHECK(shown == 1 && grove::is_page_current(*about) && !grove::is_page_current(*home));
+    CHECK(grove::is_navigation_current(*doc.find_by_id("go-about")));
+    project.styles.invalidate();
+    CHECK(project.styles.style_of(*about, project.diagnostics).text("display").value_or("") != "none");
+    CHECK(project.styles.style_of(*home, project.diagnostics).text("display").value_or("") == "none");
+    grove::Node* deep = doc.find_by_id("deep");
+    CHECK(deep && grove::is_page_shown(*deep));
+    CHECK(grove::go_back(doc) && grove::is_page_current(*home));
+    CHECK(!grove::go_back(doc));
+    CHECK(grove::navigate(doc, "#deep") && grove::is_page_current(*about) && grove::is_page_shown(*deep));
+
+    grove::Node* modal = doc.find_by_id("confirm");
+    int closed = 0;
+    doc.events().add_listener(modal, "close", [&closed](grove::Event&) { ++closed; });
+    CHECK(grove::navigate(doc, "confirm") && modal->has_attribute("open"));
+    CHECK(grove::open_modals(doc.root()).size() == 1);
+    CHECK(grove::navigate(doc, "close", doc.find_by_id("no")) && !modal->has_attribute("open") && closed == 1);
+    CHECK(!grove::close_modal(doc, *modal));
+    CHECK(grove::open_modal(doc, *modal));
+    grove::Node* jump = doc.create_element("button");
+    doc.append_child(*modal, *jump);
+    CHECK(grove::navigate(doc, "home", jump) && grove::is_page_current(*home) && !modal->has_attribute("open"));
+    CHECK(!grove::navigate(doc, "nowhere"));
+
+    grove::set_virtual_files({ { "/loop/a.grove", "<grove><body><page src=\"a.grove\" /></body></grove>" } });
+    grove::Project loop = grove::load_project("/loop/a.grove");
+    grove::set_virtual_files({});
+    CHECK(!loop.diagnostics.ok());
+    CHECK(grove::is_known_tag("container") && grove::is_known_tag("page") && grove::is_known_tag("modal"));
+}
+
+void test_alignment_and_math() {
+    grove::Diagnostics d;
+    const grove::bark::Stylesheet sheet = grove::bark::parse_stylesheet(
+        ".a { width: calc(100% - 40px); height: calc((50% + 10px) * 2); }\n"
+        ".b { width: min(100%, 300px); height: max(2em, 10px); margin: clamp(4px, 10vw, 40px); }\n"
+        ".c { width: calc(100% -16px); }\n",
+        "t.bark", d);
+    CHECK(d.ok());
+    const grove::bark::Viewport view{ 1000.0, 800.0 };
+    auto value_of = [&](std::size_t rule, std::size_t decl) -> const grove::bark::Value& { return sheet.rules()[rule].declarations[decl].values.front(); };
+    CHECK(grove::bark::evaluate_length(value_of(0, 0), 16.0, view, 200.0) == 160.0);
+    CHECK(grove::bark::evaluate_length(value_of(0, 1), 16.0, view, 100.0) == 120.0);
+    CHECK(grove::bark::evaluate_length(value_of(1, 0), 16.0, view, 500.0) == 300.0);
+    CHECK(grove::bark::evaluate_length(value_of(1, 0), 16.0, view, 200.0) == 200.0);
+    CHECK(grove::bark::evaluate_length(value_of(1, 1), 16.0, view, std::nullopt) == 32.0);
+    CHECK(grove::bark::evaluate_length(value_of(1, 2), 16.0, view, std::nullopt) == 40.0);
+    CHECK(grove::bark::evaluate_length(value_of(2, 0), 16.0, view, 100.0) == 84.0);
+    CHECK(!grove::bark::evaluate_length(value_of(0, 0), 16.0, view, std::nullopt));
+    CHECK(grove::bark::to_string(value_of(1, 0)) == "min(100%, 300px)");
+
+    grove::Diagnostics bad;
+    grove::bark::parse_stylesheet(".x { width: calc(100% +); }\n.y { width: clamp(1px, 2px); }\n", "bad.bark", bad);
+    CHECK(bad.error_count() == 2);
+    grove::Diagnostics modern;
+    const auto colors = grove::bark::parse_stylesheet(".z { color: rgb(255 0 0 / 50%); }", "c.bark", modern);
+    CHECK(modern.ok() && colors.rules()[0].declarations[0].values.front().is_color() && colors.rules()[0].declarations[0].values.front().color.a == 128);
+
+    std::string h;
+    std::string v;
+    grove::bark::split_align({ grove::bark::Value::make_ident("center") }, h, v);
+    CHECK(h == "center" && v == "center");
+    grove::bark::split_align({ grove::bark::Value::make_ident("bottom"), grove::bark::Value::make_ident("right") }, h, v);
+    CHECK(h == "right" && v == "bottom");
+    grove::bark::split_align({ grove::bark::Value::make_ident("center"), grove::bark::Value::make_ident("left") }, h, v);
+    CHECK(h == "left" && v == "center");
+    grove::bark::split_align({ grove::bark::Value::make_ident("top"), grove::bark::Value::make_ident("center") }, h, v);
+    CHECK(h == "center" && v == "top");
+
+    grove::Project project = grove::load_project_from_source(
+        "<grove><head><style>.card { align: bottom right; } .keep { align: center; text-align: left; } p { text-align: end; }</style></head><body>"
+        "<div id=\"card\" class=\"card\"><p id=\"inner\">x</p></div><div id=\"keep\" class=\"keep\"></div>"
+        "<div id=\"attr\" center></div><div id=\"words\" align=\"Top Right\"></div><center id=\"c\"></center></body></grove>",
+        "t.grove", ".");
+    CHECK(project.diagnostics.ok());
+    auto computed = [&](const char* id, const char* prop) { return project.styles.style_of(*project.document.find_by_id(id), project.diagnostics).text(prop).value_or(""); };
+    CHECK(computed("card", "text-align") == "right");
+    CHECK(computed("inner", "text-align") == "right");
+    CHECK(computed("keep", "text-align") == "left");
+    CHECK(computed("attr", "align") == "center" && computed("attr", "text-align") == "center");
+    CHECK(computed("words", "align") == "top right" && computed("words", "text-align") == "right");
+    CHECK(computed("c", "align") == "center" && computed("c", "flex") == "1");
+    CHECK(grove::bark::is_known_property("align") && grove::bark::is_known_property("align-items") && grove::bark::is_known_property("align-self"));
+}
+
+void test_color_formats() {
+    const grove::bark::Rgba teal{ 60, 154, 138, 255 };
+    CHECK(grove::format_color(teal, "rgb") == "rgb(60, 154, 138)");
+    CHECK(grove::format_color(teal, "rgba") == "rgba(60, 154, 138, 1)");
+    CHECK(grove::format_color(teal, "hsl") == "hsl(170, 44%, 42%)");
+    CHECK(grove::format_color(grove::bark::Rgba{ 255, 0, 0, 128 }, "hsl") == "hsla(0, 100%, 50%, 0.5)");
+    const auto parsed = grove::parse_color_text("rgba(255, 0, 0, 0.5)");
+    CHECK(parsed && parsed->r == 255 && parsed->a == 128);
+    const auto hsl = grove::parse_color_text("hsl(120, 100%, 50%)");
+    CHECK(hsl && hsl->g == 255 && hsl->r == 0);
+    const auto bare = grove::parse_color_text("ff8800");
+    CHECK(bare && bare->r == 255 && bare->g == 136);
+    CHECK(!grove::parse_color_text("rgb(1, 2)"));
+    CHECK(!grove::parse_color_text("#zz0000"));
+    const grove::ColorHsv hsv = grove::color_to_hsv(teal);
+    const grove::bark::Rgba back = grove::color_from_hsv(hsv);
+    CHECK(back.r == teal.r && back.g == teal.g && back.b == teal.b);
+
+    grove::Document doc;
+    grove::Node* c = doc.create_element("input_color");
+    c->set_attribute("value", "#3c9a8a");
+    c->set_attribute("format", "rgb");
+    doc.append_child(doc.root(), *c);
+    CHECK(grove::input_text(*c) == "rgb(60, 154, 138)");
+    CHECK(grove::input_accepts(*c, "", "r") && grove::input_accepts(*c, "rgb", "("));
+    CHECK(grove::commit_input_text(doc, *c, "hsla(0, 100%, 50%, 1)"));
+    CHECK(grove::input_color(*c) && grove::input_color(*c)->r == 255);
+    CHECK(!grove::set_clipboard_text(doc, "nothing to copy to without a window"));
+}
+
+void test_code_highlight_languages() {
+    auto has = [](const std::vector<grove::CodeToken>& tokens, const std::string& line, grove::CodeTokenKind kind, const std::string& text) {
+        for (const auto& t : tokens) {
+            if (t.kind == kind && line.substr(t.begin, t.end - t.begin) == text) return true;
+        }
+        return false;
+    };
+    grove::CodeLineState st;
+    const std::string cpp = "std::vector<std::string> v = {\"a\\n\"}; [[nodiscard]] int f();";
+    auto tokens = grove::highlight_code_line(grove::CodeLanguage::Cpp, cpp, st);
+    CHECK(has(tokens, cpp, grove::CodeTokenKind::Namespace, "std"));
+    CHECK(has(tokens, cpp, grove::CodeTokenKind::Type, "vector"));
+    CHECK(has(tokens, cpp, grove::CodeTokenKind::Escape, "\\n"));
+    CHECK(has(tokens, cpp, grove::CodeTokenKind::Attribute, "nodiscard"));
+    CHECK(has(tokens, cpp, grove::CodeTokenKind::Function, "f"));
+    grove::highlight_code_line(grove::CodeLanguage::Cpp, "auto s = R\"x(first", st);
+    CHECK(st.raw_string && st.raw_delimiter == "x");
+    const std::string after = "second)x\"; return 0;";
+    auto closing = grove::highlight_code_line(grove::CodeLanguage::Cpp, after, st);
+    CHECK(!st.raw_string && closing.front().kind == grove::CodeTokenKind::String && has(closing, after, grove::CodeTokenKind::Keyword, "return"));
+    const std::string define = "#define LIMIT 10";
+    CHECK(has(grove::highlight_code_line(grove::CodeLanguage::C, define, st), define, grove::CodeTokenKind::Constant, "LIMIT"));
+
+    grove::CodeLineState cm;
+    const std::string line = "if(NOT WIN32) message(STATUS \"${PROJECT_NAME} ok\") # note";
+    auto cmake = grove::highlight_code_line(grove::CodeLanguage::CMake, line, cm);
+    CHECK(has(cmake, line, grove::CodeTokenKind::Keyword, "if"));
+    CHECK(has(cmake, line, grove::CodeTokenKind::Keyword, "NOT"));
+    CHECK(has(cmake, line, grove::CodeTokenKind::Function, "message"));
+    CHECK(has(cmake, line, grove::CodeTokenKind::Attribute, "STATUS"));
+    CHECK(has(cmake, line, grove::CodeTokenKind::Variable, "${PROJECT_NAME}"));
+    CHECK(cmake.back().kind == grove::CodeTokenKind::Comment);
+    grove::highlight_code_line(grove::CodeLanguage::CMake, "#[[ long", cm);
+    CHECK(cm.bracket_level == 0 && cm.bracket_comment);
+    grove::highlight_code_line(grove::CodeLanguage::CMake, "comment ]] set(A 1)", cm);
+    CHECK(cm.bracket_level < 0);
+    CHECK(grove::code_language_for_path("/a/CMakeLists.txt") == grove::CodeLanguage::CMake);
+    CHECK(grove::code_language_for_path("tools.cmake") == grove::CodeLanguage::CMake);
+    CHECK(grove::code_language_from_name("cmake") == grove::CodeLanguage::CMake);
+    CHECK(grove::code_token_kind_from_name("namespace") == grove::CodeTokenKind::Namespace);
+    CHECK(!grove::code_token_kind_from_name("nope"));
+    CHECK(grove::code_token_kinds().size() == 15 && grove::code_languages().size() == 6);
+    CHECK(grove::bark::is_known_property("code-keyword") && grove::bark::is_known_property("code-mark"));
+}
+
 void test_code_and_file_inputs() {
     grove::Diagnostics d;
     grove::Document doc = grove::parse_markup(
@@ -861,6 +1085,11 @@ int main() {
     test_code_and_file_inputs();
     test_natives();
     test_images();
+    test_code_highlight_languages();
+    test_color_formats();
+    test_multi_cursor();
+    test_pages_and_modals();
+    test_alignment_and_math();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

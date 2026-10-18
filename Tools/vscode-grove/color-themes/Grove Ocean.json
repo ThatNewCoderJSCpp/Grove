@@ -1,0 +1,31 @@
+{
+    "name": "Grove Ocean",
+    "tags": "#7FDBCA",
+    "input tags": "#7FDBCA",
+    "custom tags": "#9CCFD8",
+    "unknown names": {
+        "color": "#D6E6F2",
+        "underline": true
+    },
+    "attributes": "#FFCB8B",
+    "attribute values": "#ADDB67",
+    "ids and classes": "#82AAFF",
+    "properties": "#80CBC4",
+    "variables": "#C3E0FF",
+    "variable declarations": "#D6E6F2",
+    "functions": "#82AAFF",
+    "values": "#C792EA",
+    "constants": "#F78C6C",
+    "numbers": "#F78C6C",
+    "units": "#C792EA",
+    "strings": "#ADDB67",
+    "escapes": "#FF9CAC",
+    "comments": {
+        "color": "#5F7E97",
+        "italic": true
+    },
+    "at-rules": "#C792EA",
+    "math commands": "#F78C6C",
+    "math functions": "#82AAFF",
+    "math names": "#C3E0FF"
+}

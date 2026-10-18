@@ -1,0 +1,39 @@
+body {
+    size: 640px 440px;
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 0;
+}
+
+.tabs {
+    gap: 4px;
+    padding: 8px 12px 0 12px;
+    background: #181825;
+}
+
+.tab {
+    margin: 0;
+    border-radius: 6px 6px 0 0;
+    background: transparent;
+    border-color: transparent;
+    color: #9399b2;
+}
+
+.tab:current {
+    background: #1e1e2e;
+    color: #cdd6f4;
+}
+
+page {
+    padding: 16px 20px;
+}
+
+.actions {
+    gap: 8px;
+    justify-content: end;
+}
+
+.primary {
+    background: #89b4fa;
+    color: #1e1e2e;
+}

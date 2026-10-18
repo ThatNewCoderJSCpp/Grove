@@ -1,12 +1,15 @@
 #include "grove/input/input.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <map>
 #include <set>
+#include <sstream>
+#include <vector>
 
 namespace grove {
 
@@ -105,7 +108,7 @@ bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
         case InputKind::String: return name == "value" || name == "maxlength" || name == "placeholder";
         case InputKind::Bool: return name == "checked" || name == "switch";
         case InputKind::Radio: return name == "name" || name == "value" || name == "checked";
-        case InputKind::Color: return name == "value";
+        case InputKind::Color: return name == "value" || name == "format" || name == "picker" || name == "alpha";
         case InputKind::Code: return name == "value" || name == "placeholder" || name == "name";
         case InputKind::File: return name == "value" || name == "placeholder" || name == "name";
     }
@@ -276,6 +279,184 @@ std::string format_color(const bark::Rgba& c) {
     return s;
 }
 
+namespace {
+
+std::string trim_number(double value, int decimals) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.*f", decimals, value);
+    std::string out(buf);
+    if (out.find('.') != std::string::npos) {
+        while (!out.empty() && out.back() == '0') out.pop_back();
+        if (!out.empty() && out.back() == '.') out.pop_back();
+    }
+    if (out == "-0") out = "0";
+    return out;
+}
+
+void to_hsl(const bark::Rgba& c, double& h, double& s, double& l) {
+    const double r = c.r / 255.0;
+    const double g = c.g / 255.0;
+    const double b = c.b / 255.0;
+    const double mx = std::max({ r, g, b });
+    const double mn = std::min({ r, g, b });
+    const double d = mx - mn;
+    l = (mx + mn) / 2.0;
+    h = 0.0;
+    s = 0.0;
+    if (d <= 0.0) return;
+    s = l > 0.5 ? d / (2.0 - mx - mn) : d / (mx + mn);
+    if (mx == r) h = std::fmod((g - b) / d + 6.0, 6.0);
+    else if (mx == g) h = (b - r) / d + 2.0;
+    else h = (r - g) / d + 4.0;
+    h *= 60.0;
+}
+
+std::uint8_t channel(double v) {
+    return static_cast<std::uint8_t>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0));
+}
+
+bark::Rgba from_hsl(double h, double s, double l, std::uint8_t alpha) {
+    h = std::fmod(std::fmod(h, 360.0) + 360.0, 360.0);
+    s = std::clamp(s, 0.0, 1.0);
+    l = std::clamp(l, 0.0, 1.0);
+    const double c = (1.0 - std::fabs(2.0 * l - 1.0)) * s;
+    const double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
+    const double m = l - c / 2.0;
+    double r = 0;
+    double g = 0;
+    double b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return bark::Rgba{ channel(r + m), channel(g + m), channel(b + m), alpha };
+}
+
+std::string lower_text(std::string_view text) {
+    std::string out;
+    for (char c : text) {
+        if (c != ' ' && c != '\t') out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+bool color_number(const std::string& text, double scale_percent, double& out) {
+    if (text.empty()) return false;
+    std::string body = text;
+    bool percent = false;
+    if (body.back() == '%') {
+        percent = true;
+        body.pop_back();
+    }
+    if (body.size() > 3 && body.compare(body.size() - 3, 3, "deg") == 0) body.resize(body.size() - 3);
+    char* end = nullptr;
+    const double v = std::strtod(body.c_str(), &end);
+    if (end == body.c_str() || *end != '\0') return false;
+    out = percent ? v / 100.0 * scale_percent : v;
+    return true;
+}
+
+} // namespace
+
+std::string format_color(const bark::Rgba& c, std::string_view format) {
+    std::string f = lower_text(format);
+    if (c.a != 255 && (f == "rgb" || f == "hsl")) f += 'a';
+    const std::string alpha = trim_number(c.a / 255.0, 2);
+    if (f == "rgb") return "rgb(" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b) + ")";
+    if (f == "rgba") return "rgba(" + std::to_string(c.r) + ", " + std::to_string(c.g) + ", " + std::to_string(c.b) + ", " + alpha + ")";
+    if (f == "hsl" || f == "hsla") {
+        double h = 0;
+        double s = 0;
+        double l = 0;
+        to_hsl(c, h, s, l);
+        const std::string body = trim_number(std::round(h), 0) + ", " + trim_number(std::round(s * 100.0), 0) + "%, " + trim_number(std::round(l * 100.0), 0) + "%";
+        return f == "hsl" ? "hsl(" + body + ")" : "hsla(" + body + ", " + alpha + ")";
+    }
+    return format_color(c);
+}
+
+std::optional<bark::Rgba> parse_color_text(std::string_view text) {
+    const std::string t = lower_text(text);
+    if (t.empty()) return std::nullopt;
+    const std::size_t open = t.find('(');
+    if (open == std::string::npos) {
+        std::string hex = t;
+        if (hex.front() != '#') hex.insert(hex.begin(), '#');
+        for (std::size_t i = 1; i < hex.size(); ++i) {
+            if (!std::isxdigit(static_cast<unsigned char>(hex[i]))) return std::nullopt;
+        }
+        return bark::parse_hex_color(hex);
+    }
+    if (t.back() != ')') return std::nullopt;
+    const std::string name = t.substr(0, open);
+    std::string inside = t.substr(open + 1, t.size() - open - 2);
+    for (char& c : inside) {
+        if (c == '/') c = ',';
+    }
+    std::vector<std::string> parts;
+    std::stringstream in(inside);
+    std::string part;
+    while (std::getline(in, part, ',')) parts.push_back(part);
+    const bool wants_alpha = name == "rgba" || name == "hsla";
+    if (name != "rgb" && name != "rgba" && name != "hsl" && name != "hsla") return std::nullopt;
+    if (parts.size() != 3 && parts.size() != 4) return std::nullopt;
+    if (wants_alpha && parts.size() != 4) return std::nullopt;
+    double a = 1.0;
+    if (parts.size() == 4 && !color_number(parts[3], 1.0, a)) return std::nullopt;
+    const std::uint8_t alpha = channel(a);
+    double v[3];
+    if (name[0] == 'r') {
+        for (int i = 0; i < 3; ++i) {
+            if (!color_number(parts[static_cast<std::size_t>(i)], 255.0, v[i])) return std::nullopt;
+        }
+        return bark::Rgba{ channel(v[0] / 255.0), channel(v[1] / 255.0), channel(v[2] / 255.0), alpha };
+    }
+    if (!color_number(parts[0], 360.0, v[0]) || !color_number(parts[1], 1.0, v[1]) || !color_number(parts[2], 1.0, v[2])) return std::nullopt;
+    if (parts[1].back() != '%') v[1] /= 100.0;
+    if (parts[2].back() != '%') v[2] /= 100.0;
+    return from_hsl(v[0], v[1], v[2], alpha);
+}
+
+ColorHsv color_to_hsv(const bark::Rgba& c) {
+    const double r = c.r / 255.0;
+    const double g = c.g / 255.0;
+    const double b = c.b / 255.0;
+    const double mx = std::max({ r, g, b });
+    const double mn = std::min({ r, g, b });
+    const double d = mx - mn;
+    ColorHsv out;
+    out.v = mx;
+    out.s = mx > 0.0 ? d / mx : 0.0;
+    if (d > 0.0) {
+        if (mx == r) out.h = std::fmod((g - b) / d + 6.0, 6.0);
+        else if (mx == g) out.h = (b - r) / d + 2.0;
+        else out.h = (r - g) / d + 4.0;
+        out.h *= 60.0;
+    }
+    return out;
+}
+
+bark::Rgba color_from_hsv(const ColorHsv& hsv, std::uint8_t alpha) {
+    const double h = std::fmod(std::fmod(hsv.h, 360.0) + 360.0, 360.0);
+    const double s = std::clamp(hsv.s, 0.0, 1.0);
+    const double v = std::clamp(hsv.v, 0.0, 1.0);
+    const double c = v * s;
+    const double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
+    const double m = v - c;
+    double r = 0;
+    double g = 0;
+    double b = 0;
+    if (h < 60) { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return bark::Rgba{ channel(r + m), channel(g + m), channel(b + m), alpha };
+}
+
 double InputRange::clamp(double value) const noexcept {
     if (has_min && value < min) value = min;
     if (has_max && value > max) value = max;
@@ -339,7 +520,7 @@ std::optional<bool> input_bool(const Node& node) {
 std::optional<bark::Rgba> input_color(const Node& node) {
     if (!kind_if(node, { InputKind::Color })) return std::nullopt;
     if (const Attribute* a = node.find_attribute("value")) {
-        if (const auto c = bark::parse_hex_color(a->value)) return c;
+        if (const auto c = parse_color_text(a->value)) return c;
     }
     return bark::Rgba{ 0, 0, 0, 255 };
 }
@@ -454,7 +635,7 @@ std::string input_text(const Node& node) {
         case InputKind::String:
         case InputKind::Code:
         case InputKind::File: return *input_string(node);
-        case InputKind::Color: return format_color(*input_color(node));
+        case InputKind::Color: return format_color(*input_color(node), node.attribute_or("format", "hex"));
         case InputKind::Bool:
         case InputKind::Radio: return *input_bool(node) ? "true" : "false";
     }
@@ -480,9 +661,10 @@ bool input_accepts(const Node& node, std::string_view current, std::string_view 
         }
         case InputKind::Color: {
             if (ch.size() != 1) return false;
+            if (!current.empty() && current.front() == '#') return is_hex(c) && current.size() - 1 < 8;
             if (c == '#') return current.empty();
-            const std::size_t hex = current.size() - (!current.empty() && current.front() == '#' ? 1 : 0);
-            return is_hex(c) && hex < 8;
+            if (current.size() >= 40) return false;
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '(' || c == ')' || c == ',' || c == '.' || c == '%' || c == ' ' || c == '/' || c == '#';
         }
         case InputKind::String: {
             if (ch.size() == 1 && (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)) return false;
@@ -513,9 +695,7 @@ bool commit_input_text(Document& document, Node& node, std::string_view text) {
         case InputKind::Code:
         case InputKind::File: return set_input_string(document, node, std::string(text));
         case InputKind::Color: {
-            std::string hex(text);
-            if (hex.empty() || hex.front() != '#') hex.insert(hex.begin(), '#');
-            const auto c = bark::parse_hex_color(hex);
+            const auto c = parse_color_text(text);
             return c && set_input_color(document, node, *c);
         }
         default: return false;
@@ -589,8 +769,8 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
             }
             case InputKind::Color: {
                 if (const Attribute* a = node.find_attribute("value")) {
-                    if (!bark::parse_hex_color(a->value) || a->value.empty() || a->value.front() != '#') {
-                        diagnostics.error(file, a->span, "value=\"" + a->value + "\" is not a color like #rrggbb");
+                    if (!parse_color_text(a->value)) {
+                        diagnostics.error(file, a->span, "value=\"" + a->value + "\" is not a color like #rrggbb, rgb(...) or hsl(...)");
                     }
                 }
                 break;
