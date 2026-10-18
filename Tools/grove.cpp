@@ -51,6 +51,7 @@ void print_usage(std::ostream& os) {
           "  --event \"T S\"   with exec: dispatch event T to the first element matching selector S (repeatable)\n"
           "  --for <ms>      with exec: keep running timers for this long (default 0)\n"
           "  --tools         print where grove looks for walnut, the compilers and its headers\n"
+          "  --full          with dump and exec: print text and attribute values in full instead of shortening them\n"
           "  -v, --verbose   print every compiler command\n"
           "  -q, --quiet     only print errors\n";
 }
@@ -128,6 +129,7 @@ int main(int argc, char** argv) {
     bool no_scripts = false;
     bool show_tools = false;
     bool verbose = false;
+    bool full = false;
     double run_for = 0.0;
     std::vector<std::string> events;
     for (int i = 2; i < argc; ++i) {
@@ -139,6 +141,7 @@ int main(int argc, char** argv) {
         else if (a == "--no-scripts") no_scripts = true;
         else if (a == "--tools") show_tools = true;
         else if (a == "-v" || a == "--verbose") verbose = true;
+        else if (a == "--full") full = true;
         else if (a == "--event" && i + 1 < argc) events.push_back(argv[++i]);
         else if (a == "--for" && i + 1 < argc) {
             const auto ms = grove::parse_float(argv[++i]);
@@ -245,7 +248,7 @@ int main(int argc, char** argv) {
     }
     if (command == "dump") {
         print_diagnostics(project.diagnostics, true);
-        grove::dump(project.document.root(), std::cout);
+        grove::dump(project.document.root(), std::cout, full ? grove::DumpOptions::full() : grove::DumpOptions{});
         return project.diagnostics.ok() ? 0 : 1;
     }
     if (command == "styles") {
@@ -298,7 +301,7 @@ int main(int argc, char** argv) {
             if (now >= until || next > until) break;
             std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(std::max(0.0, std::min(next, until) - now)));
         }
-        grove::dump(doc.root(), std::cout);
+        grove::dump(doc.root(), std::cout, full ? grove::DumpOptions::full() : grove::DumpOptions{});
         print_diagnostics(project.diagnostics, quiet);
         return project.diagnostics.ok() ? 0 : 1;
     }

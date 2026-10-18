@@ -244,7 +244,7 @@ namespace {
 std::string escape_for_dump(const std::string& text, std::size_t limit) {
     std::string out;
     for (char c : text) {
-        if (out.size() >= limit) {
+        if (limit != 0 && out.size() >= limit) {
             out += "...";
             break;
         }
@@ -259,22 +259,26 @@ std::string escape_for_dump(const std::string& text, std::size_t limit) {
 } // namespace
 
 void dump(const Node& node, std::ostream& os, int depth) {
+    dump(node, os, DumpOptions{}, depth);
+}
+
+void dump(const Node& node, std::ostream& os, const DumpOptions& options, int depth) {
     const std::string indent(static_cast<std::size_t>(depth) * 2, ' ');
     if (node.is_text()) {
-        os << indent << "text \"" << escape_for_dump(node.text(), 60) << "\"\n";
+        os << indent << "text \"" << escape_for_dump(node.text(), options.text_limit) << "\"\n";
         return;
     }
     if (node.is_raw()) {
-        os << indent << "raw \"" << escape_for_dump(node.text(), 60) << "\"\n";
+        os << indent << "raw \"" << escape_for_dump(node.text(), options.text_limit) << "\"\n";
         return;
     }
     os << indent << '<' << node.tag();
     for (const Attribute& a : node.attributes()) {
         os << ' ' << a.name;
-        if (a.has_value) os << "=\"" << escape_for_dump(a.value, 40) << '"';
+        if (a.has_value) os << "=\"" << escape_for_dump(a.value, options.attribute_limit) << '"';
     }
     os << ">  @" << node.span().begin.line << ':' << node.span().begin.column << '\n';
-    for (const auto& c : node.children()) dump(*c, os, depth + 1);
+    for (const auto& c : node.children()) dump(*c, os, options, depth + 1);
 }
 
 } // namespace grove

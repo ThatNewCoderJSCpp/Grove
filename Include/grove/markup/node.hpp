@@ -182,7 +182,15 @@ private:
     std::uint64_t m_revision = 0;
 };
 
+struct DumpOptions {
+    std::size_t text_limit = 60;
+    std::size_t attribute_limit = 40;
+
+    static DumpOptions full() { return DumpOptions{ 0, 0 }; }
+};
+
 void dump(const Node& node, std::ostream& os, int depth = 0);
+void dump(const Node& node, std::ostream& os, const DumpOptions& options, int depth = 0);
 
 } // namespace grove
 

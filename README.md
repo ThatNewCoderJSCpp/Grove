@@ -68,7 +68,7 @@ Without the runtime, `grove_core` only needs Fizmo's headers (MathText is header
 | Command | |
 |---|---|
 | `grove check doc.grove` | parse markup, Bark, math and scripts; print every diagnostic with file:line:column |
-| `grove dump doc.grove` | the element tree |
+| `grove dump doc.grove [--full]` | the element tree; `--full` prints long text and attribute values without shortening them |
 | `grove styles doc.grove` | the merged Bark stylesheet |
 | `grove computed doc.grove` | the computed style of every element |
 | `grove math doc.grove` | every `<math>` block converted to brace form |

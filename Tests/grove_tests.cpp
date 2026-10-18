@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1220,6 +1221,24 @@ void test_keymap() {
     CHECK(grove::keymap_text(map) == "add-caret=Ctrl+Alt+Click; copy=Ctrl+Shift+C; redo=none");
 }
 
+void test_dump_options() {
+    grove::Diagnostics d;
+    const std::string path = "/home/runner/work/Canopy/Canopy/Tests/hello/world.cpp";
+    const std::string words = "one two three four five six seven eight nine ten eleven twelve thirteen";
+    grove::Document doc = grove::parse_markup("<body><item data-path=\"" + path + "\">" + words + "</item></body>", "t.grove", d);
+    CHECK(d.ok());
+    std::ostringstream shortened;
+    grove::dump(doc.root(), shortened);
+    CHECK(shortened.str().find(path) == std::string::npos && shortened.str().find("...") != std::string::npos);
+    std::ostringstream full;
+    grove::dump(doc.root(), full, grove::DumpOptions::full());
+    CHECK(full.str().find("data-path=\"" + path + "\"") != std::string::npos);
+    CHECK(full.str().find(words) != std::string::npos && full.str().find("...") == std::string::npos);
+    std::ostringstream wider;
+    grove::dump(doc.root(), wider, grove::DumpOptions{ 0, 100 });
+    CHECK(wider.str().find(path) != std::string::npos);
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1262,6 +1281,7 @@ int main() {
     test_alignment_and_math();
     test_zoom_and_select();
     test_keymap();
+    test_dump_options();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }
