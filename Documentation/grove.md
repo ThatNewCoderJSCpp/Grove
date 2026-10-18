@@ -154,6 +154,11 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `min`, `max` | integer, float, slider | the value is clamped into range; a slider defaults to 0..100 |
 | `step` | integer, float, slider | Up/Down step for integer and float; a slider snaps to it |
 | `maxlength` | string | longer text is cut |
+| `allow` | string | only these kinds of characters can be typed or pasted: `letters`, `digits`, `numbers`, `spaces`, `newlines`, `punctuation`, `symbols`, `special`, `uppercase`, `lowercase`, `emoji`, `ascii`, `hex`, `word`, separated by spaces |
+| `block` | string | these kinds can't be typed; `special` (punctuation and symbols) still lets `.` through so decimals work |
+| `chars` | string | single characters let through on top of `allow` and `block`, like `chars="'-"` |
+| `block-chars` | string | single characters that are always refused |
+| `pattern` | string | a regular expression the whole text has to match before it's accepted; until it does, Enter leaves the field red. See [Fizmo's regex guide](https://github.com/ThatNewCoderJSCpp/Fizmo/blob/main/Documentation/regex.md) |
 | `placeholder` | integer, float, string | shown while empty |
 | `checked` | bool, radio | on |
 | `switch` | bool | draw it as a switch instead of a checkbox |
@@ -186,6 +191,14 @@ Type safety holds at every layer:
 - **C++.** `grove::input_value<T>(node)` only compiles for `std::int64_t`, `double`, `bool`, `std::string` and `bark::Rgba`, and returns empty when `T` isn't that input's type. `set_input_value<T>` refuses the wrong type.
 - **C and Walnut.** Every getter and setter is typed (`grove_get_integer_by_id` returns `int64_t`, `grove_set_float_by_id` takes `double`, ...). A setter called on the wrong kind of input returns `false` and changes nothing; a getter returns 0, `false` or `""`. `grove_input_kind_by_id` tells you the kind. In Walnut, using the result as the wrong type is a compile error.
 
+```html
+<input_string id="price" block="letters special spaces" placeholder="0.00" />
+<input_string id="name" allow="letters spaces" chars="'-" />
+<input_string id="code" pattern="[A-Z]{3}-\d{4}" placeholder="ABC-1234" />
+```
+
+`allow`, `block`, `chars` and `block-chars` build a Fizmo `CharSet` (`grove::input_charset(node)` gives it to C++), and `pattern` is a Fizmo `Regex` (`grove::input_pattern(node)`); `grove check` reports a pattern that doesn't work and a kind it doesn't know. Scripts get the same classes: C++ through `fizmo::Regex`, `fizmo::Pattern` and `fizmo::CharSet`, and Walnut through `import module.regex`.
+
 `<input type="integer">` (and `float`, `string`, `bool`, `radio`, `slider`, `color`) still works and means the same as the matching `input_*` element; `checkbox`, `slider` and `color` are kept as short names for `input_bool`, `input_slider` and `input_color`.
 
 `grove inputs doc.grove` lists every input with its type and current value.
@@ -212,6 +225,12 @@ Type safety holds at every layer:
 | `placeholder` | shown while it's empty |
 | `mark` | token kinds like `"keyword string"`: draws a box behind every token of those kinds, to show what a color changes |
 | `caret` | `line:column` (1-based) moves the caret there and scrolls to it whenever the attribute changes; anything after a `#` is ignored, so `"12:1#2"` moves there again |
+| `semantic` | colors from a compiler, drawn over the built-in highlighting; build it with `grove::code_spans_text()` (see below) |
+| `problems` | errors and warnings to underline; build it with `grove::code_problems_text()` |
+| `hover` | what to show in the popup the editor asked for with a `hover` event, see [Hovers and Ctrl+click](#hovers-and-ctrlclick) |
+| `links` | spans that Ctrl+click goes somewhere from (built like `semantic`); they're underlined while Ctrl is held over them |
+| `link-words` | `true` treats every word as a possible link, for an app that works out where it goes when it's clicked |
+| `color-swatches` | `false` turns off the color swatches in Bark and Grove |
 
 Keys: arrows, Home (to the indent, then the line start), End, Page Up/Down, Ctrl+Home/End, Ctrl+Left/Right by word, Shift with any of them to select; Backspace and Delete (Ctrl for a whole word; Backspace between `()`, `[]`, `{}`, `""` or `''` removes both); Enter keeps the indent and indents after `{`, `(` or `[`; Tab and Shift+Tab indent and outdent (every selected line when the selection spans lines); Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V (with nothing selected, copy and cut take the whole line); Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z undo and redo. Click to move the caret, drag or Shift+click to select, double-click selects a word, and the wheel scrolls (Shift+wheel sideways).
 
@@ -226,7 +245,39 @@ input_code {
 }
 ```
 
-The kinds are `keyword`, `type`, `function`, `namespace`, `variable`, `constant`, `string`, `escape`, `number`, `comment`, `preprocessor`, `operator`, `tag`, `attribute` and `property`. C and C++ pick out namespaces (`std::`), standard types, escapes in strings, raw strings, `[[attributes]]` and macros; CMake (`CMakeLists.txt` and `.cmake`) colors commands, `${variables}`, `$<generator expressions>`, argument keywords like `PRIVATE`, and `#[[ ]]` comments. From C++, `grove::code_token_kinds()`, `grove::code_languages()` and `grove::code_token_kind_from_name()` list and look them up.
+The kinds are `keyword`, `type`, `function`, `namespace`, `variable`, `constant`, `string`, `escape`, `number`, `comment`, `preprocessor`, `operator`, `tag`, `attribute` and `property`, plus finer ones split from those: `control-keyword` (`if`, `return`), `builtin-type` (`int`, `bool`), `this`, `cast` (`static_cast`), and for Walnut `declaration`, `self`, `builtin-operator`, `overloaded-operator`, `enum-member`, `template-scope`, `variable-template` and `unresolved`. These are the same groups the Walnut VS Code extension colors. One you don't set looks like the kind it was split from (`code-control-keyword` falls back to `code-keyword`, `code-declaration` to `code-variable`, and so on; `grove::code_token_fallback()` says which), so older themes keep working. Walnut is highlighted the way the extension's grammar does it: `int: x` makes `x` a declaration, `end function name`, `operator(+)`, `traits<T>::` as a template scope, nested `/* */` comments and `` `${...}` `` strings. C and C++ pick out namespaces (`std::`), standard types, escapes in strings, raw strings, `[[attributes]]` and macros; CMake (`CMakeLists.txt` and `.cmake`) colors commands, `${variables}`, `$<generator expressions>`, argument keywords like `PRIVATE`, and `#[[ ]]` comments. From C++, `grove::code_token_kinds()`, `grove::code_languages()`, `grove::code_token_kinds_for()` and `grove::code_token_kind_from_name()` list and look them up.
+
+Some colors need a compiler: whether a name is an enum member, an overloaded operator or something that doesn't exist. Give those to the editor with the `semantic` attribute and it draws them over its own highlighting; `problems` underlines errors (`code-error-underline`) and warnings (`code-warning-underline`), and colors the text of a line with an error with `code-error-line` when that's set. Each line is matched by its text, so when lines are added above, the colors stay on the right line until the next result comes in, and a line that was edited goes back to the built-in colors.
+
+```cpp
+std::vector<grove::CodeSpan> spans = { { 3, 4, 3, grove::CodeTokenKind::EnumMember } };
+std::vector<grove::CodeProblem> problems = { { 5, 4, 4, grove::CodeProblemKind::Error } };
+editor->set_attribute("semantic", grove::code_spans_text(lines, spans));
+editor->set_attribute("problems", grove::code_problems_text(lines, problems));
+```
+
+A span or problem is a line, a byte column, a length (all from 0) and what it is; `lines` is the text the compiler saw, one string per line. `grove::CodeOverlay` reads those back, and `grove::overlay_code_tokens()` lays one set of tokens over another. `mark` also takes `error-underline`, `warning-underline` and `error-line`.
+
+#### Hovers and Ctrl+click
+
+Resting the mouse on a character for a moment fires `hover` with `x()` as the line and `y()` as the column (both from 1, like `cursor`). The editor clears its `hover` attribute first; set it in the handler and a popup opens over the text, like VS Code's. Its first line is `line column length` (from 0, in bytes) for the stretch of text it's about, and the rest is what to show:
+
+~~~text
+12 4 5
+```walnut
+function scale(T: value, int: times) -> T
+```
+Scales a value.
+**Value:** `6` · [color](color:#ff8800) · [next](overload:next)
+---
+Defined in [geo.wal:3](open:2:4:/home/me/geo.wal)
+~~~
+
+A fence starts a block of code colored like the editor's own (name the language after the backticks to pick another), `---` draws a line, `**bold**` and `` `code` `` work inside text, and `[label](action)` is a link: clicking it fires `hover_action` with the action in `key()`. An action starting with `color:` draws a swatch of that color instead of a label. The popup stays while the mouse is on the text or inside the popup, and goes away when the mouse leaves, a key is pressed or the editor scrolls. `code-hover` in Bark sets its background.
+
+Ctrl+click (Cmd+click on a Mac) fires `goto` with the same `x()` and `y()`, for going to a definition. Holding Ctrl over one of the editor's `links` (or any word, with `link-words="true"`) underlines it and turns the mouse into a pointer.
+
+In Bark and Grove, every color written as `#rrggbb`, `rgb()`, `rgba()`, `hsl()` or `hsla()` after a `:` or `=` gets a small swatch beside it. Clicking the swatch opens the same picker as `input_color`, and picking a color rewrites the text in the format it was written in (or the one clicked in the picker); Escape puts the old text back.
 
 ### File picker
 
@@ -377,6 +428,9 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `input` | an input's value changes while editing | |
 | `change` | an input's value is committed (Enter, a click, leaving the field, picking a file) | |
 | `cursor` | the caret of an `input_code` moves | `x()` is the line, `y()` the column, both from 1 |
+| `hover` | the mouse rests on a character of an `input_code` | `x()` is the line, `y()` the column; answer by setting its `hover` attribute |
+| `goto` | Ctrl+click in an `input_code` | `x()` is the line, `y()` the column |
+| `hover_action` | a link in an `input_code`'s hover popup is clicked | `key()` is the link's action |
 | `resize` | a window changes size; for a `<window>` it goes to that `<window>` and bubbles | `width()`, `height()`, or `window_width()` on the target |
 | `load` | after the scripts have run | |
 | `open` | a `<window>` opens; the target is the `<window>` | |

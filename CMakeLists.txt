@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.7 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.8 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -11,8 +11,8 @@ option(GROVE_BUILD_RUNTIME "Build grove_runtime, which opens documents in a Fizm
 option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\"> blocks" ON)
 option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.2.26" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.1.9" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.2.27" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.10" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -84,6 +84,11 @@ target_include_directories(grove_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Include"
     "${GROVE_GENERATED_DIR}")
 target_link_libraries(grove_core PUBLIC fizmo::headers ${CMAKE_DL_LIBS})
+if(TARGET fizmo::string)
+    target_link_libraries(grove_core PUBLIC fizmo::string)
+else()
+    target_link_libraries(grove_core PUBLIC fizmo::fizmo)
+endif()
 target_compile_definitions(grove_core PRIVATE "GROVE_SOURCE_INCLUDE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Include\"")
 set_target_properties(grove_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 grove_warnings(grove_core)

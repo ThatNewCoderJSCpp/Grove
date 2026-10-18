@@ -4,11 +4,14 @@
 #include "../markup/node.hpp"
 #include "../bark/value.hpp"
 
+#include <fizmo/../../Source/String/regex.hpp>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace grove {
 
@@ -40,6 +43,21 @@ std::string format_float(double value);
 std::string format_color(const bark::Rgba& color);
 std::string format_color(const bark::Rgba& color, std::string_view format);
 std::optional<bark::Rgba> parse_color_text(std::string_view text);
+
+struct CodeColor {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    bark::Rgba color;
+    std::string format;
+};
+
+std::vector<CodeColor> find_code_colors(std::string_view line);
+
+std::optional<fizmo::CharKind> char_kind_from_name(std::string_view name) noexcept;
+fizmo::CharSet input_charset(const Node& node);
+bool input_has_charset(const Node& node) noexcept;
+std::optional<fizmo::Regex> input_pattern(const Node& node);
+bool input_text_valid(const Node& node, std::string_view text);
 
 struct ColorHsv {
     double h = 0.0;

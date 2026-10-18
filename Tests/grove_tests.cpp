@@ -742,12 +742,12 @@ void test_code_buffer() {
 void test_code_highlight() {
     grove::CodeLineState st;
     auto kinds = grove::highlight_code_line(grove::CodeLanguage::Cpp, "int x = 42; // hi", st);
-    CHECK(!kinds.empty() && kinds.front().kind == grove::CodeTokenKind::Type);
+    CHECK(!kinds.empty() && kinds.front().kind == grove::CodeTokenKind::BuiltinType);
     CHECK(kinds.back().kind == grove::CodeTokenKind::Comment);
     grove::highlight_code_line(grove::CodeLanguage::C, "/* open", st);
     CHECK(st.block_comment);
     auto closing = grove::highlight_code_line(grove::CodeLanguage::C, "still */ return", st);
-    CHECK(!st.block_comment && closing.front().kind == grove::CodeTokenKind::Comment && closing.back().kind == grove::CodeTokenKind::Keyword);
+    CHECK(!st.block_comment && closing.front().kind == grove::CodeTokenKind::Comment && closing.back().kind == grove::CodeTokenKind::ControlKeyword);
     grove::CodeLineState ws;
     auto wal = grove::highlight_code_line(grove::CodeLanguage::Walnut, "function main() -> int {", ws);
     CHECK(wal.front().kind == grove::CodeTokenKind::Keyword);
@@ -961,7 +961,7 @@ void test_code_highlight_languages() {
     CHECK(st.raw_string && st.raw_delimiter == "x");
     const std::string after = "second)x\"; return 0;";
     auto closing = grove::highlight_code_line(grove::CodeLanguage::Cpp, after, st);
-    CHECK(!st.raw_string && closing.front().kind == grove::CodeTokenKind::String && has(closing, after, grove::CodeTokenKind::Keyword, "return"));
+    CHECK(!st.raw_string && closing.front().kind == grove::CodeTokenKind::String && has(closing, after, grove::CodeTokenKind::ControlKeyword, "return"));
     const std::string define = "#define LIMIT 10";
     CHECK(has(grove::highlight_code_line(grove::CodeLanguage::C, define, st), define, grove::CodeTokenKind::Constant, "LIMIT"));
 
@@ -983,8 +983,106 @@ void test_code_highlight_languages() {
     CHECK(grove::code_language_from_name("cmake") == grove::CodeLanguage::CMake);
     CHECK(grove::code_token_kind_from_name("namespace") == grove::CodeTokenKind::Namespace);
     CHECK(!grove::code_token_kind_from_name("nope"));
-    CHECK(grove::code_token_kinds().size() == 15 && grove::code_languages().size() == 6);
+    CHECK(grove::code_token_kinds().size() == 27 && grove::code_languages().size() == 6);
     CHECK(grove::bark::is_known_property("code-keyword") && grove::bark::is_known_property("code-mark"));
+}
+
+void test_walnut_highlight_detail() {
+    using K = grove::CodeTokenKind;
+    auto kind_of = [](const std::vector<grove::CodeToken>& tokens, const std::string& line, const std::string& text, std::size_t nth = 0) {
+        std::size_t from = 0;
+        std::size_t at = std::string::npos;
+        for (std::size_t k = 0; k <= nth; ++k) {
+            at = line.find(text, from);
+            if (at == std::string::npos) return K::Plain;
+            from = at + 1;
+        }
+        for (const auto& t : tokens) {
+            if (t.begin <= at && at < t.end) return t.end >= at + text.size() ? t.kind : K::Plain;
+        }
+        return K::Plain;
+    };
+    grove::CodeLineState st;
+    const std::string a = "    const int: digits = float_traits<T>::digits;";
+    auto ta = grove::highlight_code_line(grove::CodeLanguage::Walnut, a, st);
+    CHECK(kind_of(ta, a, "const") == K::Keyword);
+    CHECK(kind_of(ta, a, "int") == K::BuiltinType);
+    CHECK(kind_of(ta, a, "digits") == K::Declaration);
+    CHECK(kind_of(ta, a, "float_traits") == K::TemplateScope);
+    CHECK(kind_of(ta, a, "T") == K::Type);
+    CHECK(kind_of(ta, a, "digits", 1) == K::Variable);
+    CHECK(kind_of(ta, a, "=") == K::BuiltinOperator);
+    const std::string b = "    if (times > LIMIT) then { return static_cast<T>(0); }";
+    auto tb = grove::highlight_code_line(grove::CodeLanguage::Walnut, b, st);
+    CHECK(kind_of(tb, b, "if") == K::ControlKeyword && kind_of(tb, b, "then") == K::ControlKeyword && kind_of(tb, b, "return") == K::ControlKeyword);
+    CHECK(kind_of(tb, b, "static_cast") == K::Cast);
+    CHECK(kind_of(tb, b, ">") == K::BuiltinOperator);
+    const std::string c = "bool: ok = true && this != nullptr && self.x;";
+    auto tc = grove::highlight_code_line(grove::CodeLanguage::Walnut, c, st);
+    CHECK(kind_of(tc, c, "this") == K::ThisKeyword && kind_of(tc, c, "self") == K::SelfKeyword && kind_of(tc, c, "true") == K::Constant);
+    const std::string d = "operator(+) function(const Vec&: other) const -> Vec {";
+    auto td = grove::highlight_code_line(grove::CodeLanguage::Walnut, d, st);
+    CHECK(kind_of(td, d, "(+)") == K::OverloadedOperator && kind_of(td, d, "other") == K::Declaration && kind_of(td, d, "->") == K::BuiltinOperator);
+    const std::string e = "} end function scale";
+    auto te = grove::highlight_code_line(grove::CodeLanguage::Walnut, e, st);
+    CHECK(kind_of(te, e, "end") == K::ControlKeyword && kind_of(te, e, "function") == K::Keyword && kind_of(te, e, "scale") == K::Function);
+    const std::string f = "namespace geo { std::io::println(`a ${x} \\t";
+    auto tf = grove::highlight_code_line(grove::CodeLanguage::Walnut, f, st);
+    CHECK(kind_of(tf, f, "geo") == K::Namespace && kind_of(tf, f, "io") == K::Namespace && kind_of(tf, f, "println") == K::Function);
+    CHECK(kind_of(tf, f, "x") == K::Variable && kind_of(tf, f, "\\t") == K::Escape && st.string_open);
+    auto tg = grove::highlight_code_line(grove::CodeLanguage::Walnut, "still` /* a /* b */", st);
+    CHECK(!st.string_open && tg.front().kind == K::String && st.comment_depth == 1);
+    grove::highlight_code_line(grove::CodeLanguage::Walnut, "c */ int", st);
+    CHECK(st.comment_depth == 0);
+    CHECK(grove::code_token_fallback(K::ControlKeyword) == K::Keyword && grove::code_token_fallback(K::EnumMember) == K::Constant);
+    CHECK(grove::code_token_kind_from_name("built-in type") == K::BuiltinType);
+    CHECK(grove::code_token_kind_from_name("control keyword") == K::ControlKeyword);
+    CHECK(grove::code_token_kinds_for(grove::CodeLanguage::Walnut).size() == 23);
+
+    const std::vector<std::string> lines = { "int: a = b;", "", "int: a = b;" };
+    const std::string spans = grove::code_spans_text(lines, { { 0, 5, 1, K::Declaration }, { 0, 9, 1, K::Unresolved }, { 2, 9, 1, K::EnumMember } });
+    const std::string problems = grove::code_problems_text(lines, { { 0, 9, 1, grove::CodeProblemKind::Error }, { 2, 0, 3, grove::CodeProblemKind::Warning } });
+    grove::CodeOverlay overlay;
+    overlay.set_spans(spans);
+    overlay.set_problems(problems);
+    CHECK(overlay.spans(0, lines[0]).size() == 2 && overlay.spans(2, lines[2]).size() == 1 && overlay.spans(3, lines[2]).front().kind == K::EnumMember);
+    CHECK(overlay.spans(0, "int: a = c;").empty());
+    CHECK(overlay.has_error(1, lines[0]) && !overlay.has_error(2, lines[2]) && overlay.problems(2, lines[2]).front().kind == grove::CodeProblemKind::Warning);
+    grove::CodeLineState fresh;
+    auto base = grove::highlight_code_line(grove::CodeLanguage::Walnut, lines[0], fresh);
+    auto merged = grove::overlay_code_tokens(base, overlay.spans(0, lines[0]), lines[0].size());
+    CHECK(kind_of(merged, lines[0], "b") == K::Unresolved && kind_of(merged, lines[0], "int") == K::BuiltinType);
+    CHECK(grove::bark::is_known_property("code-control-keyword") && grove::bark::is_known_property("code-error-line"));
+
+    const auto colors = grove::find_code_colors("#add .row:hover { color: #ff0000; border-color: rgba(0, 0, 255, 0.5) } // #fff");
+    CHECK(colors.size() == 2 && colors[0].format == "hex" && colors[0].color.r == 255 && colors[1].format == "rgba" && colors[1].color.b == 255 && colors[1].color.a < 200);
+    CHECK(grove::find_code_colors("#scores .row { }").empty() && grove::find_code_colors("$accent = #89b4fa;").size() == 1);
+    CHECK(grove::find_code_colors("<p style=\"background: hsl(120, 100%, 50%)\">").size() == 1 && grove::bark::is_known_property("code-hover"));
+}
+
+void test_input_character_rules() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup("<body><input_string id=\"price\" block=\"letters special spaces\" /><input_string id=\"name\" allow=\"letters spaces\" chars=\"'-\" /><input_string id=\"code\" pattern=\"[A-Z]{3}-\\d{4}\" value=\"ABC-1234\" /><input_string id=\"bad\" pattern=\"(oops\" allow=\"lettres\" /></body>", "t.grove", d);
+    CHECK(d.ok());
+    grove::Node* price = doc.find_by_id("price");
+    grove::Node* name = doc.find_by_id("name");
+    grove::Node* code = doc.find_by_id("code");
+    CHECK(price && name && code);
+    CHECK(grove::input_accepts(*price, "3", "1") && grove::input_accepts(*price, "3", ".") && !grove::input_accepts(*price, "3", "a") && !grove::input_accepts(*price, "3", "$") && !grove::input_accepts(*price, "3", " "));
+    CHECK(grove::input_accepts(*name, "", "\xC3\xA9") && grove::input_accepts(*name, "", "'") && !grove::input_accepts(*name, "", "7"));
+    CHECK(!grove::commit_input_text(doc, *code, "AB-12") && grove::input_string(*code) == "ABC-1234");
+    CHECK(grove::commit_input_text(doc, *code, "XYZ-0001") && grove::input_string(*code) == "XYZ-0001");
+    CHECK(grove::input_charset(*price).describe().find("letters") != std::string::npos);
+    grove::Diagnostics checks;
+    grove::check_inputs(doc, checks);
+    bool pattern_error = false;
+    bool kind_warning = false;
+    for (const auto& item : checks.items()) {
+        pattern_error = pattern_error || item.message.find("never closed") != std::string::npos;
+        kind_warning = kind_warning || item.message.find("lettres") != std::string::npos;
+    }
+    CHECK(pattern_error && kind_warning);
+    CHECK(grove::char_kind_from_name("special") == fizmo::CharKind::special && !grove::char_kind_from_name("nope"));
 }
 
 void test_code_and_file_inputs() {
@@ -1086,6 +1184,8 @@ int main() {
     test_natives();
     test_images();
     test_code_highlight_languages();
+    test_walnut_highlight_detail();
+    test_input_character_rules();
     test_color_formats();
     test_multi_cursor();
     test_pages_and_modals();

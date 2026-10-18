@@ -98,14 +98,14 @@ std::string format_integer(std::int64_t value) { return std::to_string(value); }
 std::string describe(const Node& node) { return "<" + node.tag() + (node.id().empty() ? "" : " id=\"" + node.id() + "\"") + ">"; }
 
 bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
-    static const std::set<std::string> specific = { "value", "min", "max", "step", "maxlength", "placeholder", "checked", "name", "type", "switch" };
+    static const std::set<std::string> specific = { "value", "min", "max", "step", "maxlength", "placeholder", "checked", "name", "type", "switch", "allow", "block", "chars", "block-chars", "pattern" };
     if (!specific.count(name)) return true;
     if (name == "type") return generic;
     switch (kind) {
         case InputKind::Integer:
         case InputKind::Float: return name == "value" || name == "min" || name == "max" || name == "step" || name == "placeholder";
         case InputKind::Slider: return name == "value" || name == "min" || name == "max" || name == "step";
-        case InputKind::String: return name == "value" || name == "maxlength" || name == "placeholder";
+        case InputKind::String: return name == "value" || name == "maxlength" || name == "placeholder" || name == "allow" || name == "block" || name == "chars" || name == "block-chars" || name == "pattern";
         case InputKind::Bool: return name == "checked" || name == "switch";
         case InputKind::Radio: return name == "name" || name == "value" || name == "checked";
         case InputKind::Color: return name == "value" || name == "format" || name == "picker" || name == "alpha";
@@ -375,6 +375,98 @@ std::string format_color(const bark::Rgba& c, std::string_view format) {
         return f == "hsl" ? "hsl(" + body + ")" : "hsla(" + body + ", " + alpha + ")";
     }
     return format_color(c);
+}
+
+std::optional<fizmo::CharKind> char_kind_from_name(std::string_view name) noexcept {
+    using K = fizmo::CharKind;
+    static const std::pair<const char*, K> names[] = {
+        { "digits", K::digits }, { "digit", K::digits }, { "numbers", K::numbers }, { "number", K::numbers }, { "letters", K::letters },
+        { "letter", K::letters }, { "uppercase", K::uppercase }, { "upper", K::uppercase }, { "lowercase", K::lowercase }, { "lower", K::lowercase },
+        { "spaces", K::spaces }, { "space", K::spaces }, { "whitespace", K::spaces }, { "newlines", K::newlines }, { "newline", K::newlines },
+        { "punctuation", K::punctuation }, { "symbols", K::symbols }, { "symbol", K::symbols }, { "special", K::special }, { "emoji", K::emoji },
+        { "control", K::control }, { "ascii", K::ascii }, { "hex", K::hex_digits }, { "hex-digits", K::hex_digits }, { "word", K::word },
+        { "non-ascii", K::non_ascii },
+    };
+    for (const auto& [n, k] : names) {
+        if (name == n) return k;
+    }
+    return std::nullopt;
+}
+
+bool input_has_charset(const Node& node) noexcept {
+    return node.has_attribute("allow") || node.has_attribute("block") || node.has_attribute("chars") || node.has_attribute("block-chars");
+}
+
+fizmo::CharSet input_charset(const Node& node) {
+    const bool allow_list = node.has_attribute("allow");
+    fizmo::CharSet set = allow_list ? fizmo::CharSet::nothing() : fizmo::CharSet::everything();
+    auto each = [&](const char* attribute, auto&& fn) {
+        std::istringstream words(node.attribute_or(attribute, ""));
+        std::string word;
+        while (words >> word) {
+            if (auto kind = char_kind_from_name(word)) fn(*kind);
+        }
+    };
+    each("allow", [&](fizmo::CharKind k) { set.allow(k); });
+    each("block", [&](fizmo::CharKind k) { set.disable(k, k == fizmo::CharKind::special ? fizmo::StringView(".") : fizmo::StringView()); });
+    if (node.has_attribute("chars")) set.allow(node.attribute_or("chars", ""));
+    if (node.has_attribute("block-chars")) set.disable(node.attribute_or("block-chars", ""));
+    return set;
+}
+
+std::optional<fizmo::Regex> input_pattern(const Node& node) {
+    const Attribute* a = node.find_attribute("pattern");
+    if (!a) return std::nullopt;
+    fizmo::Regex re(a->value);
+    if (!re.ok()) return std::nullopt;
+    return re;
+}
+
+bool input_text_valid(const Node& node, std::string_view text) {
+    if (input_has_charset(node) && !input_charset(node).accepts(text)) return false;
+    if (const auto re = input_pattern(node)) return re->matches(text);
+    return true;
+}
+
+std::vector<CodeColor> find_code_colors(std::string_view line) {
+    std::vector<CodeColor> out;
+    const std::size_t value_start = line.find_first_of(":=");
+    if (value_start == std::string_view::npos) return out;
+    auto word_char = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-'; };
+    std::size_t i = value_start + 1;
+    while (i < line.size()) {
+        const char c = line[i];
+        if (c == '/' && i + 1 < line.size() && (line[i + 1] == '/' || line[i + 1] == '*')) break;
+        if (c == '#' && (i == 0 || !word_char(line[i - 1]))) {
+            std::size_t j = i + 1;
+            while (j < line.size() && std::isxdigit(static_cast<unsigned char>(line[j]))) ++j;
+            const std::size_t digits = j - i - 1;
+            if ((digits == 3 || digits == 4 || digits == 6 || digits == 8) && (j >= line.size() || !word_char(line[j]))) {
+                if (auto color = parse_color_text(line.substr(i, j - i))) out.push_back(CodeColor{ i, j, *color, "hex" });
+            }
+            i = std::max(j, i + 1);
+            continue;
+        }
+        if ((c == 'r' || c == 'h') && (i == 0 || !word_char(line[i - 1]))) {
+            std::size_t j = i;
+            while (j < line.size() && std::isalpha(static_cast<unsigned char>(line[j]))) ++j;
+            const std::string name = lower_text(line.substr(i, j - i));
+            if ((name == "rgb" || name == "rgba" || name == "hsl" || name == "hsla") && j < line.size() && line[j] == '(') {
+                const std::size_t close = line.find(')', j);
+                if (close != std::string_view::npos) {
+                    if (auto color = parse_color_text(line.substr(i, close + 1 - i))) {
+                        out.push_back(CodeColor{ i, close + 1, *color, name });
+                        i = close + 1;
+                        continue;
+                    }
+                }
+            }
+            i = std::max(j, i + 1);
+            continue;
+        }
+        ++i;
+    }
+    return out;
 }
 
 std::optional<bark::Rgba> parse_color_text(std::string_view text) {
@@ -668,6 +760,7 @@ bool input_accepts(const Node& node, std::string_view current, std::string_view 
         }
         case InputKind::String: {
             if (ch.size() == 1 && (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)) return false;
+            if (input_has_charset(node) && !input_charset(node).accepts(ch)) return false;
             if (const Attribute* a = node.find_attribute("maxlength")) {
                 if (const auto limit = parse_integer(a->value)) {
                     if (*limit >= 0 && code_points(current) >= static_cast<std::size_t>(*limit)) return false;
@@ -692,6 +785,8 @@ bool commit_input_text(Document& document, Node& node, std::string_view text) {
             return v && set_input_float(document, node, *v);
         }
         case InputKind::String:
+            if (!input_text_valid(node, text)) return false;
+            return set_input_string(document, node, std::string(text));
         case InputKind::Code:
         case InputKind::File: return set_input_string(document, node, std::string(text));
         case InputKind::Color: {
@@ -764,6 +859,23 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
                 if (limit && *limit < 0) diagnostics.error(file, node.find_attribute("maxlength")->span, "maxlength can't be negative");
                 if (limit && *limit >= 0 && code_points(node.attribute_or("value", "")) > static_cast<std::size_t>(*limit)) {
                     diagnostics.warning(file, node.find_attribute("value")->span, "value is longer than maxlength and will be cut");
+                }
+                for (const char* list : { "allow", "block" }) {
+                    const Attribute* a = node.find_attribute(list);
+                    if (!a) continue;
+                    std::istringstream words(a->value);
+                    std::string word;
+                    while (words >> word) {
+                        if (!char_kind_from_name(word)) diagnostics.warning(file, a->span, "'" + word + "' isn't a kind of character (use letters, digits, numbers, spaces, special, punctuation, symbols, uppercase, lowercase, emoji, newlines, ascii or hex); put single characters in chars=\"...\"");
+                    }
+                }
+                if (const Attribute* a = node.find_attribute("pattern")) {
+                    const fizmo::Regex re(a->value);
+                    if (!re.ok()) diagnostics.error(file, a->span, "pattern=\"" + a->value + "\" doesn't work: " + re.error() + " (at character " + std::to_string(re.error_position() + 1) + ")");
+                }
+                if (const Attribute* v = node.find_attribute("value")) {
+                    if (input_has_charset(node) && !input_charset(node).accepts(v->value)) diagnostics.warning(file, v->span, "value has characters that allow/block don't let in");
+                    else if (node.has_attribute("pattern") && input_pattern(node) && !input_pattern(node)->matches(v->value)) diagnostics.warning(file, v->span, "value doesn't fit the pattern");
                 }
                 break;
             }

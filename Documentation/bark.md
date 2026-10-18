@@ -149,6 +149,10 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `align-self` | a child | its own `align-items` |
 | `line-height` | `input_code` | a multiple of the font size (`1.4`) or a length |
 | `code-keyword`, `code-type`, `code-function`, `code-namespace`, `code-variable`, `code-constant`, `code-string`, `code-escape`, `code-number`, `code-comment`, `code-preprocessor`, `code-operator`, `code-tag`, `code-attribute`, `code-property` | `input_code` | how that kind of token looks: a color, then any of `bold`, `italic` and `underline` (`code-comment: #6a737d italic;`). Leaving one out keeps Grove's own color |
+| `code-control-keyword`, `code-builtin-type`, `code-declaration`, `code-self`, `code-this`, `code-cast`, `code-builtin-operator`, `code-overloaded-operator`, `code-enum-member`, `code-template-scope`, `code-variable-template`, `code-unresolved` | `input_code` | the finer kinds C, C++ and Walnut split out; one you leave out looks like the kind it came from (`code-keyword`, `code-type`, `code-variable`, `code-operator`, `code-function`, `code-constant` or `code-plain`) |
+| `code-error-underline`, `code-warning-underline` | `input_code` | the squiggle under the `problems` an editor is given (default red and amber) |
+| `code-error-line` | `input_code` | a color and any of `bold`, `italic`, `underline` for the text of a line with an error; off unless set |
+| `code-hover` | `input_code` | the background of its hover popup (default a little lighter than `background`) |
 | `code-plain` | `input_code` | text that isn't any kind of token (defaults to `color`) |
 | `backdrop` | `modal` | the color drawn over the window behind an open modal (default a see-through black) |
 | `code-mark` | `input_code` | the box drawn behind tokens named in the `mark` attribute (default a see-through orange) |
