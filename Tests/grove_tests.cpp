@@ -1194,7 +1194,8 @@ void test_zoom_and_select() {
     CHECK(size && grove::set_input_string(form, *size, "s") && grove::select_index(*size).value_or(9) == 0);
     grove::Node* empty = form.find_by_id("empty");
     CHECK(empty && !grove::select_index(*empty) && grove::input_string(*empty).value_or("?").empty());
-    CHECK(empty && grove::set_select_options(form, *empty, { { "a", "A", false }, { "b", "B", false } }) && grove::select_options(*empty).size() == 2);
+    const std::vector<grove::SelectOption> picks = { { "a", "A", false }, { "b", "B", false } };
+    CHECK(empty && grove::set_select_options(form, *empty, picks) && grove::select_options(*empty).size() == 2);
     CHECK(grove_input_kind_of(reinterpret_cast<const grove_element*>(size)) == GROVE_INPUT_SELECT);
     CHECK(grove::input_kind_from_name("select") == grove::InputKind::Select);
 }
