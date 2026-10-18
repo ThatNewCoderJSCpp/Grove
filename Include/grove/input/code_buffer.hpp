@@ -2,6 +2,8 @@
 #define GROVE_INPUT_CODE_BUFFER_HPP
 
 #include <cstddef>
+#include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -45,7 +47,19 @@ enum class CodeTokenKind {
     Constant,
     Namespace,
     Variable,
-    Escape
+    Escape,
+    ControlKeyword,
+    BuiltinType,
+    Declaration,
+    SelfKeyword,
+    ThisKeyword,
+    Cast,
+    BuiltinOperator,
+    OverloadedOperator,
+    EnumMember,
+    TemplateScope,
+    VariableTemplate,
+    Unresolved
 };
 
 struct CodeToken {
@@ -62,10 +76,11 @@ struct CodeLineState {
     std::string raw_delimiter;
     int bracket_level = -1;
     bool bracket_comment = false;
+    int comment_depth = 0;
 
     bool operator==(const CodeLineState& o) const noexcept {
         return block_comment == o.block_comment && markup_comment == o.markup_comment && string_open == o.string_open && raw_string == o.raw_string &&
-               raw_delimiter == o.raw_delimiter && bracket_level == o.bracket_level && bracket_comment == o.bracket_comment;
+               raw_delimiter == o.raw_delimiter && bracket_level == o.bracket_level && bracket_comment == o.bracket_comment && comment_depth == o.comment_depth;
     }
     bool operator!=(const CodeLineState& o) const noexcept { return !(*this == o); }
 };
@@ -77,8 +92,61 @@ CodeLanguage code_language_for_path(std::string_view path) noexcept;
 const std::vector<CodeLanguage>& code_languages() noexcept;
 const std::vector<CodeTokenKind>& code_token_kinds() noexcept;
 std::optional<CodeTokenKind> code_token_kind_from_name(std::string_view name) noexcept;
+CodeTokenKind code_token_fallback(CodeTokenKind kind) noexcept;
+const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) noexcept;
 
 std::vector<CodeToken> highlight_code_line(CodeLanguage language, std::string_view line, CodeLineState& state);
+
+struct CodeSpan {
+    std::size_t line = 0;
+    std::size_t column = 0;
+    std::size_t length = 0;
+    CodeTokenKind kind = CodeTokenKind::Plain;
+};
+
+enum class CodeProblemKind {
+    Error,
+    Warning
+};
+
+struct CodeProblem {
+    std::size_t line = 0;
+    std::size_t column = 0;
+    std::size_t length = 0;
+    CodeProblemKind kind = CodeProblemKind::Error;
+};
+
+struct CodeProblemMark {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    CodeProblemKind kind = CodeProblemKind::Error;
+};
+
+std::uint64_t code_line_hash(std::string_view line) noexcept;
+std::string code_spans_text(const std::vector<std::string>& lines, const std::vector<CodeSpan>& spans);
+std::string code_problems_text(const std::vector<std::string>& lines, const std::vector<CodeProblem>& problems);
+std::vector<CodeToken> overlay_code_tokens(const std::vector<CodeToken>& base, const std::vector<CodeToken>& over, std::size_t length);
+
+class CodeOverlay {
+public:
+    void set_spans(std::string_view text);
+    void set_problems(std::string_view text);
+    void clear();
+    bool empty() const noexcept { return m_spans.empty() && m_problems.empty(); }
+    std::vector<CodeToken> spans(std::size_t line, std::string_view text) const;
+    std::vector<CodeProblemMark> problems(std::size_t line, std::string_view text) const;
+    bool has_error(std::size_t line, std::string_view text) const;
+
+private:
+    template <typename T>
+    using Table = std::map<std::uint64_t, std::vector<std::pair<std::size_t, std::vector<T>>>>;
+
+    template <typename T>
+    static const std::vector<T>* nearest(const Table<T>& table, std::size_t line, std::string_view text);
+
+    Table<CodeToken> m_spans;
+    Table<CodeProblemMark> m_problems;
+};
 
 std::size_t code_display_column(std::string_view line, std::size_t byte_column, std::size_t tab_size);
 std::size_t code_byte_column(std::string_view line, std::size_t display_column, std::size_t tab_size);
