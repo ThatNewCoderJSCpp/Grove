@@ -1199,6 +1199,26 @@ void test_zoom_and_select() {
     CHECK(grove::input_kind_from_name("select") == grove::InputKind::Select);
 }
 
+void test_keymap() {
+    const auto c = grove::parse_chord("ctrl+shift+m");
+    CHECK(c && c->ctrl && c->shift && !c->alt && c->key == "M" && grove::chord_text(*c) == "Ctrl+Shift+M");
+    CHECK(grove::parse_chord("Ctrl+,") && grove::parse_chord("Ctrl+,")->key == ",");
+    CHECK(grove::parse_chord("Ctrl++") && grove::parse_chord("Ctrl++")->key == "=");
+    CHECK(grove::parse_chord("Alt+LeftArrow")->key == "Left" && grove::parse_chord("f5")->key == "F5");
+    CHECK(!grove::parse_chord("Ctrl+Banana") && !grove::parse_chord("Hyper+A"));
+    CHECK(grove::parse_chord("Alt+Click")->mouse() && !grove::parse_chord("Alt+C")->mouse());
+    const auto many = grove::parse_chords("Ctrl+Y, Ctrl+Shift+Z, Ctrl+,");
+    CHECK(many.size() == 3 && many[2].key == ",");
+    CHECK(grove::chord_of("Comma", grove::ModifierMeta) == *grove::parse_chord("Ctrl+,"));
+    const grove::Keymap map = grove::parse_keymap("copy=Ctrl+Shift+C; redo=none; add-caret=Ctrl+Alt+Click");
+    CHECK(grove::code_action_for(map, *grove::parse_chord("Ctrl+Shift+C")).value_or("") == "copy");
+    CHECK(!grove::code_action_for(map, *grove::parse_chord("Ctrl+C")) && grove::is_code_default_chord(*grove::parse_chord("Ctrl+C")));
+    CHECK(!grove::code_action_for(map, *grove::parse_chord("Ctrl+Y")));
+    CHECK(grove::code_action_for(map, *grove::parse_chord("Ctrl+Alt+Click")).value_or("") == "add-caret");
+    CHECK(grove::code_action_for({}, *grove::parse_chord("Ctrl+Click")).value_or("") == "go-to-definition");
+    CHECK(grove::keymap_text(map) == "add-caret=Ctrl+Alt+Click; copy=Ctrl+Shift+C; redo=none");
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1240,6 +1260,7 @@ int main() {
     test_pages_and_modals();
     test_alignment_and_math();
     test_zoom_and_select();
+    test_keymap();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

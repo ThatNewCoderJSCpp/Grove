@@ -4,6 +4,7 @@
 #include "grove/api/grove_api.h"
 #include "grove/input/input.hpp"
 #include "grove/input/code_buffer.hpp"
+#include "grove/input/keymap.hpp"
 #include "grove/native.hpp"
 #include "grove/script/loader.hpp"
 #include "grove/windowing.hpp"
@@ -315,7 +316,12 @@ struct CodeTokenLook {
     bool bold = false;
     bool italic = false;
     bool underline = false;
+    bool strikethrough = false;
 };
+
+bool is_strike_word(const bark::Value& v) {
+    return v.is_ident("strikethrough") || v.is_ident("line-through") || v.is_ident("strike");
+}
 
 CodeTokenLook code_token_look(const bark::ComputedStyle& style, CodeTokenKind kind) {
     CodeTokenLook look;
@@ -355,10 +361,12 @@ CodeTokenLook code_token_look(const bark::ComputedStyle& style, CodeTokenKind ki
     look.bold = false;
     look.italic = false;
     look.underline = false;
+    look.strikethrough = false;
     for (const bark::Value& v : *values) {
         if (v.is_ident("bold")) look.bold = true;
         else if (v.is_ident("italic")) look.italic = true;
         else if (v.is_ident("underline")) look.underline = true;
+        else if (is_strike_word(v)) look.strikethrough = true;
         else if (v.is_ident("normal") || v.is_ident("inherit")) continue;
         else if (auto c = bark::as_color(bark::ValueList{ v })) look.color = to_color(*c);
     }
@@ -388,6 +396,7 @@ CodeTokenLook code_extra_look(const bark::ComputedStyle& style, const char* prop
         if (v.is_ident("bold")) look.bold = true;
         else if (v.is_ident("italic")) look.italic = true;
         else if (v.is_ident("underline")) look.underline = true;
+        else if (is_strike_word(v)) look.strikethrough = true;
         else if (auto c = bark::as_color(bark::ValueList{ v })) look.color = to_color(*c);
     }
     return look;
@@ -2288,6 +2297,7 @@ private:
         number_style.set_bold(false);
         number_style.set_italic(false);
         number_style.set_underline(false);
+        number_style.set_strikethrough(false);
 
         push_clip(Rect{ inner_x, inner_y, inner_w, inner_h });
         for (std::size_t li = first; li < last; ++li) {
@@ -2332,11 +2342,13 @@ private:
                     look.bold = look.bold || error_line.bold;
                     look.italic = look.italic || error_line.italic;
                     look.underline = look.underline || error_line.underline;
+                    look.strikethrough = look.strikethrough || error_line.strikethrough;
                 }
                 const Color c = look.color.value_or(fg);
                 if (look.bold) tok.set_bold(true);
                 if (look.italic) tok.set_italic(true);
                 if (look.underline) tok.set_underline(true);
+                if (look.strikethrough) tok.set_strikethrough(true);
                 if (std::find(marks.begin(), marks.end(), t.kind) != marks.end()) {
                     const std::size_t lead = piece.find_first_not_of(" \t");
                     const std::size_t trail = piece.find_last_not_of(" \t");
@@ -2721,6 +2733,16 @@ private:
     void update_cursor(const Node* target) {
         if (!m_native || !target) return;
         std::string name = style_of(*target).text("cursor").value_or("");
+        if (m_code_hover.shown && m_code_hover.panel.contains(m_mouse_x, m_mouse_y)) {
+            name = "default";
+            for (const auto& [rect, action] : m_code_hover.actions) {
+                if (!action.empty() && rect.contains(m_mouse_x, m_mouse_y)) name = "pointer";
+            }
+            if (name == m_cursor) return;
+            m_cursor = name;
+            m_native->set_cursor(cursor_for(name));
+            return;
+        }
         if (name.empty() || name == "auto") {
             const std::optional<InputKind> kind = input_kind_of(*target);
             name = kind && is_text_input(*kind) ? "text" : "default";
@@ -3201,11 +3223,29 @@ private:
                         focus_code(hit.node);
                         CodeEditor& ed = m_code[hit.node];
                         const CodePos at = code_pos_at(ed, px, py);
-                        const bool shift = (m_mods & ModifierShift) != 0;
-                        const bool alt = (m_mods & ModifierAlt) != 0;
+                        bool shift = (m_mods & ModifierShift) != 0;
+                        bool alt = (m_mods & ModifierAlt) != 0;
+                        bool ctrl = (m_mods & (ModifierControl | ModifierMeta)) != 0;
+                        bool column_ok = true;
+                        if (shift || alt || ctrl) {
+                            const Keymap overrides = parse_keymap(hit.node->attribute_or("keys", ""));
+                            const Chord pressed = chord_of("Click", m_mods);
+                            const std::optional<std::string> action = code_action_for(overrides, pressed);
+                            const KeyAction* bound = action ? find_code_editor_action(*action) : nullptr;
+                            if (bound && bound->mouse && !bound->defaults.empty()) {
+                                const Chord& d = bound->defaults.front();
+                                ctrl = d.ctrl;
+                                shift = d.shift;
+                                alt = d.alt;
+                                column_ok = bound->id == "column-select" || !shift;
+                            } else if (is_code_default_chord(pressed)) {
+                                column_ok = false;
+                                ctrl = false;
+                                alt = false;
+                            }
+                        }
                         ed.column_mode = false;
                         ed.reveal = true;
-                        const bool ctrl = (m_mods & (ModifierControl | ModifierMeta)) != 0;
                         if (ctrl && !alt && !shift) {
                             const std::optional<CodePos> on = code_char_at(ed, px, py);
                             ed.buffer.set_caret(on.value_or(at));
@@ -3221,7 +3261,7 @@ private:
                             ed.buffer.toggle_cursor(at);
                             return;
                         }
-                        if (shift && !ed.buffer.has_selection() && !ed.buffer.has_extra_cursors()) {
+                        if (shift && column_ok && !ed.buffer.has_selection() && !ed.buffer.has_extra_cursors()) {
                             const CodePos from = ed.buffer.caret();
                             const float cell = std::max(1.0f, ed.char_w);
                             const long clicked = std::lround((px - ed.text_x + ed.scroll_x) / cell);
@@ -3749,6 +3789,7 @@ private:
         mono.set_bold(false);
         mono.set_italic(false);
         mono.set_underline(false);
+        mono.set_strikethrough(false);
         mono.set_fg_color(fg);
         fizmo::text::TextStyle prose(std::max(11.0, mono.size() * 0.95), fg);
         fizmo::text::TextStyle strong = prose;
@@ -3800,11 +3841,21 @@ private:
             first_block = false;
             if (in_code) {
                 const std::string shown = code_expand_tabs(text, 4);
+                const std::size_t lead = std::min(shown.find_first_not_of(' '), shown.size());
+                const float indent = text_width(r, shown.substr(0, lead) + "    ", mono);
                 float x = 0;
                 for (const CodeToken& t : highlight_code_line(code_lang, shown, state)) {
-                    const std::string piece = shown.substr(t.begin, t.end - t.begin);
-                    const float w = text_width(r, piece, mono);
-                    if (x + w > max_w) break;
+                    std::string piece = shown.substr(t.begin, t.end - t.begin);
+                    float w = text_width(r, piece, mono);
+                    if (x + w > max_w && x > indent) {
+                        widest = std::max(widest, x);
+                        y += mono_h;
+                        x = indent;
+                        const std::size_t keep = piece.find_first_not_of(' ');
+                        if (keep == std::string::npos) continue;
+                        piece = piece.substr(keep);
+                        w = text_width(r, piece, mono);
+                    }
                     Item it;
                     it.kind = 0;
                     it.x = x;
@@ -3816,6 +3867,8 @@ private:
                     const CodeTokenLook& look = looks[static_cast<std::size_t>(t.kind)];
                     if (look.bold) it.style.set_bold(true);
                     if (look.italic) it.style.set_italic(true);
+                    if (look.underline) it.style.set_underline(true);
+                    if (look.strikethrough) it.style.set_strikethrough(true);
                     it.style.set_fg_color(look.color.value_or(fg));
                     items.push_back(it);
                     x += w;
@@ -4083,6 +4136,29 @@ private:
         using fizmo::input::Key;
         using fizmo::input::Modifiers;
         const Node* node = m_code_focus;
+        bool skip_column = false;
+        {
+            const Chord pressed = chord_of(fizmo::input::key_name(key), modifiers_of(mods));
+            if (!pressed.empty()) {
+                const Keymap overrides = parse_keymap(node->attribute_or("keys", ""));
+                const std::optional<std::string> action = code_action_for(overrides, pressed);
+                const KeyAction* bound = action ? find_code_editor_action(*action) : nullptr;
+                if (bound && !bound->mouse && !bound->defaults.empty()) {
+                    const Chord& d = bound->defaults.front();
+                    if (d != pressed) {
+                        key = fizmo::input::key_from_name(d.key);
+                        Modifiers next = Modifiers::None;
+                        if (d.ctrl) next |= Modifiers::Control;
+                        if (d.shift) next |= Modifiers::Shift;
+                        if (d.alt) next |= Modifiers::Alt;
+                        mods = next;
+                    }
+                } else if (!bound && is_code_default_chord(pressed)) {
+                    if (!(pressed.shift && !pressed.ctrl && !pressed.alt && (pressed.key == "Up" || pressed.key == "Down"))) return;
+                    skip_column = true;
+                }
+            }
+        }
         CodeEditor& ed = m_code[node];
         CodeBuffer& buf = ed.buffer;
         const bool shift = fizmo::input::has(mods, Modifiers::Shift);
@@ -4092,7 +4168,7 @@ private:
         const std::size_t page = static_cast<std::size_t>(std::max(1.0f, ed.view_h / std::max(1.0f, ed.line_h) - 1.0f));
         bool edited = false;
         const bool vertical = key == Key::Up || key == Key::Down;
-        if (vertical && shift && !ctrl && (ed.column_mode || (!buf.any_selection() && !buf.has_extra_cursors()))) {
+        if (vertical && shift && !ctrl && !skip_column && (ed.column_mode || (!buf.any_selection() && !buf.has_extra_cursors()))) {
             if (!ed.column_mode) {
                 ed.column_mode = true;
                 ed.column_anchor = buf.caret();

@@ -13,6 +13,7 @@
 #include "math/math_block.hpp"
 #include "input/input.hpp"
 #include "input/code_buffer.hpp"
+#include "input/keymap.hpp"
 #include "native.hpp"
 #include "project.hpp"
 #include "highlight.hpp"

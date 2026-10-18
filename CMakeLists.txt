@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.11 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.12 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -12,7 +12,7 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
 set(GROVE_FIZMO_TAG "v0.2.27" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.1.10" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.11" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -67,6 +67,7 @@ add_library(grove_core STATIC
     Source/script/loader.cpp
     Source/input/input.cpp
     Source/input/code_buffer.cpp
+    Source/input/keymap.cpp
     Source/input/code_highlight.cpp
     Source/native.cpp
     Source/math/math_block.cpp
