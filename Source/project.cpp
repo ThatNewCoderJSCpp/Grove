@@ -118,6 +118,53 @@ std::string resolve_path(const std::string& base_dir, const std::string& relativ
     return (std::filesystem::path(base_dir) / p).lexically_normal().string();
 }
 
+std::vector<std::string> split_asset_list(const std::string& text) {
+    std::vector<std::string> out;
+    std::string current;
+    for (char c : text + " ") {
+        if (c == ' ' || c == ',' || c == '\t' || c == '\n') {
+            if (!current.empty()) out.push_back(current);
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+    return out;
+}
+
+std::vector<std::string> icon_paths(const Project& project, const Node& window) {
+    std::string list = window.attribute_or("icon", "");
+    if (list.empty()) {
+        if (const Node* body = project.document.first_by_tag("body")) list = body->attribute_or("icon", "");
+    }
+    std::vector<std::string> out;
+    for (const std::string& p : split_asset_list(list)) out.push_back(resolve_path(project.base_dir, p));
+    return out;
+}
+
+std::string image_path(const Project& project, const Node& img) {
+    const std::string src = img.attribute_or("src", "");
+    return src.empty() ? std::string() : resolve_path(project.base_dir, src);
+}
+
+namespace {
+
+void check_assets(Project& project) {
+    project.document.root().walk([&](const Node& n) {
+        if (!n.is_element()) return;
+        std::vector<std::string> paths;
+        if ((n.tag() == "body" || n.tag() == "window") && n.has_attribute("icon")) {
+            for (const std::string& p : split_asset_list(n.attribute_or("icon", ""))) paths.push_back(p);
+        }
+        if (n.tag() == "img" && n.has_attribute("src")) paths.push_back(n.attribute_or("src", ""));
+        for (const std::string& p : paths) {
+            if (!read_file(resolve_path(project.base_dir, p))) project.diagnostics.warning(project.path, n.span(), "can't find image '" + p + "'");
+        }
+    });
+}
+
+} // namespace
+
 Project load_project_from_source(std::string_view source, const std::string& path, const std::string& base_dir) {
     Project project;
     project.path = path;
@@ -130,6 +177,7 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     project.scripts = collect_scripts(project.document, base_dir, project.diagnostics);
     project.math = collect_math(project.document, project.diagnostics);
     check_inputs(project.document, project.diagnostics);
+    check_assets(project);
     return project;
 }
 

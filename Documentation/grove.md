@@ -49,7 +49,19 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 | `style` | Bark, inline or `src="file.bark"` |
 | `script` | Walnut, C++ or C, inline or `src="..."` |
 
-`grove run` lays out blocks, headings, paragraphs, wrapped text with inline elements, math, buttons and every input; `img` parses and styles but doesn't draw yet. Bark's [Layout](bark.md#layout) section covers widths, `flex`, scrolling and wrapping.
+`grove run` lays out blocks, headings, paragraphs, wrapped text with inline elements, math, buttons, images and every input. Bark's [Layout](bark.md#layout) section covers widths, `flex`, scrolling and wrapping.
+
+### Images and window icons
+
+`<img src="logo.png">` draws a PNG, JPEG, BMP, GIF, TGA, QOI or other image Fizmo can read, at its own size unless `width`/`height` (attributes in pixels, or Bark lengths) say otherwise; with only one of them it keeps its shape. It never gets wider than the space it's in. Paths are relative to the `.grove` file, and `grove build` packs the images in.
+
+`<body>` and `<window>` take an `icon` with one or more images, which becomes the window's icon in the taskbar and title bar. Giving several sizes lets the system pick the sharpest one. A `<window>` without its own uses the `<body>`'s.
+
+```html
+<body title="Notes" icon="icons/notes-16.png icons/notes-32.png icons/notes-256.png" app-id="notes">
+```
+
+`app-id` names the app to the desktop (on Linux it's the window's `WM_CLASS`, which a `.desktop` file matches with `StartupWMClass=notes`). `grove check` warns about an `icon` or `src` file it can't find.
 
 ## Inputs
 

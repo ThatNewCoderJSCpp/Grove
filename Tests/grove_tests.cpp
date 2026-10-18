@@ -819,6 +819,15 @@ void test_natives() {
     CHECK(grove::unregister_native(doc, "add") && !grove::has_native(doc, "add"));
 }
 
+void test_images() {
+    const std::string dir = std::string(GROVE_EXAMPLES_DIR) + "/editor";
+    grove::Project p = grove::load_project_from_source("<body icon=\"../../Tools/icons/grove-32.png missing-icon.png\"><img src=\"nope.png\" /><img src=\"../../Tools/icons/bark-16.png\" /></body>", dir + "/t.grove", dir);
+    CHECK(p.diagnostics.warning_count() == 2);
+    const grove::Node* body = p.document.first_by_tag("body");
+    CHECK(body && grove::icon_paths(p, *body).size() == 2);
+    CHECK(grove::split_asset_list(" a.png, b.png\tc.png ").size() == 3);
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -851,6 +860,7 @@ int main() {
     test_code_highlight();
     test_code_and_file_inputs();
     test_natives();
+    test_images();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

@@ -2,6 +2,8 @@
 
 Coloring, color pickers and error underlines for Grove (`.grove`) and Bark (`.bark`) files, plus comment toggling, bracket matching and auto-closing quotes.
 
+`.grove` files get a grove icon and `.bark` files a bark icon in the explorer and on tabs, whenever your file icon theme doesn't have its own icon for them.
+
 ## Color pickers
 
 Every color gets a small swatch in front of it, like CSS in VS Code. Click the swatch to open the color picker: a saturation square, a hue strip, an alpha strip, and a header that switches between `rgb`, `hsl` and hex when clicked.

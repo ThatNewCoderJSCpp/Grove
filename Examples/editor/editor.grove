@@ -4,17 +4,19 @@
         <style src="editor.bark" />
         <script lang="walnut" src="editor.wal"></script>
     </head>
-    <body>
+    <body icon="../../Tools/icons/grove-16.png ../../Tools/icons/grove-32.png ../../Tools/icons/grove-256.png" app-id="grove-editor-demo">
         <row id="layout">
             <column id="side">
-                <p class="heading">FILES</p>
+                <row class="brand">
+                    <img src="../../Tools/icons/grove-64.png" width="28" />
+                    <text class="heading">FILES</text>
+                </row>
                 <input_file id="folder" mode="folder">Open folder…</input_file>
                 <list id="files">
-                    <item>main.cpp</item>
-                    <item>app.wal</item>
-                    <item>ui.grove</item>
-                    <item>theme.bark</item>
-                    <item>notes.txt</item>
+                    <item><text>app.wal</text></item>
+                    <item><img src="../../Tools/icons/grove-32.png" width="16" /><text>ui.grove</text></item>
+                    <item><img src="../../Tools/icons/bark-32.png" width="16" /><text>theme.bark</text></item>
+                    <item><text>notes.txt</text></item>
                 </list>
             </column>
             <column id="main">

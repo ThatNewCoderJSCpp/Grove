@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.4 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.5 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -11,8 +11,8 @@ option(GROVE_BUILD_RUNTIME "Build grove_runtime, which opens documents in a Fizm
 option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\"> blocks" ON)
 option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.2.24" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.1.7" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.2.25" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.8" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -123,11 +123,16 @@ if(GROVE_BUILD_TESTS)
     add_test(NAME grove_check_inputs COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/inputs/inputs.grove")
     add_test(NAME grove_check_todo COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove")
     add_test(NAME grove_check_windows COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/windows/windows.grove")
+    add_test(NAME grove_check_editor COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/editor/editor.grove")
     if(GROVE_WITH_WALNUT AND TARGET walnut)
         add_test(NAME grove_exec_todo COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove" --event "click #clear-done")
         set_tests_properties(grove_exec_todo PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
             PASS_REGULAR_EXPRESSION "0 of 2 done")
+        add_test(NAME grove_exec_editor COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/editor/editor.grove" --event "click #docs")
+        set_tests_properties(grove_exec_editor PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            PASS_REGULAR_EXPRESSION "no host function named open_docs")
         add_test(NAME grove_exec_windows COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/windows/windows.grove" --event "click #ask-age" --event "click .popup-ok")
         set_tests_properties(grove_exec_windows PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"

@@ -259,8 +259,16 @@ struct PendingDialog {
     std::future<std::vector<std::string>> result;
 };
 
+std::shared_ptr<fizmo::images::BitmapImage> load_bitmap(const std::string& path) {
+    const std::optional<std::string> bytes = read_file(path);
+    if (!bytes || bytes->empty()) return nullptr;
+    auto image = std::make_shared<fizmo::images::BitmapImage>();
+    if (!fizmo::images::decode_image(reinterpret_cast<const std::uint8_t*>(bytes->data()), bytes->size(), *image) || !image->is_valid_image()) return nullptr;
+    return image;
+}
+
 struct DrawOp {
-    enum class Kind { Fill, Stroke, Circle, CircleStroke, Text, Math, ClipPush, ClipPop } kind = Kind::Fill;
+    enum class Kind { Fill, Stroke, Circle, CircleStroke, Text, Math, ClipPush, ClipPop, Image } kind = Kind::Fill;
     float x = 0;
     float y = 0;
     float w = 0;
@@ -271,6 +279,8 @@ struct DrawOp {
     std::string text;
     fizmo::text::TextStyle style;
     const fizmo::text::FancyText* math = nullptr;
+    const fizmo::graphics::Texture* texture = nullptr;
+    float alpha = 1.0f;
 };
 
 struct Hit {
@@ -634,6 +644,7 @@ private:
             case DrawOp::Kind::CircleStroke: r.draw_circle(x, y, static_cast<unsigned>(std::lround(op.radius)), fizmo::graphics::Paint::stroke(op.color, op.stroke)); break;
             case DrawOp::Kind::Text: r.draw_text(x, y, std::max(w, 1u), std::max(h, 1u), op.text, op.style); break;
             case DrawOp::Kind::Math: if (op.math) r.draw_fancy_text(*op.math, op.x, op.y); break;
+            case DrawOp::Kind::Image: if (op.texture) r.draw_texture(*op.texture, x, y, w, h, op.alpha); break;
             case DrawOp::Kind::ClipPush:
             case DrawOp::Kind::ClipPop: break;
         }
@@ -875,6 +886,13 @@ private:
             const float box = toggle ? std::round(size * 1.8f) : size;
             const std::string label = collapse_whitespace(node.inner_text());
             return box + (label.empty() ? 0.0f : 8.0f + text_width(r, label, text_style(node))) + margins + 2.0f;
+        }
+        if (node.tag() == "img") {
+            float iw = 0.0f;
+            float ih = 0.0f;
+            image_size(node, style, row_width, iw, ih);
+            const Box pad = box_of(style, "padding");
+            return iw + pad.left + pad.right + margins;
         }
         if (const auto w = resolve_length(style, "width", row_width)) return *w + margins;
         if (is_row(node, style) && !style.get("flex")) {
@@ -1619,6 +1637,64 @@ private:
         y += h;
     }
 
+    const fizmo::graphics::Texture* texture_for(const Node& img) {
+        const std::string path = image_path(m_project, img);
+        if (path.empty()) return nullptr;
+        auto it = m_textures.find(path);
+        if (it == m_textures.end()) {
+            std::shared_ptr<fizmo::graphics::Texture> tex;
+            if (auto bitmap = load_bitmap(path)) tex = std::make_shared<fizmo::graphics::Texture>(std::shared_ptr<const fizmo::images::BitmapImage>(bitmap), fizmo::graphics::SampleFilter::Bilinear);
+            it = m_textures.emplace(path, tex).first;
+        }
+        return it->second && it->second->valid() ? it->second.get() : nullptr;
+    }
+
+    void image_size(const Node& img, const bark::ComputedStyle& style, float available, float& w, float& h) {
+        const fizmo::graphics::Texture* tex = texture_for(img);
+        const float nw = tex ? static_cast<float>(tex->width()) : 0.0f;
+        const float nh = tex ? static_cast<float>(tex->height()) : 0.0f;
+        std::optional<float> sw = resolve_length(style, "width", available);
+        std::optional<float> sh = resolve_length(style, "height", -1.0f);
+        if (!sw) {
+            if (const auto a = parse_float(img.attribute_or("width", ""))) sw = static_cast<float>(*a);
+        }
+        if (!sh) {
+            if (const auto a = parse_float(img.attribute_or("height", ""))) sh = static_cast<float>(*a);
+        }
+        if (sw && sh) {
+            w = *sw;
+            h = *sh;
+        } else if (sw) {
+            w = *sw;
+            h = nw > 0.0f ? *sw * nh / nw : *sw;
+        } else if (sh) {
+            h = *sh;
+            w = nh > 0.0f ? *sh * nw / nh : *sh;
+        } else {
+            w = nw;
+            h = nh;
+        }
+        if (w > available && available > 0.0f && w > 0.0f) {
+            h = h * available / w;
+            w = available;
+        }
+    }
+
+    void layout_image(const Node& element, float x, float& y, float width) {
+        const bark::ComputedStyle& style = style_of(element);
+        float w = 0.0f;
+        float h = 0.0f;
+        image_size(element, style, width, w, h);
+        if (const fizmo::graphics::Texture* tex = texture_for(element)) {
+            DrawOp& op = push(DrawOp::Kind::Image, x, y, w, h, Color());
+            op.texture = tex;
+            op.alpha = static_cast<float>(opacity_of(element));
+        } else if (w > 0.0f && h > 0.0f) {
+            push_rect(DrawOp::Kind::Stroke, x, y, w, h, with_alpha(raw_text_color(element), 0.3));
+        }
+        y += h;
+    }
+
     void layout_element(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, bool sized = false, float forced_h = -1.0f) {
         if (element.tag() == "window") return;
         const bark::ComputedStyle& style = style_of(element);
@@ -1643,7 +1719,13 @@ private:
             return;
         }
 
-        if (!sized) {
+        if (element.tag() == "img") {
+            float iw = 0.0f;
+            float ih = 0.0f;
+            image_size(element, style, bw, iw, ih);
+            const Box ipad = box_of(style, "padding");
+            bw = std::min(bw, iw + ipad.left + ipad.right);
+        } else if (!sized) {
             if (const auto w = resolve_length(style, "width", width)) bw = std::min(bw, *w);
             else if (is_inline_block(element, style)) {
                 const float natural = natural_width(r, *element.parent(), element, width) - margin.left - margin.right;
@@ -1661,7 +1743,8 @@ private:
         const std::size_t box_index = add_box(ElementBox{ &element, bx, top, bw, 0 });
 
         std::optional<float> fixed_h;
-        if (forced_h >= 0.0f) fixed_h = forced_h;
+        if (forced_h >= 0.0f && element.tag() != "img") fixed_h = forced_h;
+        else if (element.tag() == "img") fixed_h = std::nullopt;
         else if (const auto hgt = resolve_length(style, "height", m_avail_h)) fixed_h = *hgt;
         std::optional<float> max_h = resolve_length(style, "max-height", m_avail_h);
         const std::string overflow = style.text("overflow").value_or("visible");
@@ -1685,6 +1768,7 @@ private:
 
         float cy = y + pad.top - scroll;
         if (element.tag() == "math") layout_math(element, content_x, cy, content_w);
+        else if (element.tag() == "img") layout_image(element, content_x, cy, content_w);
         else if (element.tag() == "br") cy += static_cast<float>(font_size_of(element));
         else if (element.tag() == "hr") {
             push_rect(DrawOp::Kind::Fill, content_x, cy + 4, content_w, 1, to_color(style.color("color").value_or(bark::Rgba{ 120, 120, 120, 255 })));
@@ -2375,6 +2459,7 @@ private:
     const Node* m_code_drag = nullptr;
     std::unordered_map<const Node*, PendingDialog> m_dialogs_pending;
     float m_avail_h = -1.0f;
+    std::unordered_map<std::string, std::shared_ptr<fizmo::graphics::Texture>> m_textures;
 
 public:
     bool idle() {
@@ -2598,6 +2683,14 @@ private:
         const std::string title = title_of(element, style);
 
         host->window = std::make_unique<fizmo::windows::Window>(host->width, host->height, title, host->background);
+        std::string app_id = element.attribute_or("app-id", "");
+        if (app_id.empty() && !main) app_id = m_main.attribute_or("app-id", "");
+        if (!app_id.empty()) host->window->set_app_id(app_id);
+        std::vector<fizmo::images::BitmapImage> icons;
+        for (const std::string& path : icon_paths(m_project, element)) {
+            if (auto bitmap = load_bitmap(path)) icons.push_back(std::move(*bitmap));
+        }
+        if (!icons.empty()) host->window->set_icons(icons);
         if (!host->window->create()) {
             std::cerr << "grove: couldn't open a window for <" << element.tag() << (element.id().empty() ? "" : " id=\"" + element.id() + "\"") << ">\n";
             return nullptr;

@@ -96,7 +96,7 @@ grove::get_by_id("add").on("click", [&](grove::Event&: e) -> void {
 });
 ```
 
-Every `<window>` is a separate window whose events bubble up to the window it sits in, and `alert`, `confirm` and typed `prompt_*` popups ask the user things. Scripts are compiled the first time the document runs and cached after that, so they need Walnut (for `.wal`) and a C/C++ compiler. A program made with `grove build` needs neither. See [Documentation/grove.md](Documentation/grove.md#scripts) for the whole API and the list of events.
+`<input_code>` is a code editor (line numbers, highlighting for C, C++, Walnut, Grove and Bark, selection, undo, clipboard) and `<input_file>` opens the system's file or folder picker. A C++ program that hosts a document can give its scripts functions with `grove::register_native`, which scripts call with `grove::call`. Every `<window>` is a separate window whose events bubble up to the window it sits in, and `alert`, `confirm` and typed `prompt_*` popups ask the user things. Scripts are compiled the first time the document runs and cached after that, so they need Walnut (for `.wal`) and a C/C++ compiler. A program made with `grove build` needs neither. See [Documentation/grove.md](Documentation/grove.md#scripts) for the whole API and the list of events.
 
 ## Layout
 
@@ -113,7 +113,8 @@ Include/grove/
     walnut/grove.walh  the Walnut script API
     bundle.hpp, app.hpp  grove build: one executable holding a document
     windowing.hpp  <window> open/close, which window an element is in, popups
-    input/      typed inputs: kinds, values, typing rules, validation
+    input/      typed inputs: kinds, values, typing rules, validation; code_buffer.hpp, the editing and highlighting behind <input_code>
+    native.hpp  functions a host program registers for its scripts, and the file dialog hook
     api/        grove_api.h, the C API scripts use; grove_host.h and grove_module.cpp tie a script module to the program
     highlight.hpp  the JSON behind grove highlight
     runtime/    the Fizmo-backed window and renderer
@@ -126,13 +127,14 @@ Examples/hello  a small document using markup, Bark, math and scripts
 Examples/inputs every input type, sized with viewport units
 Examples/todo   a to-do list with a Walnut script and a C++ script
 Examples/windows  a settings window, a notes window that asks before closing, and every kind of popup
+Examples/editor   wrapped text with inline elements, a flex layout, a scrolling list, input_code, input_file and pre
 Tools/codegen   grove_api.spec and make_grove_api.py, which write grove_api.h and grove_api_list.h; make_grove_walh.py, which writes grove.walh
 Documentation/  the language references
 ```
 
 ## Editor support
 
-`Tools/vscode-grove` is a VS Code extension for `.grove` and `.bark` files: color swatches you can click to open a color picker, coloring (with Bark, MathText, Walnut, C++ and C inside a `.grove` file), unknown tags, properties and variables marked, and `grove check`'s errors underlined. It works like the Walnut extension, with its own `colors.json`; see [its README](Tools/vscode-grove/README.md). Install `Tools/vscode-grove/grove-language-0.1.0.vsix` with **Extensions → ... → Install from VSIX...**.
+`Tools/vscode-grove` is a VS Code extension for `.grove` and `.bark` files: color swatches you can click to open a color picker, coloring (with Bark, MathText, Walnut, C++ and C inside a `.grove` file), unknown tags, properties and variables marked, and `grove check`'s errors underlined. It works like the Walnut extension, with its own `colors.json`; see [its README](Tools/vscode-grove/README.md). `.grove` and `.bark` files get their own icons (the symbols and file-document versions are in `Tools/icons` as SVG, PNG and `.ico`). Install `Tools/vscode-grove/grove-language-0.1.1.vsix` with **Extensions → ... → Install from VSIX...**.
 
 ## Releases
 

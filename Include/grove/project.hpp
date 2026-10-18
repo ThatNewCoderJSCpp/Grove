@@ -34,6 +34,10 @@ bool path_exists(const std::string& path);
 std::string resolve_path(const std::string& base_dir, const std::string& relative);
 
 Project load_project(const std::string& path);
+
+std::vector<std::string> split_asset_list(const std::string& text);
+std::vector<std::string> icon_paths(const Project& project, const Node& window);
+std::string image_path(const Project& project, const Node& img);
 Project load_project_from_source(std::string_view source, const std::string& path, const std::string& base_dir);
 
 } // namespace grove

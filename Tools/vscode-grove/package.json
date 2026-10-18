@@ -2,7 +2,7 @@
     "name": "grove-language",
     "displayName": "Grove",
     "description": "Coloring, color pickers and error underlines for Grove (.grove) and Bark (.bark) files",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "publisher": "grove",
     "repository": {
         "type": "git",
@@ -30,7 +30,11 @@
                 "extensions": [
                     ".grove"
                 ],
-                "configuration": "./language-configuration-grove.json"
+                "configuration": "./language-configuration-grove.json",
+                "icon": {
+                    "light": "./icons/grove.svg",
+                    "dark": "./icons/grove.svg"
+                }
             },
             {
                 "id": "bark",
@@ -41,7 +45,11 @@
                 "extensions": [
                     ".bark"
                 ],
-                "configuration": "./language-configuration-bark.json"
+                "configuration": "./language-configuration-bark.json",
+                "icon": {
+                    "light": "./icons/bark.svg",
+                    "dark": "./icons/bark.svg"
+                }
             }
         ],
         "grammars": [
