@@ -2637,7 +2637,15 @@ private:
         y += h;
     }
 
+    bool over_popup(float px, float py) const {
+        if (m_menu.node && m_menu.panel.contains(px, py)) return true;
+        if (m_picker.node && m_picker.panel.contains(px, py)) return true;
+        if (m_context.owner && m_context.panel.contains(px, py)) return true;
+        return false;
+    }
+
     TermView* term_view_at(float px, float py) {
+        if (over_popup(px, py)) return nullptr;
         for (auto it = m_term_views.rbegin(); it != m_term_views.rend(); ++it) {
             if (it->contains(px, py) && it->node && document().is_attached(*it->node) && current_clip_contains(it->node, px, py)) return &*it;
         }
@@ -2792,7 +2800,7 @@ private:
     }
 
     bool term_mouse_down(float px, float py, int button) {
-        if (m_modal) return false;
+        if (m_modal || m_menu.node || m_picker.node) return false;
         TermView* v = term_view_at(px, py);
         if (!v) return false;
         const Node* node = v->node;
@@ -4797,8 +4805,11 @@ private:
             if (m_menu.panel.contains(px, py)) {
                 for (const auto& [row, index] : m_menu.rows) {
                     if (row.contains(px, py) && py >= m_menu.panel.y + 4 && py < m_menu.panel.y + m_menu.panel.h - 4) {
+                        const std::vector<SelectOption> options = select_options(*m_menu.node);
+                        const bool disabled = index < options.size() && options[index].disabled;
                         choose_option(index);
-                        if (!select_options(*m_menu.node).at(index).disabled) close_menu();
+                        if (!disabled) close_menu();
+                        poke();
                         return;
                     }
                 }
