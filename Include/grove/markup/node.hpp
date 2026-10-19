@@ -115,6 +115,16 @@ struct FileDialogRequest {
     Node* owner = nullptr;
 };
 
+class Terminal;
+
+struct MenuItem {
+    std::string value;
+    std::string label;
+    std::string detail;
+    bool disabled = false;
+    bool separator = false;
+};
+
 struct DocumentHost {
     std::function<std::string(const Node&, const std::string&)> computed_style;
     std::function<bool(Node*)> focus;
@@ -129,6 +139,9 @@ struct DocumentHost {
     std::function<std::vector<std::string>(const FileDialogRequest&)> file_dialog;
     std::function<bool(const std::string&)> set_clipboard;
     std::function<std::string()> clipboard;
+    std::function<bool(Node&, const std::vector<MenuItem>&, double, double)> open_menu;
+    std::function<bool()> close_menu;
+    std::map<const Node*, std::shared_ptr<Terminal>> terminals;
 };
 
 class Document {

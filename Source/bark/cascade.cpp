@@ -58,6 +58,7 @@ constexpr const char* k_inherited[] = {
     "math-syntax",
     "math-color",
     "accent-color",
+    "caret-color",
     "cursor",
 };
 

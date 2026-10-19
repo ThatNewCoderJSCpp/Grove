@@ -1,4 +1,5 @@
 #include "grove/grove.hpp"
+#include "grove/terminal.hpp"
 #include "grove/api/grove_api.h"
 #include "grove/bark/properties.hpp"
 
@@ -1239,6 +1240,234 @@ void test_dump_options() {
     CHECK(wider.str().find(path) != std::string::npos);
 }
 
+void test_menus() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup("<body><list id=\"files\"></list></body>", "t.grove", d);
+    CHECK(d.ok());
+    const grove::MenuItem item = grove::menu_item("rename", "Rename", "F2", true);
+    CHECK(item.value == "rename" && item.label == "Rename" && item.detail == "F2" && item.disabled && !item.separator);
+    CHECK(grove::menu_separator().separator);
+    grove::Node* files = doc.find_by_id("files");
+    CHECK(files && !grove::open_menu(doc, *files, { item }, 10, 10));
+    CHECK(!grove::close_menu(doc));
+    bool asked = false;
+    doc.host().open_menu = [&](grove::Node& owner, const std::vector<grove::MenuItem>& items, double x, double y) {
+        asked = &owner == files && items.size() == 2 && x == 10 && y == 20;
+        return true;
+    };
+    CHECK(files && grove::open_menu(doc, *files, { item, grove::menu_separator() }, 10, 20) && asked);
+    CHECK(files && !grove::open_menu(doc, *files, {}, 10, 20));
+}
+
+void test_terminal_basics() {
+    grove::Terminal t(10, 4);
+    t.feed("hello");
+    CHECK(t.row_text(0) == "hello" && t.cursor_column() == 5 && t.cursor_row() == 0);
+    t.feed("\r\nworld\x1b[2;3Hxy");
+    CHECK(t.row_text(1) == "woxyd" && t.cursor_column() == 4 && t.cursor_row() == 1);
+    t.feed("\x1b[H\x1b[2J");
+    CHECK(t.screen_text() == "\n\n\n\n" && t.cursor_row() == 0 && t.cursor_column() == 0);
+    t.feed("0123456789AB");
+    CHECK(t.row_text(0) == "0123456789" && t.row_text(1) == "AB" && t.line(0).wrapped);
+    grove::Terminal w(5, 2);
+    w.feed("abcde");
+    CHECK(w.cursor_column() == 4 && w.row_text(1).empty());
+    w.feed("\x08X");
+    CHECK(w.row_text(0) == "abcXe" && w.row_text(1).empty());
+    grove::Terminal e(10, 3);
+    e.feed("abcdefghij\x1b[1;4H\x1b[K");
+    CHECK(e.row_text(0) == "abc");
+    e.feed("\x1b[1;1Hxyzw\x1b[1;3H\x1b[1K");
+    CHECK(e.row_text(0) == "   w");
+    e.feed("\x1b[2;1H12345\x1b[2;2H\x1b[2P");
+    CHECK(e.row_text(1) == "145");
+    e.feed("\x1b[2;2H\x1b[3@");
+    CHECK(e.row_text(1) == "1   45");
+    e.feed("\x1b[2;1H\x1b[3X");
+    CHECK(e.row_text(1) == "    45");
+    grove::Terminal tab(20, 2);
+    tab.feed("a\tb\x1b[3gc\td");
+    CHECK(tab.row_text(0) == "a       bc         d");
+}
+
+void test_terminal_scrolling() {
+    grove::Terminal t(10, 3, 100);
+    t.feed("1\r\n2\r\n3\r\n4\r\n5");
+    CHECK(t.scrollback_size() == 2 && t.row_text(0) == "3" && t.row_text(2) == "5");
+    CHECK(t.view_line(0).cells.size() == 10);
+    t.scroll_view(2);
+    CHECK(t.view_offset() == 2 && t.view_line(0).cells[0].ch == U'1');
+    t.reset_view();
+    grove::Terminal r(10, 5, 100);
+    r.feed("a\r\nb\r\nc\r\nd\r\ne\x1b[2;4r\x1b[4;1H\n\n");
+    CHECK(r.row_text(0) == "a" && r.row_text(1) == "d" && r.row_text(4) == "e" && r.scrollback_size() == 0);
+    r.feed("\x1b[r\x1b[2;1H\x1bM\x1bM");
+    CHECK(r.row_text(0).empty() && r.row_text(1) == "a" && r.cursor_row() == 0);
+    grove::Terminal l(10, 4);
+    l.feed("1\r\n2\r\n3\r\n4\x1b[2;1H\x1b[L");
+    CHECK(l.row_text(1).empty() && l.row_text(2) == "2" && l.row_text(3) == "3");
+    l.feed("\x1b[M\x1b[M");
+    CHECK(l.row_text(1) == "3" && l.row_text(2).empty() && l.scrollback_size() == 0);
+    grove::Terminal limit(5, 2, 3);
+    for (int i = 0; i < 10; ++i) limit.feed(std::to_string(i) + "\r\n");
+    CHECK(limit.scrollback_size() == 3 && limit.history_line(0).cells[0].ch == U'6');
+}
+
+void test_terminal_alternate_screen() {
+    grove::Terminal t(10, 3, 100);
+    t.feed("shell$ ");
+    t.feed("\x1b[?1049h\x1b[H\x1b[2Jvim");
+    CHECK(t.alternate_screen() && t.row_text(0) == "vim");
+    for (int i = 0; i < 6; ++i) t.feed("\r\nline");
+    CHECK(t.scrollback_size() == 0);
+    t.feed("\x1b[?1049l");
+    CHECK(!t.alternate_screen() && t.row_text(0) == "shell$" && t.cursor_column() == 7 && t.cursor_row() == 0);
+    t.feed("\x1b[?1049h");
+    CHECK(t.row_text(0).empty());
+    t.feed("\x1b[?1049l");
+}
+
+void test_terminal_colors() {
+    grove::Terminal t(20, 2);
+    t.feed("\x1b[1;31mA\x1b[38;5;202mB\x1b[38;2;10;20;30mC\x1b[48:2::1:2:3mD\x1b[0;7mE\x1b[4:3mF\x1b[24;27mG");
+    const auto& c = t.line(0).cells;
+    CHECK((c[0].attrs & grove::TermBold) && c[0].fg == grove::TermColor::indexed(1));
+    CHECK(c[1].fg == grove::TermColor::indexed(202));
+    CHECK(c[2].fg == grove::TermColor::rgb(10, 20, 30));
+    CHECK(c[3].bg == grove::TermColor::rgb(1, 2, 3) && c[3].fg == grove::TermColor::rgb(10, 20, 30));
+    CHECK(c[4].attrs == grove::TermInverse && c[4].fg.kind == grove::TermColor::Kind::Default);
+    CHECK((c[5].attrs & grove::TermCurlyUnderline) && (c[5].attrs & grove::TermInverse));
+    CHECK(c[6].attrs == 0);
+    t.feed("\x1b[44m\x1b[2;1H\x1b[K");
+    CHECK(t.line(1).cells[5].bg == grove::TermColor::indexed(4));
+    CHECK(t.resolve(grove::TermColor::indexed(196), true) == (grove::TermRgb{ 255, 0, 0 }));
+    CHECK(t.resolve(grove::TermColor::indexed(244), true) == (grove::TermRgb{ 128, 128, 128 }));
+    t.feed("\x1b]4;1;#ff8000\x07");
+    CHECK(t.palette(1) == (grove::TermRgb{ 255, 128, 0 }));
+    t.feed("\x1b]4;1;rgb:00/80/ff\x1b\\");
+    CHECK(t.palette(1) == (grove::TermRgb{ 0, 128, 255 }));
+}
+
+void test_terminal_unicode() {
+    grove::Terminal t(6, 2);
+    t.feed("a\xE4\xBD\xA0" "b");
+    const auto& c = t.line(0).cells;
+    CHECK(c[1].ch == U'你' && c[1].width == 2 && c[2].width == 0 && c[3].ch == U'b' && t.cursor_column() == 4);
+    t.feed("\r\ne\xCC\x81x");
+    CHECK(t.line(1).cells[0].ch == U'e' && t.line(1).cells[0].marks == U"́" && t.line(1).cells[1].ch == U'x');
+    grove::Terminal edge(4, 2);
+    edge.feed("abc\xE4\xBD\xA0");
+    CHECK(edge.row_text(0) == "abc" && edge.line(1).cells[0].width == 2 && edge.line(0).wrapped);
+    grove::Terminal over(6, 1);
+    over.feed("\xE4\xBD\xA0\xE5\xA5\xBD\x1b[1;2Hx");
+    CHECK(over.line(0).cells[0].ch == U' ' && over.line(0).cells[1].ch == U'x' && over.line(0).cells[2].width == 2);
+    grove::Terminal dec(10, 1);
+    dec.feed("\x1b(0lqk\x1b(Bq");
+    CHECK(dec.row_text(0) == "\xE2\x94\x8C\xE2\x94\x80\xE2\x94\x90q");
+    grove::Terminal split(5, 1);
+    split.feed("\xE2\x82");
+    split.feed("\xAC!");
+    CHECK(split.line(0).cells[0].ch == U'€' && split.line(0).cells[1].ch == U'!');
+    grove::Terminal bad(5, 1);
+    bad.feed("\xFFz");
+    CHECK(bad.line(0).cells[0].ch == 0xFFFD && bad.line(0).cells[1].ch == U'z');
+    CHECK(grove::terminal_char_width(U'\U0001F600') == 2 && grove::terminal_char_width(U'​') == 0 && grove::terminal_char_width(U'é') == 1);
+}
+
+void test_terminal_replies_and_modes() {
+    grove::Terminal t(80, 24);
+    t.feed("\x1b[5;10H\x1b[6n\x1b[c\x1b[>c\x1b[5n");
+    CHECK(t.take_reply() == "\x1b[5;10R\x1b[?62;22c\x1b[>1;10;0c\x1b[0n");
+    t.feed("\x1b]11;?\x07");
+    const std::string bg = t.take_reply();
+    CHECK(bg.rfind("\x1b]11;rgb:", 0) == 0);
+    t.feed("\x1b[?2004h\x1b[?1$p");
+    CHECK(t.bracketed_paste() && t.take_reply() == "\x1b[?1;2$y");
+    t.feed("\x1b[18t");
+    CHECK(t.take_reply() == "\x1b[8;24;80t");
+    t.feed("\x1bP$qr\x1b\\");
+    CHECK(t.take_reply() == "\x1bP1$r1;24r\x1b\\");
+    t.feed("\x1b]0;my title\x07");
+    CHECK(t.title() == "my title" && t.take_title_changed());
+    t.feed("\x1b]7;file://host/home/me/My%20Dir\x1b\\");
+    CHECK(t.working_directory() == "/home/me/My Dir");
+    t.feed("\x1b[?25l\x1b[6 q\x1b[?1h\x1b=");
+    CHECK(!t.cursor_visible() && t.cursor_shape() == grove::TermCursorShape::Bar && t.application_cursor_keys() && t.application_keypad());
+    t.feed("\x1b[!p");
+    CHECK(t.cursor_visible() && !t.application_cursor_keys());
+    t.feed("\x1b[3;10r\x1b[?6h\x1b[H");
+    CHECK(t.cursor_row() == 2 && t.origin_mode());
+    t.feed("\x1b[?6l\x1b[r\x1b[4h");
+    CHECK(t.insert_mode());
+    t.feed("\x1b[4l\x1b[?7l\x1b[1;79Habcd");
+    CHECK(t.row_text(0).size() == 80 && t.line(0).cells[79].ch == U'd' && t.cursor_row() == 0);
+    grove::Terminal unknown(10, 2);
+    unknown.feed("a\x1b[?9999hb\x1b]999;x\x07" "c\x1bP+q544e\x1b\\d\x1b_apc\x1b\\e");
+    CHECK(unknown.row_text(0) == "abcde");
+}
+
+void test_terminal_input_encoding() {
+    grove::Terminal t(80, 24);
+    CHECK(t.encode_key(grove::TermKey::Up, 0) == "\x1b[A");
+    CHECK(t.encode_key(grove::TermKey::Up, grove::TermCtrl) == "\x1b[1;5A");
+    CHECK(t.encode_key(grove::TermKey::Delete, 0) == "\x1b[3~" && t.encode_key(grove::TermKey::PageUp, grove::TermShift) == "\x1b[5;2~");
+    CHECK(t.encode_key(grove::TermKey::F1, 0) == "\x1bOP" && t.encode_key(grove::TermKey::F5, 0) == "\x1b[15~" && t.encode_key(grove::TermKey::F12, grove::TermAlt) == "\x1b[24;3~");
+    CHECK(t.encode_key(grove::TermKey::Backspace, 0) == "\x7f" && t.encode_key(grove::TermKey::Enter, 0) == "\r" && t.encode_key(grove::TermKey::Tab, grove::TermShift) == "\x1b[Z");
+    CHECK(t.encode_char(U'c', grove::TermCtrl) == "\x03" && t.encode_char(U'x', grove::TermAlt) == "\x1bx" && t.encode_char(U'[', grove::TermCtrl) == "\x1b");
+    CHECK(t.encode_char(U'é', 0) == "\xC3\xA9");
+    t.feed("\x1b[?1h");
+    CHECK(t.encode_key(grove::TermKey::Left, 0) == "\x1bOD" && t.encode_key(grove::TermKey::Home, 0) == "\x1bOH");
+    CHECK(t.encode_paste("a\nb") == "a\rb");
+    t.feed("\x1b[?2004h");
+    CHECK(t.encode_paste("x\x1b[201~y") == "\x1b[200~x[201~y\x1b[201~");
+    grove::TermMouse m;
+    m.button = 0;
+    m.column = 4;
+    m.row = 2;
+    CHECK(t.encode_mouse(m).empty());
+    t.feed("\x1b[?1000h");
+    CHECK(t.encode_mouse(m) == std::string("\x1b[M") + char(32) + char(37) + char(35));
+    t.feed("\x1b[?1006h");
+    CHECK(t.encode_mouse(m) == "\x1b[<0;5;3M");
+    m.press = false;
+    CHECK(t.encode_mouse(m) == "\x1b[<0;5;3m");
+    m.press = true;
+    m.motion = true;
+    CHECK(t.encode_mouse(m).empty());
+    t.feed("\x1b[?1002h");
+    CHECK(t.encode_mouse(m) == "\x1b[<32;5;3M");
+    CHECK(t.encode_wheel(true, 0, 0, 0) == "\x1b[<64;1;1M");
+    grove::Terminal alt(10, 3);
+    alt.feed("\x1b[?1049h");
+    CHECK(alt.encode_wheel(false, 0, 0, 0) == "\x1b[B\x1b[B\x1b[B");
+    CHECK(alt.encode_focus(true).empty());
+    alt.feed("\x1b[?1004h");
+    CHECK(alt.encode_focus(true) == "\x1b[I");
+}
+
+void test_terminal_selection_and_resize() {
+    grove::Terminal t(10, 3, 100);
+    t.feed("hello world\r\nnext line");
+    t.select_word(grove::TermPoint{ 0, 2 });
+    CHECK(t.selected_text() == "hello");
+    t.select(grove::TermPoint{ 0, 6 }, grove::TermPoint{ 2, 4 });
+    CHECK(t.selected_text() == "world\nnext");
+    t.select_line(grove::TermPoint{ 1, 0 });
+    CHECK(t.selected_text() == "hello world");
+    grove::Terminal r(10, 4, 100);
+    r.feed("1\r\n2\r\n3\r\n4");
+    r.resize(10, 2);
+    CHECK(r.rows() == 2 && r.row_text(0) == "3" && r.row_text(1) == "4" && r.scrollback_size() == 2 && r.cursor_row() == 1);
+    r.resize(10, 4);
+    CHECK(r.row_text(0) == "1" && r.row_text(3) == "4" && r.scrollback_size() == 0 && r.cursor_row() == 3);
+    r.resize(5, 4);
+    CHECK(r.columns() == 5 && r.line(0).cells.size() == 5);
+    grove::Terminal blank(10, 5);
+    blank.feed("$ ");
+    blank.resize(10, 3);
+    CHECK(blank.row_text(0) == "$" && blank.scrollback_size() == 0);
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1282,6 +1511,15 @@ int main() {
     test_zoom_and_select();
     test_keymap();
     test_dump_options();
+    test_menus();
+    test_terminal_basics();
+    test_terminal_scrolling();
+    test_terminal_alternate_screen();
+    test_terminal_colors();
+    test_terminal_unicode();
+    test_terminal_replies_and_modes();
+    test_terminal_input_encoding();
+    test_terminal_selection_and_resize();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

@@ -17,6 +17,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "border-color",
         "border-radius",
         "border-width",
+        "caret-color",
         "code-attribute",
         "code-builtin-operator",
         "code-builtin-type",

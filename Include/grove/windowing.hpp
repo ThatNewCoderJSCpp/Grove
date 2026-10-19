@@ -33,6 +33,11 @@ Node* create_popup(Document& document, Node* owner, const PopupOptions& options)
 bool answer_popup(Document& document, Node& popup, bool ok);
 std::vector<Node*> open_popups(Document& document, const Node& owner);
 
+MenuItem menu_item(const std::string& value, const std::string& label, const std::string& detail = {}, bool disabled = false);
+MenuItem menu_separator();
+bool open_menu(Document& document, Node& owner, const std::vector<MenuItem>& items, double x, double y);
+bool close_menu(Document& document);
+
 } // namespace grove
 
 #endif // GROVE_WINDOWING_HPP

@@ -279,4 +279,28 @@ std::vector<Node*> open_popups(Document& document, const Node& owner) {
     return out;
 }
 
+MenuItem menu_item(const std::string& value, const std::string& label, const std::string& detail, bool disabled) {
+    MenuItem item;
+    item.value = value;
+    item.label = label;
+    item.detail = detail;
+    item.disabled = disabled;
+    return item;
+}
+
+MenuItem menu_separator() {
+    MenuItem item;
+    item.separator = true;
+    return item;
+}
+
+bool open_menu(Document& document, Node& owner, const std::vector<MenuItem>& items, double x, double y) {
+    if (items.empty() || !document.host().open_menu) return false;
+    return document.host().open_menu(owner, items, x, y);
+}
+
+bool close_menu(Document& document) {
+    return document.host().close_menu && document.host().close_menu();
+}
+
 } // namespace grove

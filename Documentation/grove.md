@@ -230,6 +230,8 @@ Type safety holds at every layer:
 | `semantic` | colors from a compiler, drawn over the built-in highlighting; build it with `grove::code_spans_text()` (see below) |
 | `problems` | errors and warnings to underline; build it with `grove::code_problems_text()` |
 | `hover` | what to show in the popup the editor asked for with a `hover` event, see [Hovers and Ctrl+click](#hovers-and-ctrlclick) |
+| `hover-width` | widest the hover popup gets, in pixels (default 900); code in it wraps only past this |
+| `hover-height` | tallest the hover popup gets, in pixels (default 60% of the window); longer hovers scroll with the wheel |
 | `links` | spans that Ctrl+click goes somewhere from (built like `semantic`); they're underlined while Ctrl is held over them |
 | `link-words` | `true` treats every word as a possible link, for an app that works out where it goes when it's clicked |
 | `color-swatches` | `false` turns off the color swatches in Bark and Grove |
@@ -322,6 +324,43 @@ C++ can read the options with `grove::select_options(node)` (value, label and di
 | `placeholder` | shown next to the label until something is picked |
 
 With no label, it says "Choose file...", "Choose files...", "Choose folder..." or "Save as...". A script can also ask directly: `grove::choose_file("folder", "Pick a folder", "")` (C: `grove_file_dialog`) waits for the dialog and returns the path, or `""` when cancelled.
+
+## Terminals
+
+`<terminal>` is a terminal emulator: a grid of character cells that understands what programs write to a terminal (xterm's escape sequences), so shells, `vim`, `htop`, `less` and colored output look and behave as they do in any terminal. Grove draws it and handles the keyboard and mouse; the app connects it to a program, usually through a pseudo-terminal.
+
+```grove
+<terminal id="shell" rows="24"></terminal>
+```
+
+It fills the space Bark gives it (`flex: 1` or a `height`; without either it's `rows` tall, 24 by default) and works out how many columns and rows fit in its font. `color`, `background` and `caret-color` are the default text, background and cursor colors, `accent-color` tints the selection, and `font-family` and `font-size` pick the font (a monospace one by default). Line and block drawing characters are drawn as shapes, so borders join up whatever the font.
+
+From C++, `grove::terminal_of(document, element)` (in `grove/terminal.hpp`) gives the element's `grove::Terminal`:
+
+```cpp
+std::shared_ptr<grove::Terminal> term = grove::terminal_of(document, *element);
+term->set_input_handler([&](const std::string& bytes) { write(pty, bytes.data(), bytes.size()); });
+term->feed(output_from_the_program);
+write(pty, term->take_reply());
+if (term->columns() != cols || term->rows() != rows) resize_pty(term->columns(), term->rows());
+```
+
+| Call | Does |
+|---|---|
+| `feed(bytes)` | interpret UTF-8 output from the program |
+| `take_reply()` | answers to the program's questions (cursor position, device attributes, colors); write them back to it |
+| `set_input_handler(fn)` | `fn` gets the bytes to send to the program: keys, pasted text, mouse reports |
+| `columns()`, `rows()` | the current size; changes when the element is resized, so tell the program (`TIOCSWINSZ`, `ResizePseudoConsole`) |
+| `title()`, `working_directory()` | set by the program with OSC 0/2 and OSC 7 |
+| `take_changed()`, `take_title_changed()`, `take_bell()` | whether something happened since the last call |
+| `set_palette(i, rgb)`, `set_scrollback_limit(n)`, `clear_scrollback()`, `reset()` | |
+| `screen_text()`, `row_text(r)`, `line(r)`, `selected_text()` | read what's on screen |
+
+What it supports: the VT100/VT220 and xterm control sequences (cursor movement, erasing, inserting and deleting characters and lines, scroll regions, origin mode, tab stops, saved cursors, character sets including DEC line drawing, the alternate screen), 16, 256 and 24-bit colors with bold, dim, italic, underline (single, double, curly), blink, inverse, hidden, strikethrough and overline, wide and combining characters, xterm's key encoding (with application cursor and keypad modes and modifier combinations), bracketed paste, focus reports, and mouse reporting (X10, normal, button and any motion, in the default, UTF-8, SGR and urxvt encodings). It answers DSR, DA1, DA2, DA3, DECRQM, DECRQSS, DECREQTPARM, window-size reports and OSC 4/10/11/12 color queries. 132-column mode clears the screen as DEC terminals do but keeps the width.
+
+With the keyboard focused on it, keys go to the program. Ctrl+Shift+C copies the selection (so does Ctrl+C while something is selected), Ctrl+Shift+V or Shift+Insert pastes, Shift+PageUp and Shift+PageDown scroll back, and Ctrl+Shift+Home and End go to the top and bottom of the scrollback. Drag to select (Alt+drag for a block), double-click for a word, Shift+click to extend; middle-click pastes. When the program asks for the mouse, clicks and the wheel go to it instead; hold Shift to select anyway. The wheel scrolls back through output, or moves through the alternate screen with arrow keys (as `less` and `man` expect).
+
+`key_down` still fires on the element first, so an app can take a key for itself with `prevent_default()`.
 
 ## Math
 
@@ -444,7 +483,7 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `mouse_down`, `mouse_up`, `mouse_move` | the mouse is pressed, released or moved | `x`, `y`, `button` |
 | `mouse_enter`, `mouse_leave` | the mouse moves onto or off an element (doesn't bubble) | |
 | `wheel` | scrolling | `delta_x`, `delta_y` |
-| `key_down`, `key_up` | a key is pressed or released | `key`, `shift()`, `ctrl()`, `alt()`, `meta()` |
+| `key_down`, `key_up` | a key is pressed or released; `key` is a name like `A`, `Enter`, `Delete`, `F2` or `UpArrow`, never a control character. While an `input_string` is being typed in, its value is the text typed so far during `key_down`, and a handler that sets the value replaces what's in the field | `key`, `shift()`, `ctrl()`, `alt()`, `meta()` |
 | `text` | text is typed | `text` |
 | `focus`, `blur` | an element gains or loses focus (doesn't bubble) | |
 | `input` | an input's value changes while editing | |
@@ -461,6 +500,8 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `page_show`, `page_hide` | a page starts or stops being the one showing | |
 | `open`, `close` | a modal opens or closes | |
 | `ok`, `cancel` | a popup is answered; the target is the popup. `cancel` also fires on an `input_file` whose dialog was closed without picking | |
+| `menu` | an item of a [right-click menu](#right-click-menus) is picked; the target is the menu's owner (doesn't bubble) | `key` is the item's value |
+| `menu_close` | a right-click menu closes without a pick (doesn't bubble) | |
 
 Any other name is a custom event, fired with `dispatch`. Names ignore case, `_` and `-`, so `mouse_down`, `mousedown` and `MouseDown` are the same.
 
@@ -547,6 +588,22 @@ grove::confirm("Delete", "Delete everything?", [&](bool: yes) -> void {
 A popup belongs to the window of the element whose event is running (or the main window), so its `ok` and `cancel` events go to that window. Popups are ordinary `<window popup>` elements built from `row`, `p`, the inputs and `button`, so Bark can restyle them: `window.popup`, `.popup-warning`, `.popup-icon`, `.popup-message`, `.popup-input`, `.popup-buttons`, `.popup-ok` and `.popup-cancel`.
 
 In C, `grove_popup(document, owner, kind, title, message, input, value, options)` makes any of them (`kind` is `info`, `warning`, `error` or `question`; `input` is empty or `string`, `integer`, `float`, `bool`, `color`, `choice` or `slider`; `options` is `a|b|c` for a choice or `min|max` for numbers), and `grove_popup_answer` answers one.
+
+## Right-click menus
+
+A host app can open a menu at the mouse, like a context menu, from C++ with `grove/windowing.hpp`:
+
+```cpp
+std::vector<grove::MenuItem> items{
+    grove::menu_item("rename", "Rename\u2026", "F2"),
+    grove::menu_separator(),
+    grove::menu_item("delete", "Delete", "Delete", !can_delete),
+};
+grove::open_menu(document, *owner, items, e.x, e.y);
+document.events().add_listener(owner, "menu", [](grove::Event& e) { /* e.key is "rename" or "delete" */ });
+```
+
+Each item has a `value`, a `label`, an optional `detail` drawn on the right (a shortcut, say) and can be `disabled`; `menu_separator()` draws a line. The menu opens at `x`, `y` (an event's `x` and `y` work as they are) and moves to stay inside the window. A click on an item or Enter on the highlighted one sends `menu` to the owner with `key` set to the item's value; Escape, a click outside, scrolling or another right-click closes it and sends `menu_close`. Up and Down move the highlight. `open_menu` returns `false` when nothing is drawing the document (`grove dump`, tests), and `close_menu(document)` closes an open one.
 
 ## Making one executable
 
