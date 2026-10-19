@@ -12,7 +12,7 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ON)
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
 set(GROVE_FIZMO_TAG "v0.2.28" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.1.16" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.1.17" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
