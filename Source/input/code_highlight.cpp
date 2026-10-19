@@ -1462,4 +1462,36 @@ bool CodeOverlay::has_error(std::size_t line, std::string_view text) const {
     return false;
 }
 
+std::vector<CodeWord> code_language_words(CodeLanguage language) {
+    std::vector<CodeWord> out;
+    auto add = [&](const std::set<std::string>& words, CodeTokenKind kind) {
+        for (const std::string& w : words) out.push_back(CodeWord{ w, kind });
+    };
+    switch (language) {
+        case CodeLanguage::C:
+            add(c_keywords(), CodeTokenKind::Keyword);
+            add(c_types(), CodeTokenKind::BuiltinType);
+            add(constants(), CodeTokenKind::Constant);
+            break;
+        case CodeLanguage::Cpp:
+            add(cpp_keywords(), CodeTokenKind::Keyword);
+            add(c_types(), CodeTokenKind::BuiltinType);
+            add(constants(), CodeTokenKind::Constant);
+            break;
+        case CodeLanguage::Walnut:
+            add(walnut_keywords(), CodeTokenKind::Keyword);
+            add(walnut_types(), CodeTokenKind::BuiltinType);
+            add(constants(), CodeTokenKind::Constant);
+            break;
+        case CodeLanguage::CMake:
+            add(cmake_control(), CodeTokenKind::Keyword);
+            add(cmake_constants(), CodeTokenKind::Constant);
+            add(cmake_operators(), CodeTokenKind::Operator);
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+
 } // namespace grove

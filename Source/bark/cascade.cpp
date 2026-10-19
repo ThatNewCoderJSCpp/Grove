@@ -60,6 +60,8 @@ constexpr const char* k_inherited[] = {
     "accent-color",
     "caret-color",
     "cursor",
+    "user-select",
+    "selection-color",
 };
 
 struct Candidate {
@@ -159,11 +161,13 @@ const Stylesheet& default_stylesheet() {
             "p { margin: 0 0 0.5em 0; }\n"
             "math { display: inline; }\n"
             "input, input_integer, input_float, input_string, input_color, input_select {\n"
-            "    width: 220px; padding: 6px 10px; margin: 0 0 8px 0;\n"
+            "    padding: 6px 10px; margin: 0 0 8px 0;\n"
             "    background: rgba(255, 255, 255, 6%); border-color: rgba(255, 255, 255, 22%); border-radius: 6px;\n"
             "}\n"
+            "input, input_integer, input_float, input_string, input_color { width: 220px; }\n"
             "input_slider, slider { width: 220px; margin: 0 0 8px 0; }\n"
             "input_select { cursor: pointer; }\n"
+            "button, input_file, input_bool, input_radio, input_select { user-select: none; }\n"
             "option { display: none; }\n"
             "input_code {\n"
             "    height: 300px; margin: 0 0 8px 0; font-family: monospace; font-size: 14px; cursor: text;\n"

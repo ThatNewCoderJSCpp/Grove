@@ -303,4 +303,16 @@ bool close_menu(Document& document) {
     return document.host().close_menu && document.host().close_menu();
 }
 
+std::string selected_text(Document& document) {
+    return document.host().selected_text ? document.host().selected_text() : std::string();
+}
+
+bool select_text(Document& document, Node& node) {
+    return document.host().select_text && document.host().select_text(node);
+}
+
+void clear_text_selection(Document& document) {
+    if (document.host().clear_selection) document.host().clear_selection();
+}
+
 } // namespace grove

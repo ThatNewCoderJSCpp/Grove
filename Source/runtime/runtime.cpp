@@ -1,3 +1,4 @@
+#include "grove/input/completion.hpp"
 #include "grove/terminal.hpp"
 #include "grove/runtime/runtime.hpp"
 #include "grove/pages.hpp"
@@ -25,6 +26,7 @@
 #include <future>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -567,6 +569,48 @@ struct SelectMenu {
     std::vector<std::pair<Rect, std::size_t>> rows;
 };
 
+struct CodeCompletion {
+    const Node* node = nullptr;
+    bool open = false;
+    CodePos start;
+    std::vector<CompletionItem> items;
+    std::vector<CompletionMatch> shown;
+    std::size_t active = 0;
+    std::size_t top = 0;
+    std::size_t visible = 0;
+    Rect panel;
+    float row_h = 0;
+    std::vector<std::pair<Rect, std::size_t>> rows;
+    const Node* suppressed_node = nullptr;
+    CodePos suppressed_start{ static_cast<std::size_t>(-1), 0 };
+    bool busy = false;
+    std::string attr_seen;
+    const Node* waiting = nullptr;
+    CodePos waiting_start;
+    bool waiting_manual = false;
+};
+
+struct TextRun {
+    const Node* block = nullptr;
+    const Node* owner = nullptr;
+    std::size_t start = 0;
+    std::string text;
+    float x = 0;
+    float y = 0;
+    float w = 0;
+    float h = 0;
+    fizmo::text::TextStyle style;
+    Rect clip;
+    bool selectable = true;
+};
+
+struct TextPoint {
+    const Node* block = nullptr;
+    std::size_t offset = 0;
+    bool valid() const noexcept { return block != nullptr; }
+    bool operator==(const TextPoint& o) const noexcept { return block == o.block && offset == o.offset; }
+};
+
 struct TermView {
     const Node* node = nullptr;
     float x = 0;
@@ -743,6 +787,7 @@ public:
     }
 
     void paint(fizmo::graphics::Renderer& r) {
+        m_renderer = &r;
         const auto now = std::chrono::steady_clock::now();
         m_dt = m_has_frame ? std::min(0.1f, std::chrono::duration<float>(now - m_last_frame).count()) : 0.0f;
         m_last_frame = now;
@@ -788,6 +833,8 @@ public:
         m_ops.clear();
         m_hits.clear();
         m_term_views.clear();
+        m_runs.clear();
+        if (m_sel_anchor.valid() && (!document().is_attached(*m_sel_anchor.block) || !document().is_attached(*m_sel_focus.block))) clear_text_selection();
         m_boxes.clear();
         m_opacity.clear();
         m_scrollers.clear();
@@ -806,6 +853,7 @@ public:
         if (m_scroll > max_scroll) m_scroll = max_scroll;
         layout_modals(r, w, h);
         layout_code_hover(r, w, h);
+        layout_completion(r, w, h);
         layout_picker(r, w, h);
         layout_menu(r, w, h);
         layout_context(r, w, h);
@@ -856,6 +904,7 @@ public:
                 if (m_code_drag) code_drag_to(px, py);
                 if (m_picker.drag != PickerPart::None) picker_drag(px, py);
                 term_mouse_move(px, py);
+                text_drag_to(px, py);
                 hover_at(px, py);
                 code_hover_move(px, py);
                 if (document().events().has_listeners("mouse_move")) {
@@ -893,12 +942,20 @@ public:
                 if (m_context.owner) break;
                 if (term_double_click(px, py)) break;
                 Event ev = pointer_event("double_click", px, py, static_cast<int>(e.button));
-                if (dispatch(hit_element(px, py), ev) && e.button == 1) code_double_click(px, py);
+                const Node* under = hit_element(px, py);
+                if (dispatch(under, ev) && e.button == 1) {
+                    if (code_node_at(px, py)) code_double_click(px, py);
+                    else if (selectable_target(under)) {
+                        select_word_at(px, py);
+                        m_sel_pending = false;
+                    }
+                }
                 break;
             }
             case WindowEventType::MouseScroll: {
                 if (m_context.owner) close_context_menu(true);
                 const double dy = e.scroll_y != 0.0f ? static_cast<double>(e.scroll_y) : static_cast<double>(e.scroll_delta);
+                if (completion_wheel(dy)) break;
                 if (!m_modal && e.scroll_x == 0.0f && term_wheel(m_mouse_x, m_mouse_y, dy)) break;
                 Event ev = pointer_event("wheel", m_mouse_x, m_mouse_y, 0);
                 ev.delta_x = e.scroll_x;
@@ -948,6 +1005,10 @@ public:
             default: break;
         }
     }
+
+    std::string public_selected_text() { return selection_text(); }
+    bool public_select(const Node& node) { return select_contents(node); }
+    void public_clear_selection() { clear_text_selection(); }
 
     bool open_context_menu(Node& owner, const std::vector<MenuItem>& items, double x, double y) {
         if (items.empty()) return false;
@@ -1177,9 +1238,10 @@ private:
         std::size_t swatches = 0;
         std::size_t codes = 0;
         std::size_t terms = 0;
+        std::size_t runs = 0;
     };
 
-    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size(), m_term_views.size() }; }
+    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size(), m_term_views.size(), m_runs.size() }; }
 
     void shift_x(const Mark& from, float dx) {
         for (std::size_t i = from.ops; i < m_ops.size(); ++i) m_ops[i].x += dx;
@@ -1195,6 +1257,10 @@ private:
         }
         for (std::size_t i = from.codes; i < m_code_laid.size(); ++i) m_code[m_code_laid[i]].text_x += dx;
         for (std::size_t i = from.terms; i < m_term_views.size(); ++i) m_term_views[i].x += dx;
+        for (std::size_t i = from.runs; i < m_runs.size(); ++i) {
+            m_runs[i].x += dx;
+            m_runs[i].clip.x += dx;
+        }
     }
 
     void rewind(const Mark& m) {
@@ -1206,6 +1272,7 @@ private:
         m_swatches.resize(m.swatches);
         m_code_laid.resize(m.codes);
         m_term_views.resize(m.terms);
+        m_runs.resize(m.runs);
     }
 
     bool is_row(const Node& element, const bark::ComputedStyle& style) {
@@ -1475,7 +1542,14 @@ private:
                 const Box pad = box_of(style, "padding");
                 return text_width(r, file_label(node), text_style(node)) + pad.left + pad.right + margins + 2.0f + file_value_width(r, node);
             }
-            if (is_text_input(*kind) || *kind == InputKind::Select) return resolve_length(style, "width", row_width).value_or(220.0f) + margins;
+            if (*kind == InputKind::Select) {
+                if (const auto w = resolve_length(style, "width", row_width)) return *w + margins;
+                float n = select_content_width(r, node);
+                if (const auto mn = resolve_length(style, "min-width", row_width)) n = std::max(n, *mn);
+                if (const auto mx = resolve_length(style, "max-width", row_width)) n = std::min(n, *mx);
+                return n + margins;
+            }
+            if (is_text_input(*kind)) return resolve_length(style, "width", row_width).value_or(220.0f) + margins;
             if (*kind == InputKind::Slider) return resolve_length(style, "width", row_width).value_or(220.0f) + 70.0f + margins;
             const float size = std::round(static_cast<float>(font_size_of(node)) * 1.05f);
             const bool toggle = *kind == InputKind::Bool && is_switch(node, style.text("appearance"));
@@ -1844,7 +1918,10 @@ private:
         }
 
         const std::string align = owner_style.text("text-align").value_or("left");
+        const Node* block = nodes.front();
+        std::size_t stream = 0;
         for (std::size_t li = 0; li < lines.size(); ++li) {
+            if (li > 0) ++stream;
             std::vector<Piece>& line = lines[li];
             if (!pre) {
                 while (!line.empty() && line.back().space) line.pop_back();
@@ -1877,6 +1954,22 @@ private:
                     }
                     add_box(ElementBox{ f.node, px, py, pw, fh });
                 }
+                const Node* run_owner = f.node ? f.node : &owner;
+                TextRun run;
+                run.block = block;
+                run.owner = run_owner;
+                run.start = stream;
+                run.text = text;
+                run.x = px;
+                run.y = py;
+                run.w = pw;
+                run.h = fh;
+                run.style = f.style;
+                run.clip = current_clip();
+                run.selectable = style_of(*run_owner).text("user-select").value_or("text") != "none";
+                if (run.selectable && m_sel_anchor.valid()) draw_selection(r, run);
+                stream += text.size();
+                m_runs.push_back(std::move(run));
                 push_text(px, py, pw + 2, fh, text, f.style);
                 i = j;
             }
@@ -1921,6 +2014,35 @@ private:
         DrawOp& op = push(DrawOp::Kind::Math, dx, y, 0, 0, Color());
         op.math = &ft;
         y += ft.height();
+    }
+
+    float select_content_width(fizmo::graphics::Renderer& r, const Node& node) {
+        const bark::ComputedStyle& style = style_of(node);
+        const Box pad = box_of(style, "padding");
+        const fizmo::text::TextStyle ts = text_style(node);
+        float widest = 0.0f;
+        for (const SelectOption& o : select_options(node)) widest = std::max(widest, text_width(r, o.label, ts));
+        if (!select_index(node)) widest = std::max(widest, text_width(r, node.has_attribute("value") ? node.attribute_or("value", "") : node.attribute_or("placeholder", ""), ts));
+        const float arrow_w = text_width(r, "\xE2\x96\xBE", ts) + 4.0f;
+        return std::ceil(widest + pad.left + pad.right + arrow_w + 6.0f);
+    }
+
+    std::string fit_text(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& ts, float max_w) {
+        if (max_w <= 0.0f) return std::string();
+        if (text_width(r, text, ts) <= max_w) return text;
+        const std::string dots = "\xE2\x80\xA6";
+        std::vector<std::size_t> ends;
+        for (std::size_t i = 1; i <= text.size(); ++i) {
+            if (i == text.size() || (static_cast<unsigned char>(text[i]) & 0xC0) != 0x80) ends.push_back(i);
+        }
+        std::size_t lo = 0;
+        std::size_t hi = ends.size();
+        while (lo < hi) {
+            const std::size_t mid = (lo + hi + 1) / 2;
+            if (text_width(r, text.substr(0, ends[mid - 1]) + dots, ts) <= max_w) lo = mid;
+            else hi = mid - 1;
+        }
+        return lo == 0 ? (text_width(r, dots, ts) <= max_w ? dots : std::string()) : text.substr(0, ends[lo - 1]) + dots;
     }
 
     float box_width(const bark::ComputedStyle& style, float available) {
@@ -1992,7 +2114,13 @@ private:
         const Box pad = box_of(style, "padding");
         const fizmo::text::TextStyle ts = text_style(element);
         const float lh = line_height(r, ts);
-        const float w = box_width(style, width);
+        float w = box_width(style, width);
+        if (!resolve_length(style, "width", width)) {
+            float content = select_content_width(r, element);
+            if (const auto mn = resolve_length(style, "min-width", width)) content = std::max(content, *mn);
+            if (const auto mx = resolve_length(style, "max-width", width)) content = std::min(content, *mx);
+            w = std::min(width, content);
+        }
         const float h = lh + pad.top + pad.bottom;
         const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
         const bool open = m_menu.node == &element;
@@ -2012,13 +2140,15 @@ private:
         const float tw = std::max(1.0f, x + w - pad.right - arrow_w - tx);
         fizmo::text::TextStyle shown = ts;
         if (disabled) shown.set_fg_color(with_alpha(raw_text_color(element), fade));
+        push_clip(Rect{ x, y, std::max(0.0f, x + w - pad.right - arrow_w - x), h });
         if (index && *index < options.size()) {
-            push_text(tx, y + pad.top, tw, lh, options[*index].label, shown);
+            push_text(tx, y + pad.top, tw, lh, fit_text(r, options[*index].label, shown, tw), shown);
         } else {
             fizmo::text::TextStyle muted = ts;
             muted.set_fg_color(with_alpha(text_color(element), 0.45));
-            push_text(tx, y + pad.top, tw, lh, element.has_attribute("value") ? element.attribute_or("value", "") : element.attribute_or("placeholder", ""), muted);
+            push_text(tx, y + pad.top, tw, lh, fit_text(r, element.has_attribute("value") ? element.attribute_or("value", "") : element.attribute_or("placeholder", ""), muted, tw), muted);
         }
+        pop_clip();
         fizmo::text::TextStyle arrow = ts;
         arrow.set_fg_color(with_alpha(text_color(element), disabled ? 0.3 : 0.7));
         push_text(x + w - pad.right - arrow_w + 4.0f, y + pad.top, arrow_w, lh, "\xE2\x96\xBE", arrow);
@@ -2795,6 +2925,745 @@ private:
         term->scroll_view((up ? 3 : -3) * notches);
         poke();
         return true;
+    }
+
+    std::size_t doc_order(const Node* node) {
+        if (m_doc_order_rev != document().revision()) {
+            m_doc_order.clear();
+            std::size_t n = 0;
+            document().root().walk([&](const Node& x) { m_doc_order[&x] = n++; });
+            m_doc_order_rev = document().revision();
+        }
+        const auto it = m_doc_order.find(node);
+        return it == m_doc_order.end() ? 0 : it->second;
+    }
+
+    bool text_before(const TextPoint& a, const TextPoint& b) {
+        if (a.block == b.block) return a.offset < b.offset;
+        return doc_order(a.block) < doc_order(b.block);
+    }
+
+    bool has_text_selection() const { return m_sel_anchor.valid() && m_sel_focus.valid() && !(m_sel_anchor == m_sel_focus); }
+
+    void clear_text_selection() {
+        const bool had = m_sel_anchor.valid();
+        m_sel_anchor = TextPoint{};
+        m_sel_focus = TextPoint{};
+        m_sel_pending = false;
+        m_sel_dragged = false;
+        if (had) poke();
+    }
+
+    std::pair<std::size_t, std::size_t> run_selection(const TextRun& run) {
+        if (!has_text_selection()) return { 0, 0 };
+        TextPoint a = m_sel_anchor;
+        TextPoint b = m_sel_focus;
+        if (text_before(b, a)) std::swap(a, b);
+        const TextPoint run_start{ run.block, run.start };
+        const TextPoint run_end{ run.block, run.start + run.text.size() };
+        if (!text_before(a, run_end) || !text_before(run_start, b)) {
+            if (!(a.block == run.block && a.offset <= run.start && b.block == run.block && b.offset >= run_end.offset)) return { 0, 0 };
+        }
+        std::size_t from = 0;
+        std::size_t to = run.text.size();
+        if (a.block == run.block && a.offset > run.start) from = std::min(run.text.size(), a.offset - run.start);
+        if (b.block == run.block) to = b.offset <= run.start ? 0 : std::min(run.text.size(), b.offset - run.start);
+        if (from >= to) return { 0, 0 };
+        return { from, to };
+    }
+
+    void draw_selection(fizmo::graphics::Renderer& r, const TextRun& run) {
+        const auto [from, to] = run_selection(run);
+        if (from >= to) return;
+        const float x0 = run.x + text_width(r, run.text.substr(0, from), run.style);
+        const float x1 = run.x + text_width(r, run.text.substr(0, to), run.style);
+        Color color = accent_color(*run.owner);
+        if (const auto sel = style_of(*run.owner).color("selection-color")) color = to_color(*sel);
+        else color = with_alpha(color, 0.38);
+        push_rect(DrawOp::Kind::Fill, x0, run.y, std::max(1.0f, x1 - x0), run.h, color);
+    }
+
+    std::size_t run_offset_at(const TextRun& run, float px) {
+        fizmo::graphics::Renderer* r = m_renderer;
+        if (!r || px <= run.x) return 0;
+        if (px >= run.x + run.w) return run.text.size();
+        std::vector<std::size_t> ends{ 0 };
+        for (std::size_t i = 1; i <= run.text.size(); ++i) {
+            if (i == run.text.size() || (static_cast<unsigned char>(run.text[i]) & 0xC0) != 0x80) ends.push_back(i);
+        }
+        std::size_t best = 0;
+        float best_d = 1e9f;
+        std::size_t lo = 0;
+        std::size_t hi = ends.size() - 1;
+        while (lo < hi) {
+            const std::size_t mid = (lo + hi) / 2;
+            if (run.x + text_width(*r, run.text.substr(0, ends[mid]), run.style) < px) lo = mid + 1;
+            else hi = mid;
+        }
+        for (std::size_t k = lo > 0 ? lo - 1 : 0; k <= std::min(lo + 1, ends.size() - 1); ++k) {
+            const float d = std::abs(run.x + text_width(*r, run.text.substr(0, ends[k]), run.style) - px);
+            if (d < best_d) {
+                best_d = d;
+                best = ends[k];
+            }
+        }
+        return best;
+    }
+
+    const TextRun* run_at(float px, float py, bool nearest, const Rect* within = nullptr) {
+        const TextRun* best = nullptr;
+        float best_score = 1e18f;
+        for (const TextRun& run : m_runs) {
+            if (!run.selectable) continue;
+            if (within && (std::abs(run.clip.x - within->x) > 0.5f || std::abs(run.clip.y - within->y) > 0.5f || std::abs(run.clip.w - within->w) > 0.5f || std::abs(run.clip.h - within->h) > 0.5f)) continue;
+            if (!nearest) {
+                if (!run.clip.contains(px, py)) continue;
+                if (py < run.y || py >= run.y + run.h) continue;
+                const float dx = px < run.x ? run.x - px : px > run.x + run.w ? px - (run.x + run.w) : 0.0f;
+                if (dx < best_score) {
+                    best_score = dx;
+                    best = &run;
+                }
+                continue;
+            }
+            const float dy = py < run.y ? run.y - py : py >= run.y + run.h ? py - (run.y + run.h) : 0.0f;
+            const float dx = px < run.x ? run.x - px : px > run.x + run.w ? px - (run.x + run.w) : 0.0f;
+            const float score = dy * 1000.0f + dx;
+            if (score < best_score) {
+                best_score = score;
+                best = &run;
+            }
+        }
+        return best;
+    }
+
+    TextPoint point_at(float px, float py, bool nearest, const Rect* within = nullptr) {
+        const TextRun* run = run_at(px, py, nearest, within);
+        if (!run) return TextPoint{};
+        return TextPoint{ run->block, run->start + run_offset_at(*run, px) };
+    }
+
+    bool selectable_target(const Node* target) {
+        for (const Node* n = target; n; n = n->parent()) {
+            if (!n->is_element()) continue;
+            if (n->tag() == "button" || n->tag() == "terminal" || input_kind_of(*n)) return false;
+        }
+        return true;
+    }
+
+    std::string block_text(const Node* block) {
+        std::string out;
+        for (const TextRun& run : m_runs) {
+            if (run.block != block) continue;
+            while (out.size() < run.start) out += '\n';
+            if (out.size() > run.start) out.resize(run.start);
+            out += run.text;
+        }
+        return out;
+    }
+
+    const Rect* anchor_clip() const {
+        for (const TextRun& run : m_runs) {
+            if (run.block == m_sel_anchor.block && run.start <= m_sel_anchor.offset && m_sel_anchor.offset <= run.start + run.text.size()) return &run.clip;
+        }
+        return nullptr;
+    }
+
+    void text_drag_to(float px, float py) {
+        if (!m_sel_pending) return;
+        if (!m_sel_dragged && std::hypot(px - m_sel_press_x, py - m_sel_press_y) < 3.0f) return;
+        m_sel_dragged = true;
+        const Rect* clip = anchor_clip();
+        const Rect keep = clip ? *clip : k_everywhere;
+        const TextPoint at = point_at(px, py, true, clip ? &keep : nullptr);
+        if (at.valid() && !(at == m_sel_focus)) {
+            m_sel_focus = at;
+            poke();
+        }
+    }
+
+    void select_word_at(float px, float py) {
+        const TextPoint at = point_at(px, py, false);
+        if (!at.valid()) return;
+        const std::string text = block_text(at.block);
+        auto word = [&](std::size_t i) {
+            const unsigned char c = static_cast<unsigned char>(text[i]);
+            return std::isalnum(c) || c == '_' || c >= 0x80;
+        };
+        std::size_t a = std::min(at.offset, text.size());
+        std::size_t b = a;
+        if (a < text.size() && !word(a) && a > 0 && word(a - 1)) --a, --b;
+        if (a < text.size() && word(a)) {
+            while (a > 0 && word(a - 1)) --a;
+            while (b < text.size() && word(b)) ++b;
+        } else if (a < text.size()) {
+            b = a + 1;
+        }
+        m_sel_anchor = TextPoint{ at.block, a };
+        m_sel_focus = TextPoint{ at.block, b };
+        poke();
+    }
+
+    std::string selection_text() {
+        if (!has_text_selection()) return std::string();
+        std::string out;
+        const TextRun* prev = nullptr;
+        for (const TextRun& run : m_runs) {
+            const auto [from, to] = run_selection(run);
+            if (from >= to) continue;
+            if (prev) {
+                if (prev->block != run.block) out += '\n';
+                else {
+                    const std::size_t prev_end = prev->start + prev->text.size();
+                    if (run.start > prev_end) out += '\n';
+                }
+            }
+            out += run.text.substr(from, to - from);
+            prev = &run;
+        }
+        return out;
+    }
+
+    bool copy_text_selection() {
+        if (!has_text_selection() || !m_native) return false;
+        const std::string text = selection_text();
+        if (text.empty()) return false;
+        return m_native->set_clipboard_text(text);
+    }
+
+    bool select_contents(const Node& node) {
+        const TextRun* first = nullptr;
+        const TextRun* last = nullptr;
+        for (const TextRun& run : m_runs) {
+            if (!run.selectable) continue;
+            if (run.owner != &node && !run.owner->is_inside(&node) && run.block != &node && !(run.block && run.block->is_inside(&node))) continue;
+            if (!first) first = &run;
+            last = &run;
+        }
+        if (!first) return false;
+        m_sel_anchor = TextPoint{ first->block, first->start };
+        m_sel_focus = TextPoint{ last->block, last->start + last->text.size() };
+        poke();
+        return true;
+    }
+
+    bool completion_enabled(const Node& node) {
+        const std::string v = node.attribute_or("autocomplete", "true");
+        return v != "false" && v != "off" && !code_read_only(node);
+    }
+
+    std::vector<std::string> code_lines(const CodeEditor& ed) const {
+        std::vector<std::string> out;
+        out.reserve(ed.buffer.line_count());
+        for (std::size_t i = 0; i < ed.buffer.line_count(); ++i) out.push_back(ed.buffer.line(i));
+        return out;
+    }
+
+    bool completion_trigger(const Node& node, const std::string& line, std::size_t column) {
+        const std::string triggers = node.attribute_or("complete-triggers", "");
+        std::size_t start = 0;
+        while (start < triggers.size()) {
+            std::size_t end = triggers.find(' ', start);
+            if (end == std::string::npos) end = triggers.size();
+            const std::string t = triggers.substr(start, end - start);
+            if (!t.empty() && column >= t.size() && line.compare(column - t.size(), t.size(), t) == 0) return true;
+            start = end + 1;
+        }
+        return false;
+    }
+
+    void close_completion(bool suppress) {
+        CodeCompletion& c = m_complete;
+        if (suppress) c.waiting = nullptr;
+        if (suppress && c.open && c.node) {
+            c.suppressed_node = c.node;
+            c.suppressed_start = c.start;
+        }
+        if (c.open) poke();
+        c.open = false;
+        c.items.clear();
+        c.shown.clear();
+        c.rows.clear();
+    }
+
+    void request_completion(const Node* node, bool manual, const std::string& typed) {
+        CodeCompletion& c = m_complete;
+        if (!node || c.busy || !document().is_attached(*node) || !completion_enabled(*node)) {
+            close_completion(false);
+            return;
+        }
+        CodeEditor& ed = m_code[node];
+        CodeBuffer& buf = ed.buffer;
+        if (buf.has_extra_cursors() || buf.has_selection()) {
+            close_completion(false);
+            return;
+        }
+        const CodePos caret = buf.caret();
+        const std::string line = buf.line(caret.line);
+        const std::string extra = node->attribute_or("word-chars", "");
+        const std::size_t word = completion_word_start(line, caret.column, extra);
+        const bool trigger = !typed.empty() && completion_trigger(*node, line, caret.column);
+        const std::string prefix = line.substr(word, caret.column - word);
+        const bool keep = c.open && c.node == node && c.start.line == caret.line && c.start.column <= caret.column;
+        if (!manual && !trigger && !keep) {
+            if (prefix.empty() || std::isdigit(static_cast<unsigned char>(prefix[0]))) {
+                close_completion(false);
+                return;
+            }
+            if (c.suppressed_node == node && c.suppressed_start == CodePos{ caret.line, word }) return;
+        }
+        if (keep && caret.column < c.start.column) {
+            close_completion(false);
+            return;
+        }
+        c.busy = true;
+        Node& mut = mutable_node(*node);
+        mut.remove_attribute("completions");
+        Event e;
+        e.type = "complete";
+        e.x = static_cast<double>(caret.line + 1);
+        e.y = static_cast<double>(code_display_column(line, caret.column, ed.tab_size) + 1);
+        e.key = prefix;
+        e.text = typed;
+        e.button = manual ? 1 : 0;
+        e.bubbles = true;
+        const bool allowed = dispatch(node, e);
+        c.busy = false;
+        if (!document().is_attached(*node)) return;
+        std::optional<CompletionList> list;
+        if (allowed) list = parse_completions(node->attribute_or("completions", ""));
+        CodePos start{ caret.line, trigger && prefix.empty() ? caret.column : word };
+        std::vector<CompletionItem> items;
+        if (list) {
+            if (list->line == caret.line && list->column <= caret.column) start = CodePos{ list->line, list->column };
+            items = std::move(list->items);
+        } else if (allowed && node->attribute_or("word-completions", "true") != "false") {
+            items = word_completions(code_lines(ed), caret.line, caret.column, extra);
+            std::set<std::string> have;
+            for (const CompletionItem& it : items) have.insert(it.label);
+            for (const CodeWord& w : code_language_words(code_language_from_name(node->attribute_or("language", "plain")))) {
+                if (!have.insert(w.word).second) continue;
+                CompletionItem it;
+                it.label = w.word;
+                it.kind = w.kind == CodeTokenKind::BuiltinType ? "type" : w.kind == CodeTokenKind::Constant ? "constant" : "keyword";
+                items.push_back(std::move(it));
+            }
+        }
+        const std::string typed_part = line.substr(start.column, caret.column - start.column);
+        std::vector<CompletionMatch> shown = filter_completions(items, typed_part);
+        c.attr_seen = node->attribute_or("completions", "");
+        c.waiting = list ? node : nullptr;
+        c.waiting_start = start;
+        c.waiting_manual = manual;
+        if (shown.empty() || (shown.size() == 1 && items[shown[0].index].label == typed_part && !manual)) {
+            close_completion(false);
+            return;
+        }
+        std::string keep_label;
+        if (c.open && c.node == node && c.active < c.shown.size()) keep_label = c.items[c.shown[c.active].index].label;
+        c.node = node;
+        c.open = true;
+        c.start = start;
+        c.items = std::move(items);
+        c.shown = std::move(shown);
+        c.active = 0;
+        if (!keep_label.empty() && !typed_part.empty()) {
+            for (std::size_t i = 0; i < c.shown.size() && i < 50; ++i) {
+                if (c.items[c.shown[i].index].label == keep_label && c.shown[i].score <= c.shown[0].score) {
+                    c.active = i;
+                    break;
+                }
+            }
+        }
+        c.top = 0;
+        c.suppressed_node = nullptr;
+        hide_code_hover();
+        poke();
+    }
+
+    void accept_completion(std::size_t row) {
+        CodeCompletion& c = m_complete;
+        if (!c.open || !c.node || row >= c.shown.size() || !document().is_attached(*c.node)) {
+            close_completion(false);
+            return;
+        }
+        const Node* node = c.node;
+        CodeEditor& ed = m_code[node];
+        CodeBuffer& buf = ed.buffer;
+        const CompletionItem item = c.items[c.shown[row].index];
+        const CodePos start = c.start;
+        const CodePos caret = buf.caret();
+        close_completion(false);
+        if (caret.line != start.line || caret.column < start.column) return;
+        std::size_t offset = 0;
+        const std::string text = completion_insert_text(item, offset);
+        buf.select(start, caret);
+        buf.insert(text);
+        if (offset < text.size()) {
+            CodePos at = start;
+            for (std::size_t i = 0; i < offset; ++i) {
+                if (text[i] == '\n') {
+                    ++at.line;
+                    at.column = 0;
+                } else {
+                    ++at.column;
+                }
+            }
+            buf.set_caret(at);
+        }
+        ed.column_mode = false;
+        code_changed(node, text);
+        Event done;
+        done.type = "completion";
+        done.key = item.label;
+        done.text = text;
+        done.bubbles = true;
+        dispatch(node, done);
+    }
+
+    void after_code_typing(const Node* node, const std::string& typed) {
+        if (!node || typed.empty() || !completion_enabled(*node)) return;
+        CodeEditor& ed = m_code[node];
+        const CodePos caret = ed.buffer.caret();
+        const std::string line = ed.buffer.line(caret.line);
+        const std::string extra = node->attribute_or("word-chars", "");
+        const char last = typed.back();
+        if (is_completion_word_char(last, extra) || completion_trigger(*node, line, caret.column)) request_completion(node, false, typed);
+        else close_completion(false);
+    }
+
+    void step_completion(long delta) {
+        CodeCompletion& c = m_complete;
+        if (c.shown.empty()) return;
+        const long n = static_cast<long>(c.shown.size());
+        long next = static_cast<long>(c.active) + delta;
+        if (delta == 1 || delta == -1) next = (next % n + n) % n;
+        else next = std::clamp(next, 0L, n - 1);
+        c.active = static_cast<std::size_t>(next);
+        if (c.active < c.top) c.top = c.active;
+        if (c.visible > 0 && c.active >= c.top + c.visible) c.top = c.active + 1 - c.visible;
+        poke();
+    }
+
+    bool completion_key(fizmo::input::Key key, fizmo::input::Modifiers mods) {
+        using fizmo::input::Key;
+        using fizmo::input::Modifiers;
+        const bool ctrl = fizmo::input::has(mods, Modifiers::Control) || fizmo::input::has(mods, Modifiers::Meta);
+        const bool shift = fizmo::input::has(mods, Modifiers::Shift);
+        const bool alt = fizmo::input::has(mods, Modifiers::Alt);
+        CodeCompletion& c = m_complete;
+        if (ctrl && !alt && key == Key::Space) {
+            if (m_code_focus && completion_enabled(*m_code_focus)) request_completion(m_code_focus, true, std::string());
+            return true;
+        }
+        if (!c.open || c.node != m_code_focus) return false;
+        if (ctrl || alt) {
+            close_completion(false);
+            return false;
+        }
+        switch (key) {
+            case Key::Up: step_completion(-1); return true;
+            case Key::Down: step_completion(1); return true;
+            case Key::PageUp: step_completion(-static_cast<long>(std::max<std::size_t>(1, c.visible - 1))); return true;
+            case Key::PageDown: step_completion(static_cast<long>(std::max<std::size_t>(1, c.visible - 1))); return true;
+            case Key::Tab:
+                if (shift) return false;
+                accept_completion(c.active);
+                return true;
+            case Key::Enter:
+            case Key::NumpadEnter:
+                if (m_code_focus->attribute_or("accept-on-enter", "false") == "true") {
+                    accept_completion(c.active);
+                    return true;
+                }
+                close_completion(false);
+                return false;
+            case Key::Escape:
+                close_completion(true);
+                return true;
+            case Key::Backspace:
+            case Key::Delete:
+                return false;
+            case Key::LeftShift:
+            case Key::RightShift:
+                return false;
+            default:
+                close_completion(false);
+                return false;
+        }
+    }
+
+    void after_code_key(fizmo::input::Key key) {
+        using fizmo::input::Key;
+        CodeCompletion& c = m_complete;
+        if (!c.open || c.node != m_code_focus) return;
+        if (key == Key::Backspace || key == Key::Delete) {
+            const CodePos caret = m_code[c.node].buffer.caret();
+            if (caret.line != c.start.line || caret.column < c.start.column || (caret.column == c.start.column && c.start.column == completion_word_start(m_code[c.node].buffer.line(caret.line), caret.column, c.node->attribute_or("word-chars", "")) && !completion_trigger(*c.node, m_code[c.node].buffer.line(caret.line), caret.column))) {
+                close_completion(false);
+                return;
+            }
+            request_completion(c.node, false, std::string());
+        }
+    }
+
+    bool completion_click(float px, float py) {
+        CodeCompletion& c = m_complete;
+        if (!c.open) return false;
+        if (!c.panel.contains(px, py)) {
+            close_completion(false);
+            return false;
+        }
+        for (const auto& [rect, index] : c.rows) {
+            if (rect.contains(px, py)) {
+                accept_completion(index);
+                return true;
+            }
+        }
+        return true;
+    }
+
+    bool completion_wheel(double dy) {
+        CodeCompletion& c = m_complete;
+        if (!c.open || !c.panel.contains(m_mouse_x, m_mouse_y)) return false;
+        const long steps = dy > 0 ? -3 : 3;
+        const long top = std::clamp(static_cast<long>(c.top) + steps, 0L, static_cast<long>(c.shown.size() > c.visible ? c.shown.size() - c.visible : 0));
+        c.top = static_cast<std::size_t>(top);
+        poke();
+        return true;
+    }
+
+    struct KindLook {
+        const char* badge;
+        Color color;
+    };
+
+    static KindLook kind_look(const std::string& kind) {
+        if (kind == "keyword") return { "K", Color(198, 120, 221, 255) };
+        if (kind == "function" || kind == "method" || kind == "constructor" || kind == "macro-function") return { kind == "method" ? "M" : "F", Color(229, 192, 123, 255) };
+        if (kind == "variable" || kind == "parameter" || kind == "local") return { "V", Color(97, 175, 239, 255) };
+        if (kind == "field" || kind == "property" || kind == "member") return { "P", Color(86, 182, 194, 255) };
+        if (kind == "type" || kind == "class" || kind == "struct" || kind == "enum" || kind == "union" || kind == "interface" || kind == "typedef") return { "T", Color(230, 150, 90, 255) };
+        if (kind == "namespace" || kind == "module" || kind == "import") return { "N", Color(152, 195, 121, 255) };
+        if (kind == "constant" || kind == "enum member" || kind == "macro" || kind == "value") return { "C", Color(209, 154, 102, 255) };
+        if (kind == "tag" || kind == "element") return { "<", Color(224, 108, 117, 255) };
+        if (kind == "attribute") return { "@", Color(209, 154, 102, 255) };
+        if (kind == "snippet") return { "S", Color(171, 178, 191, 255) };
+        if (kind == "file" || kind == "folder") return { "D", Color(171, 178, 191, 255) };
+        return { "W", Color(140, 146, 160, 255) };
+    }
+
+    void completion_from_attribute() {
+        CodeCompletion& c = m_complete;
+        const Node* node = c.open ? c.node : c.waiting;
+        if (!node || node != m_code_focus || !document().is_attached(*node)) {
+            c.waiting = nullptr;
+            return;
+        }
+        const std::string attr = node->attribute_or("completions", "");
+        if (attr == c.attr_seen) return;
+        c.attr_seen = attr;
+        const auto found = m_code.find(node);
+        if (found == m_code.end()) return;
+        const CodeBuffer& buf = found->second.buffer;
+        const CodePos caret = buf.caret();
+        const CodePos start = c.open ? c.start : c.waiting_start;
+        if (caret.line != start.line || caret.column < start.column) {
+            c.waiting = nullptr;
+            return;
+        }
+        const std::string line = buf.line(caret.line);
+        const std::string extra = node->attribute_or("word-chars", "");
+        for (std::size_t i = start.column; i < caret.column; ++i) {
+            if (!is_completion_word_char(line[i], extra)) {
+                c.waiting = nullptr;
+                return;
+            }
+        }
+        std::optional<CompletionList> list = parse_completions(attr);
+        if (!list) return;
+        CodePos at = start;
+        if (list->line == caret.line && list->column <= caret.column) at = CodePos{ list->line, list->column };
+        const std::string typed = line.substr(at.column, caret.column - at.column);
+        std::vector<CompletionMatch> shown = filter_completions(list->items, typed);
+        if (shown.empty() || (shown.size() == 1 && list->items[shown[0].index].label == typed && !c.waiting_manual)) return;
+        std::string keep_label;
+        if (c.open && c.active < c.shown.size()) keep_label = c.items[c.shown[c.active].index].label;
+        c.node = node;
+        c.start = at;
+        c.items = std::move(list->items);
+        c.shown = std::move(shown);
+        c.active = 0;
+        for (std::size_t i = 0; !keep_label.empty() && i < c.shown.size() && i < 50; ++i) {
+            if (c.items[c.shown[i].index].label == keep_label) {
+                c.active = i;
+                break;
+            }
+        }
+        c.open = true;
+        hide_code_hover();
+    }
+
+    void layout_completion(fizmo::graphics::Renderer& r, float view_w, float view_h) {
+        CodeCompletion& c = m_complete;
+        c.rows.clear();
+        completion_from_attribute();
+        if (!c.open) return;
+        if (!c.node || c.node != m_code_focus || !document().is_attached(*c.node)) {
+            close_completion(false);
+            return;
+        }
+        const auto found = m_code.find(c.node);
+        if (found == m_code.end()) return;
+        CodeEditor& ed = found->second;
+        if (c.start.line >= ed.buffer.line_count()) {
+            close_completion(false);
+            return;
+        }
+        const bark::ComputedStyle& style = style_of(*c.node);
+        const Color fg = raw_text_color(*c.node);
+        const Color accent = accent_color(*c.node);
+        const Color editor_bg = to_color(style.color("background").value_or(bark::Rgba{ 30, 30, 46, 255 }));
+        const std::optional<bark::Rgba> hover_bg = style.color("code-hover");
+        const Color panel_bg = hover_bg ? to_color(*hover_bg) : mix(editor_bg, fg, 0.06f);
+        fizmo::text::TextStyle mono = text_style(*c.node);
+        if (!style.get("font-family")) mono.set_font(fizmo::text::to_font(fizmo::text::MonospaceFont::CascadiaMono));
+        mono.set_size(std::max(10.0, mono.size() * 0.95));
+        mono.set_bold(false);
+        mono.set_italic(false);
+        mono.set_underline(false);
+        mono.set_strikethrough(false);
+        mono.set_fg_color(fg);
+        fizmo::text::TextStyle bold = mono;
+        bold.set_bold(true);
+        bold.set_fg_color(accent);
+        fizmo::text::TextStyle muted = mono;
+        muted.set_fg_color(with_alpha(fg, 0.55));
+        fizmo::text::TextStyle prose(std::max(11.0, mono.size() * 0.92), with_alpha(fg, 0.85));
+        fizmo::text::TextStyle badge_style = mono;
+        badge_style.set_bold(true);
+        badge_style.set_size(std::max(9.0, mono.size() * 0.8));
+        const float lh = line_height(r, mono);
+        c.row_h = std::round(lh + 6.0f);
+        const std::size_t max_rows = static_cast<std::size_t>(std::clamp<std::int64_t>(parse_integer(c.node->attribute_or("complete-rows", "")).value_or(10), 3, 30));
+        c.visible = std::min(max_rows, c.shown.size());
+        if (c.active >= c.shown.size()) c.active = 0;
+        if (c.top + c.visible > c.shown.size()) c.top = c.shown.size() - c.visible;
+        if (c.active < c.top) c.top = c.active;
+        if (c.active >= c.top + c.visible) c.top = c.active + 1 - c.visible;
+        float widest_label = 0.0f;
+        float widest_detail = 0.0f;
+        for (std::size_t i = 0; i < c.shown.size() && i < 200; ++i) {
+            const CompletionItem& it = c.items[c.shown[i].index];
+            widest_label = std::max(widest_label, text_width(r, it.label, mono));
+            if (!it.detail.empty()) widest_detail = std::max(widest_detail, std::min(260.0f, text_width(r, it.detail, muted)));
+        }
+        const float badge = c.row_h - 6.0f;
+        const float max_w = static_cast<float>(std::max<std::int64_t>(240, parse_integer(c.node->attribute_or("complete-width", "")).value_or(560)));
+        const float panel_w = std::min(std::max(220.0f, 8.0f + badge + 8.0f + widest_label + (widest_detail > 0 ? 24.0f + widest_detail : 0.0f) + 14.0f), std::min(max_w, view_w - 8.0f));
+        const CompletionItem& active = c.items[c.shown[c.active].index];
+        std::vector<std::string> doc_lines;
+        if (!active.documentation.empty()) {
+            std::string para;
+            std::istringstream in(active.documentation);
+            std::string raw;
+            while (std::getline(in, raw) && doc_lines.size() < 6) {
+                std::string line;
+                std::istringstream words(raw);
+                std::string w;
+                while (words >> w) {
+                    const std::string trial = line.empty() ? w : line + " " + w;
+                    if (!line.empty() && text_width(r, trial, prose) > panel_w - 20.0f) {
+                        doc_lines.push_back(line);
+                        line = w;
+                        if (doc_lines.size() >= 6) break;
+                    } else {
+                        line = trial;
+                    }
+                }
+                if (!line.empty() && doc_lines.size() < 6) doc_lines.push_back(line);
+            }
+        }
+        const float prose_h = line_height(r, prose) + 2.0f;
+        const float doc_h = doc_lines.empty() ? 0.0f : static_cast<float>(doc_lines.size()) * prose_h + 12.0f;
+        const float panel_h = static_cast<float>(c.visible) * c.row_h + 6.0f + doc_h;
+        const std::string& line = ed.buffer.line(c.start.line);
+        const float ax = ed.text_x + static_cast<float>(code_display_column(line, std::min(c.start.column, line.size()), ed.tab_size)) * ed.char_w - ed.scroll_x - badge - 14.0f;
+        const float line_top = ed.text_y + static_cast<float>(c.start.line) * ed.line_h - ed.scroll_y;
+        float px = std::clamp(ax, 4.0f, std::max(4.0f, view_w - panel_w - 4.0f));
+        float py = line_top + ed.line_h + 2.0f;
+        if (py + panel_h > view_h - 4.0f && line_top - 2.0f - panel_h >= 4.0f) py = line_top - 2.0f - panel_h;
+        py = std::clamp(py, 4.0f, std::max(4.0f, view_h - panel_h - 4.0f));
+        c.panel = Rect{ px, py, panel_w, panel_h };
+        push_rect(DrawOp::Kind::Fill, px + 2, py + 3, panel_w, panel_h, Color(0, 0, 0, 80), 1, 6);
+        push_rect(DrawOp::Kind::Fill, px, py, panel_w, panel_h, panel_bg, 1, 6);
+        push_rect(DrawOp::Kind::Stroke, px, py, panel_w, panel_h, with_alpha(fg, 0.22), 1, 6);
+        push_clip(Rect{ px + 1, py + 1, panel_w - 2, panel_h - 2 });
+        for (std::size_t vi = 0; vi < c.visible; ++vi) {
+            const std::size_t i = c.top + vi;
+            if (i >= c.shown.size()) break;
+            const CompletionMatch& m = c.shown[i];
+            const CompletionItem& it = c.items[m.index];
+            const Rect row{ px + 3, py + 3 + static_cast<float>(vi) * c.row_h, panel_w - 6, c.row_h };
+            const bool hovered = row.contains(m_mouse_x, m_mouse_y);
+            if (i == c.active) push_rect(DrawOp::Kind::Fill, row.x, row.y, row.w, row.h, with_alpha(accent, 0.28), 1, 4);
+            else if (hovered) push_rect(DrawOp::Kind::Fill, row.x, row.y, row.w, row.h, with_alpha(fg, 0.07), 1, 4);
+            const KindLook look = kind_look(it.kind);
+            const float bx = row.x + 5.0f;
+            const float by = row.y + 3.0f;
+            push_rect(DrawOp::Kind::Fill, bx, by, badge, badge, with_alpha(look.color, 0.22), 1, 3);
+            fizmo::text::TextStyle bs = badge_style;
+            bs.set_fg_color(look.color);
+            const float bw = text_width(r, look.badge, bs);
+            push_text(bx + (badge - bw) / 2.0f, by + (badge - line_height(r, bs)) / 2.0f, bw + 4.0f, line_height(r, bs), look.badge, bs);
+            float tx = bx + badge + 8.0f;
+            const float ty = row.y + (c.row_h - lh) / 2.0f;
+            const float detail_room = it.detail.empty() ? 0.0f : std::min(widest_detail, 260.0f) + 16.0f;
+            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room - tx);
+            push_clip(Rect{ tx, row.y, label_room, row.h });
+            std::size_t k = 0;
+            std::size_t mi = 0;
+            const std::string& label = it.label;
+            while (k < label.size()) {
+                const bool matched = mi < m.positions.size() && m.positions[mi] == k;
+                std::size_t e = k;
+                std::size_t mj = mi;
+                while (e < label.size() && ((mj < m.positions.size() && m.positions[mj] == e) == matched)) {
+                    if (matched) ++mj;
+                    ++e;
+                }
+                const std::string piece = label.substr(k, e - k);
+                const fizmo::text::TextStyle& st = matched ? bold : mono;
+                const float pw = text_width(r, piece, st);
+                push_text(tx, ty, pw + 4.0f, lh, piece, st);
+                tx += pw;
+                k = e;
+                mi = mj;
+            }
+            pop_clip();
+            if (!it.detail.empty()) {
+                const std::string shown = fit_text(r, it.detail, muted, std::min(widest_detail, 260.0f));
+                const float dw = text_width(r, shown, muted);
+                push_text(row.x + row.w - 8.0f - dw, ty, dw + 4.0f, lh, shown, muted);
+            }
+            c.rows.emplace_back(row, i);
+        }
+        if (c.shown.size() > c.visible && c.visible > 0) {
+            const float track = static_cast<float>(c.visible) * c.row_h;
+            const float thumb = std::max(16.0f, track * static_cast<float>(c.visible) / static_cast<float>(c.shown.size()));
+            const float at = (track - thumb) * static_cast<float>(c.top) / static_cast<float>(c.shown.size() - c.visible);
+            push_rect(DrawOp::Kind::Fill, px + panel_w - 5.0f, py + 3.0f + at, 3.0f, thumb, with_alpha(fg, 0.3), 1, 2);
+        }
+        if (!doc_lines.empty()) {
+            const float dy = py + 3.0f + static_cast<float>(c.visible) * c.row_h + 3.0f;
+            push_rect(DrawOp::Kind::Fill, px + 1.0f, dy, panel_w - 2.0f, 1.0f, with_alpha(fg, 0.15));
+            float y = dy + 5.0f;
+            for (const std::string& dl : doc_lines) {
+                push_text(px + 10.0f, y, panel_w - 20.0f, prose_h, dl, prose);
+                y += prose_h;
+            }
+        }
+        pop_clip();
     }
 
     void layout_check(fizmo::graphics::Renderer& r, const Node& element, InputKind kind, float x, float& y, float width) {
@@ -3921,6 +4790,7 @@ private:
     }
 
     void mouse_down(float px, float py) {
+        if (completion_click(px, py)) return;
         if (code_hover_click(px, py)) return;
         hide_code_hover();
         if (m_menu.node) {
@@ -3977,6 +4847,29 @@ private:
         update_chain(m_active, target, StateActive, nullptr, nullptr);
         Event down = pointer_event("mouse_down", px, py, 1);
         const bool allowed = dispatch(target, down);
+        m_sel_pending = false;
+        m_sel_dragged = false;
+        if (allowed && selectable_target(target)) {
+            const TextPoint at = point_at(px, py, false);
+            const bool extend = (m_mods & ModifierShift) != 0 && m_sel_anchor.valid();
+            if (at.valid()) {
+                if (extend) {
+                    m_sel_focus = at;
+                    m_sel_dragged = true;
+                } else {
+                    m_sel_anchor = at;
+                    m_sel_focus = at;
+                }
+                m_sel_pending = true;
+                m_sel_press_x = px;
+                m_sel_press_y = py;
+                poke();
+            } else if (!extend) {
+                clear_text_selection();
+            }
+        } else if (allowed) {
+            clear_text_selection();
+        }
 
         if (allowed) {
             for (std::size_t hi = live_hits(); hi < m_hits.size(); ++hi) {
@@ -4098,6 +4991,8 @@ private:
 
     void mouse_up(float px, float py, int button) {
         term_mouse_up(px, py, button);
+        const bool selected_by_drag = button == 1 && m_sel_pending && m_sel_dragged && has_text_selection();
+        if (button == 1) m_sel_pending = false;
         if (button == 1 && m_picker.drag != PickerPart::None) {
             m_picker.drag = PickerPart::None;
             picker_change();
@@ -4126,6 +5021,7 @@ private:
             if (pressed->is_inside(a)) common = a;
         }
         if (!common || is_disabled(common)) return;
+        if (selected_by_drag) return;
         Event click = pointer_event("click", px, py, 1);
         if (!dispatch(common, click)) return;
         follow_link(common);
@@ -4171,6 +5067,7 @@ private:
             ed.column_mode = false;
             ed.buffer.insert(clean);
             code_changed(m_code_focus, clean);
+            after_code_typing(m_code_focus, clean);
             return;
         }
         if (!m_focus) return;
@@ -4248,6 +5145,18 @@ private:
             terminal_key(*m_focused, e);
             return;
         }
+        if (!m_focus && !m_code_focus && has_text_selection()) {
+            const Key k = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
+            const bool ctrl = fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Meta);
+            if (ctrl && (k == Key::C || k == Key::Insert)) {
+                copy_text_selection();
+                return;
+            }
+            if (k == Key::Escape) {
+                clear_text_selection();
+                return;
+            }
+        }
         const Key key = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
         if (m_picker.node && !m_focus && (key == Key::Enter || key == Key::Escape)) {
             close_picker(key == Key::Enter);
@@ -4279,7 +5188,9 @@ private:
             }
         }
         if (m_code_focus) {
+            if (completion_key(key, e.mods)) return;
             code_key(key, e.mods);
+            if (m_code_focus) after_code_key(key);
             return;
         }
         if (!m_focus && m_menu.node) {
@@ -4910,6 +5821,7 @@ private:
 
     void blur_code() {
         if (!m_code_focus) return;
+        close_completion(false);
         const Node* node = m_code_focus;
         m_code_focus = nullptr;
         m_code_drag = nullptr;
@@ -5164,6 +6076,17 @@ private:
     SelectMenu m_menu;
     ContextMenu m_context;
     std::vector<TermView> m_term_views;
+    std::vector<TextRun> m_runs;
+    CodeCompletion m_complete;
+    fizmo::graphics::Renderer* m_renderer = nullptr;
+    TextPoint m_sel_anchor;
+    TextPoint m_sel_focus;
+    bool m_sel_pending = false;
+    bool m_sel_dragged = false;
+    float m_sel_press_x = 0;
+    float m_sel_press_y = 0;
+    std::map<const Node*, std::size_t> m_doc_order;
+    std::uint64_t m_doc_order_rev = ~std::uint64_t(0);
     const Node* m_term_select = nullptr;
     TermPoint m_term_anchor;
     const Node* m_term_mouse = nullptr;
@@ -5341,6 +6264,20 @@ public:
             for (const auto& wh : m_hosts) closed = wh->view->close_context_menu(true) || closed;
             return closed;
         };
+        host.selected_text = [this]() {
+            for (const auto& wh : m_hosts) {
+                const std::string t = wh->view->public_selected_text();
+                if (!t.empty()) return t;
+            }
+            return std::string();
+        };
+        host.select_text = [this](Node& node) {
+            WindowHost* wh = host_containing(node);
+            return wh && wh->view->public_select(node);
+        };
+        host.clear_selection = [this]() {
+            for (const auto& wh : m_hosts) wh->view->public_clear_selection();
+        };
     }
 
     ~WindowManager() {
@@ -5357,6 +6294,9 @@ public:
         host.clipboard = nullptr;
         host.open_menu = nullptr;
         host.close_menu = nullptr;
+        host.selected_text = nullptr;
+        host.select_text = nullptr;
+        host.clear_selection = nullptr;
         host.main_window = nullptr;
     }
 

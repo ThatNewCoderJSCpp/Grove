@@ -38,6 +38,10 @@ MenuItem menu_separator();
 bool open_menu(Document& document, Node& owner, const std::vector<MenuItem>& items, double x, double y);
 bool close_menu(Document& document);
 
+std::string selected_text(Document& document);
+bool select_text(Document& document, Node& node);
+void clear_text_selection(Document& document);
+
 } // namespace grove
 
 #endif // GROVE_WINDOWING_HPP

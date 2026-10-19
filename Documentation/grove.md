@@ -232,6 +232,13 @@ Type safety holds at every layer:
 | `hover` | what to show in the popup the editor asked for with a `hover` event, see [Hovers and Ctrl+click](#hovers-and-ctrlclick) |
 | `hover-width` | widest the hover popup gets, in pixels (default 900); code in it wraps only past this |
 | `hover-height` | tallest the hover popup gets, in pixels (default 60% of the window); longer hovers scroll with the wheel |
+| `autocomplete` | `false` turns the suggestion popup off, see [Autocomplete](#autocomplete) |
+| `completions` | the suggestions the app gives for a `complete` event |
+| `word-chars` | characters besides letters, digits and `_` that belong to a word being completed, like `-` for CSS-style names |
+| `complete-triggers` | space-separated strings that open suggestions right after them, like `. :: ->` |
+| `word-completions` | `false` stops Grove suggesting the document's own words when the app gives no list |
+| `accept-on-enter` | `true` lets Enter pick a suggestion as well as Tab |
+| `complete-rows`, `complete-width` | how many suggestions show at once (default 10) and the popup's widest width in pixels (default 560) |
 | `links` | spans that Ctrl+click goes somewhere from (built like `semantic`); they're underlined while Ctrl is held over them |
 | `link-words` | `true` treats every word as a possible link, for an app that works out where it goes when it's clicked |
 | `color-swatches` | `false` turns off the color swatches in Bark and Grove |
@@ -283,6 +290,24 @@ Ctrl+click (Cmd+click on a Mac) fires `goto` with the same `x()` and `y()`, for 
 
 In Bark and Grove, every color written as `#rrggbb`, `rgb()`, `rgba()`, `hsl()` or `hsla()` after a `:` or `=` gets a small swatch beside it. Clicking the swatch opens the same picker as `input_color`, and picking a color rewrites the text in the format it was written in (or the one clicked in the picker); Escape puts the old text back.
 
+#### Autocomplete
+
+Typing a word in an `input_code` opens a list of suggestions under the caret, like VS Code's. Up and Down (or Page Up and Page Down) pick one, **Tab** puts it in, and **Escape** closes the list; it stays closed until you start typing another word. Ctrl+Space opens it whenever you like, clicking a suggestion puts it in, and any other key (an arrow, a space, punctuation) closes it. Suggestions match what you typed at the start (`vec` → `vector`), at word starts inside the name (`pb` → `push_back`, `gvo` → `getValueOr`) or anywhere in order, best matches first, and the matched letters are drawn in the accent color.
+
+Each time the word changes the editor fires `complete` on itself: `x()` and `y()` are the caret's line and column (from 1), `key()` is the word typed so far, `text()` is what was just typed (empty for Ctrl+Space and Backspace) and `button()` is 1 when the user asked with Ctrl+Space. Answer by setting the `completions` attribute in the handler:
+
+```
+line column
+label<TAB>kind<TAB>detail<TAB>insert<TAB>documentation
+...
+```
+
+The first line is where the text being completed starts (from 0, in bytes; usually the start of the word, or the caret after a trigger like `.`). Each suggestion has a `label` that's shown and matched; a `kind` (`keyword`, `function`, `method`, `variable`, `field`, `property`, `type`, `class`, `namespace`, `constant`, `tag`, `attribute`, `snippet`, `word`, ...) picks its badge and color; `detail` is shown on the right (a type or signature); `insert` is put in instead of the label, with `$0` marking where the caret goes; and `documentation` is shown under the list for the highlighted suggestion. Write `\t`, `\n` and `\\` for tabs, newlines and backslashes inside a field. C++ can build and read the attribute with `grove::completions_text()` and `grove::parse_completions()` from `grove/input/completion.hpp`, which also has the matcher (`grove::filter_completions`).
+
+The answer can also come later, for suggestions that take a while to work out (asking a compiler, say): set `completions` again whenever they're ready and the list updates, or opens if it was empty, as long as the caret is still in the same word.
+
+Without an answer, Grove suggests the language's keywords and the words already in the document (turn that off with `word-completions="false"`). When a suggestion goes in, the editor fires `completion` with `key()` the label and `text()` what was inserted.
+
 ### Dropdowns
 
 `<input_select>` shows the chosen `<option>` with a ▾, and clicking it opens a list under it (or over it, near the bottom of the window). A long list scrolls with the wheel.
@@ -294,6 +319,8 @@ In Bark and Grove, every color written as `#rrggbb`, `rgb()`, `rgba()`, `hsl()` 
     <option value="fira" disabled>Fira Code (not installed)</option>
 </input_select>
 ```
+
+Without a `width`, a dropdown is as wide as its longest option (within `min-width` and `max-width`, and never wider than the space it's in), so the chosen text always fits; changing the options resizes it. With a `width`, text that doesn't fit ends in "…" instead of spilling out.
 
 An option's value is its `value` attribute, or its text when it has none. `value` on the `<input_select>` picks the option; without it the first option is chosen, unless there's a `placeholder`, which is shown until something is picked. Picking an option sets `value` and fires `input` and `change`, so `value_string()` (and `grove::input_string()` in C++) reads it like a string input.
 
@@ -492,6 +519,8 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `hover` | the mouse rests on a character of an `input_code` | `x()` is the line, `y()` the column; answer by setting its `hover` attribute |
 | `goto` | Ctrl+click in an `input_code` | `x()` is the line, `y()` the column |
 | `hover_action` | a link in an `input_code`'s hover popup is clicked | `key()` is the link's action |
+| `complete` | the word being typed in an `input_code` changes, or Ctrl+Space | `x()`, `y()`, `key()` the word so far; answer by setting its `completions` attribute |
+| `completion` | a suggestion is put in | `key()` the label, `text()` the inserted text |
 | `resize` | a window changes size; for a `<window>` it goes to that `<window>` and bubbles | `width()`, `height()`, or `window_width()` on the target |
 | `load` | after the scripts have run | |
 | `open` | a `<window>` opens; the target is the `<window>` | |
@@ -588,6 +617,14 @@ grove::confirm("Delete", "Delete everything?", [&](bool: yes) -> void {
 A popup belongs to the window of the element whose event is running (or the main window), so its `ok` and `cancel` events go to that window. Popups are ordinary `<window popup>` elements built from `row`, `p`, the inputs and `button`, so Bark can restyle them: `window.popup`, `.popup-warning`, `.popup-icon`, `.popup-message`, `.popup-input`, `.popup-buttons`, `.popup-ok` and `.popup-cancel`.
 
 In C, `grove_popup(document, owner, kind, title, message, input, value, options)` makes any of them (`kind` is `info`, `warning`, `error` or `question`; `input` is empty or `string`, `integer`, `float`, `bool`, `color`, `choice` or `slider`; `options` is `a|b|c` for a choice or `min|max` for numbers), and `grove_popup_answer` answers one.
+
+## Selecting text
+
+Text in a document can be selected with the mouse like on a web page: drag across it, double-click a word, or Shift+click to extend a selection. Ctrl+C (or Ctrl+Insert) copies it while no input has the keyboard, and Escape clears it. A click that selects text doesn't count as a click on what's under it, so a drag across a clickable list selects instead of activating an item.
+
+`user-select: none` (inherited) keeps a part of the page from being selected, which suits toolbars, tabs and lists you drag items around in; buttons, dropdowns, checkboxes and file pickers are `none` already. `selection-color` sets the highlight (by default a translucent `accent-color`). Inputs, code editors and terminals keep their own selection.
+
+From C++, `grove::selected_text(document)` gives the selected text, `grove::select_text(document, node)` selects everything inside an element (handy for a Select All menu item) and `grove::clear_text_selection(document)` clears it.
 
 ## Right-click menus
 

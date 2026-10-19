@@ -141,6 +141,9 @@ struct DocumentHost {
     std::function<std::string()> clipboard;
     std::function<bool(Node&, const std::vector<MenuItem>&, double, double)> open_menu;
     std::function<bool()> close_menu;
+    std::function<std::string()> selected_text;
+    std::function<bool(Node&)> select_text;
+    std::function<void()> clear_selection;
     std::map<const Node*, std::shared_ptr<Terminal>> terminals;
 };
 

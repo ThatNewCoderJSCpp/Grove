@@ -1468,6 +1468,65 @@ void test_terminal_selection_and_resize() {
     CHECK(blank.row_text(0) == "$" && blank.scrollback_size() == 0);
 }
 
+void test_completion() {
+    CHECK(grove::completion_word_start("    std::vec", 12) == 9);
+    CHECK(grove::completion_word_start("font-si", 7) == 5 && grove::completion_word_start("font-si", 7, "-") == 0);
+    int score = -1;
+    CHECK(grove::completion_match_positions("vector", "vec", score) && score == 0);
+    CHECK(grove::completion_match_positions("Vector", "vec", score) && score == 1);
+    auto camel = grove::completion_match_positions("getValueOr", "gvo", score);
+    CHECK(camel && score == 2 && (*camel)[1] == 3 && (*camel)[2] == 8);
+    auto snake = grove::completion_match_positions("push_back", "pb", score);
+    CHECK(snake && score == 2 && (*snake)[1] == 5);
+    CHECK(grove::completion_match_positions("vector", "vtr", score) && score == 3);
+    CHECK(!grove::completion_match_positions("vector", "xyz", score));
+    CHECK(!grove::completion_match_positions("vector", "tor", score));
+    std::vector<grove::CompletionItem> items(4);
+    items[0].label = "reserve";
+    items[1].label = "resize";
+    items[2].label = "Result";
+    items[3].label = "rbegin";
+    const auto ranked = grove::filter_completions(items, "res");
+    CHECK(ranked.size() == 3 && ranked[0].index == 0 && ranked[1].index == 1 && ranked[2].index == 2);
+    grove::CompletionList list;
+    list.line = 3;
+    list.column = 7;
+    grove::CompletionItem tricky;
+    tricky.label = "printf";
+    tricky.kind = "function";
+    tricky.detail = "int (const char*, ...)";
+    tricky.insert = "printf($0)";
+    tricky.documentation = "Prints.\nTab\there \\ done";
+    list.items.push_back(tricky);
+    const auto back = grove::parse_completions(grove::completions_text(list));
+    CHECK(back && back->line == 3 && back->column == 7 && back->items.size() == 1);
+    CHECK(back && back->items[0].documentation == tricky.documentation && back->items[0].insert == "printf($0)" && back->items[0].detail == tricky.detail);
+    std::size_t caret = 0;
+    CHECK(grove::completion_insert_text(tricky, caret) == "printf()" && caret == 7);
+    grove::CompletionItem plain;
+    plain.label = "size";
+    CHECK(grove::completion_insert_text(plain, caret) == "size" && caret == 4);
+    const std::vector<std::string> lines = { "int counter = 0;", "count", "counter += total_value;" };
+    const auto words = grove::word_completions(lines, 1, 5);
+    bool has_counter = false;
+    bool has_count = false;
+    bool has_total = false;
+    for (const auto& w : words) {
+        has_counter = has_counter || w.label == "counter";
+        has_count = has_count || w.label == "count";
+        has_total = has_total || w.label == "total_value";
+    }
+    CHECK(has_counter && has_total && !has_count);
+    CHECK(!grove::parse_completions("") && !grove::parse_completions("nonsense"));
+    bool has_class = false;
+    bool has_int = false;
+    for (const auto& w : grove::code_language_words(grove::CodeLanguage::Cpp)) {
+        has_class = has_class || (w.word == "class" && w.kind == grove::CodeTokenKind::Keyword);
+        has_int = has_int || (w.word == "int" && w.kind == grove::CodeTokenKind::BuiltinType);
+    }
+    CHECK(has_class && has_int && grove::code_language_words(grove::CodeLanguage::Plain).empty());
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1512,6 +1571,7 @@ int main() {
     test_keymap();
     test_dump_options();
     test_menus();
+    test_completion();
     test_terminal_basics();
     test_terminal_scrolling();
     test_terminal_alternate_screen();

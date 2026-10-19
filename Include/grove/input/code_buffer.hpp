@@ -97,6 +97,13 @@ const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) no
 
 std::vector<CodeToken> highlight_code_line(CodeLanguage language, std::string_view line, CodeLineState& state);
 
+struct CodeWord {
+    std::string word;
+    CodeTokenKind kind = CodeTokenKind::Keyword;
+};
+
+std::vector<CodeWord> code_language_words(CodeLanguage language);
+
 struct CodeSpan {
     std::size_t line = 0;
     std::size_t column = 0;
