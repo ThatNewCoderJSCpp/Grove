@@ -162,6 +162,7 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `block-chars` | string | single characters that are always refused |
 | `pattern` | string | a regular expression the whole text has to match before it's accepted; until it does, Enter leaves the field red. See [Fizmo's regex guide](https://github.com/ThatNewCoderJSCpp/Fizmo/blob/main/Documentation/regex.md) |
 | `placeholder` | integer, float, string | shown while empty |
+| `masked` | string | draws each character as a dot, for passwords; the value itself is unchanged |
 | `checked` | bool, radio | on |
 | `switch` | bool | draw it as a switch instead of a checkbox |
 | `name` | radio | the group |
