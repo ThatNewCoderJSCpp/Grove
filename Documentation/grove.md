@@ -241,7 +241,7 @@ Type safety holds at every layer:
 | `complete-triggers` | space-separated strings that open suggestions right after them, like `. :: ->` |
 | `word-completions` | `false` stops Grove suggesting the document's own words when the app gives no list |
 | `accept-on-enter` | `true` lets Enter pick a suggestion as well as Tab |
-| `complete-rows`, `complete-width` | how many suggestions show at once (default 10) and the popup's widest width in pixels (default 560) |
+| `complete-rows`, `complete-width` | how many suggestions show at once (default 10) and the popup's widest width in pixels (default 760); names, kinds and details each get their own column, and a name too long for its column ends in "…" instead of running into the next |
 | `complete-icons`, `complete-kinds` | `false` hides the colored letter beside each suggestion (F, T, V, ...); `true` writes what each suggestion is (function, struct, enum, keyword, ...) beside its name (default `true` and `false`) |
 | `links` | spans that Ctrl+click goes somewhere from (built like `semantic`); they're underlined while Ctrl is held over them |
 | `link-words` | `true` treats every word as a possible link, for an app that works out where it goes when it's clicked |
@@ -388,6 +388,8 @@ if (term->columns() != cols || term->rows() != rows) resize_pty(term->columns(),
 | `screen_text()`, `row_text(r)`, `line(r)`, `selected_text()` | read what's on screen |
 
 What it supports: the VT100/VT220 and xterm control sequences (cursor movement, erasing, inserting and deleting characters and lines, scroll regions, origin mode, tab stops, saved cursors, character sets including DEC line drawing, the alternate screen), 16, 256 and 24-bit colors with bold, dim, italic, underline (single, double, curly), blink, inverse, hidden, strikethrough and overline, wide and combining characters, xterm's key encoding (with application cursor and keypad modes and modifier combinations), bracketed paste, focus reports, and mouse reporting (X10, normal, button and any motion, in the default, UTF-8, SGR and urxvt encodings). It answers DSR, DA1, DA2, DA3, DECRQM, DECRQSS, DECREQTPARM, window-size reports and OSC 4/10/11/12 color queries. 132-column mode clears the screen as DEC terminals do but keeps the width.
+
+A tab character in the output moves to the next tab stop, every 8 columns like other terminals; `tab-size="4"` on the `<terminal>` (or `Terminal::set_tab_width` from C++) puts them closer. Programs can still set their own stops.
 
 With the keyboard focused on it, keys go to the program. Ctrl+Shift+C copies the selection (so does Ctrl+C while something is selected, unless the element has `copy-on-ctrl-c="false"`, which sends Ctrl+C to the program like a plain terminal), Ctrl+Shift+V or Shift+Insert pastes, Shift+PageUp and Shift+PageDown scroll back, and Ctrl+Shift+Home and End go to the top and bottom of the scrollback. Drag to select (Alt+drag for a block), double-click for a word, Shift+click to extend; middle-click pastes. When the program asks for the mouse, clicks and the wheel go to it instead; hold Shift to select anyway. The wheel scrolls back through output, or moves through the alternate screen with arrow keys (as `less` and `man` expect).
 

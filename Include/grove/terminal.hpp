@@ -174,6 +174,8 @@ public:
     std::size_t scrollback_size() const noexcept { return m_history.size(); }
     const TermLine& history_line(std::size_t index) const { return m_history[index]; }
     void set_scrollback_limit(std::size_t lines);
+    void set_tab_width(int columns);
+    int tab_width() const noexcept { return m_tab_width; }
     void clear_scrollback();
 
     int view_offset() const noexcept { return m_view; }
@@ -336,6 +338,7 @@ private:
     int m_top = 0;
     int m_bottom = 0;
     std::vector<bool> m_tabs;
+    int m_tab_width = 8;
     bool m_insert = false;
     bool m_newline_mode = false;
     bool m_app_cursor = false;

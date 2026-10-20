@@ -83,6 +83,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "right",
         "selection-color",
         "size",
+        "tab-size",
         "text-align",
         "text-decoration",
         "title",

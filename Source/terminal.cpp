@@ -233,7 +233,7 @@ void Terminal::reset() {
     m_top = 0;
     m_bottom = m_rows - 1;
     m_tabs.assign(static_cast<std::size_t>(m_cols), false);
-    for (int i = 8; i < m_cols; i += 8) m_tabs[static_cast<std::size_t>(i)] = true;
+    for (int i = m_tab_width; i < m_cols; i += m_tab_width) m_tabs[static_cast<std::size_t>(i)] = true;
     m_insert = false;
     m_newline_mode = false;
     m_app_cursor = false;
@@ -257,6 +257,14 @@ void Terminal::reset() {
     m_cursor_color = m_base_cursor;
     clear_selection();
     touch();
+}
+
+void Terminal::set_tab_width(int columns) {
+    columns = std::clamp(columns, 1, 16);
+    if (columns == m_tab_width) return;
+    m_tab_width = columns;
+    m_tabs.assign(static_cast<std::size_t>(m_cols), false);
+    for (int i = m_tab_width; i < m_cols; i += m_tab_width) m_tabs[static_cast<std::size_t>(i)] = true;
 }
 
 void Terminal::set_scrollback_limit(std::size_t lines) {
@@ -1488,7 +1496,7 @@ void Terminal::resize(int columns, int rows) {
     m_top = 0;
     m_bottom = m_rows - 1;
     m_tabs.resize(static_cast<std::size_t>(m_cols), false);
-    for (int i = 8; i < m_cols; i += 8) m_tabs[static_cast<std::size_t>(i)] = true;
+    for (int i = m_tab_width; i < m_cols; i += m_tab_width) m_tabs[static_cast<std::size_t>(i)] = true;
     for (Cursor* c : { &m_cur, &m_saved_main, &m_saved_alt }) {
         c->x = std::clamp(c->x, 0, m_cols - 1);
         c->y = std::clamp(c->y, 0, m_rows - 1);
@@ -1847,7 +1855,15 @@ bool Terminal::send(const std::string& bytes) {
 std::shared_ptr<Terminal> terminal_of(Document& document, const Node& element) {
     auto& map = document.host().terminals;
     auto it = map.find(&element);
-    if (it == map.end()) it = map.emplace(&element, std::make_shared<Terminal>()).first;
+    if (it == map.end()) {
+        it = map.emplace(&element, std::make_shared<Terminal>()).first;
+        const std::string tab = element.attribute_or("tab-size", "");
+        if (!tab.empty()) {
+            char* end = nullptr;
+            const long n = std::strtol(tab.c_str(), &end, 10);
+            if (end != tab.c_str() && n > 0) it->second->set_tab_width(static_cast<int>(n));
+        }
+    }
     return it->second;
 }
 

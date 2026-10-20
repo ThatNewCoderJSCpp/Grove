@@ -14,6 +14,7 @@ namespace bark {
 namespace {
 
 constexpr const char* k_inherited[] = {
+    "tab-size",
     "code-keyword",
     "code-type",
     "code-function",

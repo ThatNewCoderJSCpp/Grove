@@ -185,6 +185,7 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `left`, `top`, `right`, `bottom` | `position: fixed` or `cursor` | where it sits; see `position` |
 | `cursor` | any | the mouse pointer while it's over the element: `default`, `pointer`, `text`, `crosshair`, `move` (also `grab`), `wait`, `progress`, `not-allowed`, `help`, and the resize arrows `col-resize` (or `ew-resize`), `row-resize` (or `ns-resize`), `nwse-resize` and `nesw-resize` for splitters and corners |
 | `text-align` | text, `math` | `left`, `center`, `right` (`start` and `end` mean left and right) |
+| `tab-size` | `pre` and other text with `white-space: pre`, `input_code` hovers | how many columns a tab character moves (default 4); children inherit it |
 | `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content, `inline` puts it in the flow of the text around it |
 
 ### Layout

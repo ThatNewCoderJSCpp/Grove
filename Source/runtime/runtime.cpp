@@ -2040,6 +2040,27 @@ private:
         layout_element(r, b, x + std::round(off), y, ow, true, forced);
     }
 
+    static std::size_t tab_size_of(const bark::ComputedStyle& style) {
+        const bark::ValueList* v = style.get("tab-size");
+        if (v && !v->empty() && v->front().is_number() && v->front().number >= 1.0) return static_cast<std::size_t>(std::min(16.0, v->front().number));
+        return 4;
+    }
+
+    static std::string expand_tab_lines(const std::string& text, std::size_t tab) {
+        if (text.find('\t') == std::string::npos) return text;
+        std::string out;
+        std::size_t start = 0;
+        while (start <= text.size()) {
+            const std::size_t nl = text.find('\n', start);
+            const std::size_t end = nl == std::string::npos ? text.size() : nl;
+            out += code_expand_tabs(std::string_view(text).substr(start, end - start), tab);
+            if (nl == std::string::npos) break;
+            out += '\n';
+            start = nl + 1;
+        }
+        return out;
+    }
+
     bool preserves_space(const Node& owner) {
         const std::string ws = style_of(owner).text("white-space").value_or("normal");
         return ws == "pre" || ws == "pre-wrap";
@@ -2358,6 +2379,32 @@ private:
         std::vector<Fragment> frags;
         for (const Node* n : nodes) collect_fragments(owner, *n, pre, frags);
         if (frags.empty()) return;
+        if (pre) {
+            const std::size_t tab = tab_size_of(owner_style);
+            std::size_t column = 0;
+            for (Fragment& f : frags) {
+                if (f.newline) {
+                    column = 0;
+                    continue;
+                }
+                if (f.text.find('\t') == std::string::npos) {
+                    column += code_display_column(f.text, f.text.size(), tab);
+                    continue;
+                }
+                std::string expanded;
+                for (char c : f.text) {
+                    if (c == '\t') {
+                        const std::size_t n = tab - column % tab;
+                        expanded.append(n, ' ');
+                        column += n;
+                    } else {
+                        expanded += c;
+                        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) ++column;
+                    }
+                }
+                f.text = std::move(expanded);
+            }
+        }
         if (!pre) {
             while (!frags.empty() && !frags.front().newline && frags.front().text == " ") frags.erase(frags.begin());
             if (!frags.empty() && !frags.front().newline && !frags.front().text.empty() && frags.front().text.front() == ' ') frags.front().text.erase(0, 1);
@@ -4111,10 +4158,20 @@ private:
             if (show_kinds) widest_kind = std::max(widest_kind, text_width(r, kind, muted));
             if (!it.detail.empty() && it.detail != kind) widest_detail = std::max(widest_detail, std::min(260.0f, text_width(r, it.detail, muted)));
         }
-        const float kind_room = widest_kind > 0.0f ? widest_kind + 16.0f : 0.0f;
+        const float kind_room = widest_kind > 0.0f ? widest_kind + 18.0f : 0.0f;
         const float badge = show_icons ? c.row_h - 6.0f : 0.0f;
-        const float max_w = static_cast<float>(std::max<std::int64_t>(240, parse_integer(c.node->attribute_or("complete-width", "")).value_or(560)));
-        const float panel_w = std::min(std::max(220.0f, 8.0f + badge + 8.0f + widest_label + kind_room + (widest_detail > 0 ? 24.0f + widest_detail : 0.0f) + 14.0f), std::min(max_w, view_w - 8.0f));
+        const float max_w = static_cast<float>(std::max<std::int64_t>(240, parse_integer(c.node->attribute_or("complete-width", "")).value_or(760)));
+        const float limit_w = std::max(220.0f, std::min(max_w, view_w - 8.0f));
+        const float fixed_w = 8.0f + badge + 8.0f + kind_room + 14.0f;
+        float detail_col = std::min(widest_detail, 320.0f);
+        float label_col = widest_label + 18.0f;
+        if (fixed_w + label_col + (detail_col > 0.0f ? detail_col + 16.0f : 0.0f) > limit_w && detail_col > 0.0f) {
+            const float room = limit_w - fixed_w - label_col - 16.0f;
+            detail_col = std::max(std::min(detail_col, std::max(120.0f, limit_w * 0.34f)), room);
+        }
+        if (fixed_w + label_col + (detail_col > 0.0f ? detail_col + 16.0f : 0.0f) > limit_w) label_col = std::max(60.0f, limit_w - fixed_w - (detail_col > 0.0f ? detail_col + 16.0f : 0.0f));
+        const float detail_room_all = detail_col > 0.0f ? detail_col + 16.0f : 0.0f;
+        const float panel_w = std::min(std::max(220.0f, fixed_w + label_col + detail_room_all), limit_w);
         const CompletionItem& active = c.items[c.shown[c.active].index];
         std::vector<std::string> doc_lines;
         if (!active.documentation.empty()) {
@@ -4176,13 +4233,15 @@ private:
             const float ty = row.y + (c.row_h - lh) / 2.0f;
             const std::string kind_text = show_kinds ? kind_name(it.kind) : std::string();
             const bool show_detail = !it.detail.empty() && it.detail != kind_text;
-            const float detail_room = show_detail ? std::min(widest_detail, 260.0f) + 16.0f : 0.0f;
-            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room - kind_room - tx);
+            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room_all - kind_room - tx - 6.0f);
             push_clip(Rect{ tx, row.y, label_room, row.h });
             std::size_t k = 0;
             std::size_t mi = 0;
             const std::string& label = it.label;
-            while (k < label.size()) {
+            const std::string fitted = fit_text(r, label, mono, label_room - 4.0f);
+            const bool cut = fitted.size() < label.size() || fitted != label;
+            const std::size_t visible = cut && fitted.size() >= 3 ? fitted.size() - 3 : label.size();
+            while (k < visible) {
                 const bool matched = mi < m.positions.size() && m.positions[mi] == k;
                 std::size_t e = k;
                 std::size_t mj = mi;
@@ -4190,6 +4249,7 @@ private:
                     if (matched) ++mj;
                     ++e;
                 }
+                if (e > visible) e = visible;
                 const std::string piece = label.substr(k, e - k);
                 const fizmo::text::TextStyle& st = matched ? bold : mono;
                 const float pw = text_width(r, piece, st);
@@ -4198,15 +4258,16 @@ private:
                 k = e;
                 mi = mj;
             }
+            if (cut) push_text(tx, ty, text_width(r, "\xE2\x80\xA6", mono) + 4.0f, lh, "\xE2\x80\xA6", mono);
             pop_clip();
             if (show_kinds) {
                 fizmo::text::TextStyle ks = muted;
                 ks.set_fg_color(with_alpha(show_icons ? look.color : fg, 0.75));
-                const float kx = row.x + row.w - 8.0f - (widest_detail > 0.0f ? std::min(widest_detail, 260.0f) + 16.0f : 0.0f) - widest_kind;
+                const float kx = row.x + row.w - 8.0f - detail_room_all - widest_kind;
                 push_text(kx, ty, widest_kind + 4.0f, lh, kind_text, ks);
             }
             if (show_detail) {
-                const std::string shown = fit_text(r, it.detail, muted, std::min(widest_detail, 260.0f));
+                const std::string shown = fit_text(r, it.detail, muted, detail_col);
                 const float dw = text_width(r, shown, muted);
                 push_text(row.x + row.w - 8.0f - dw, ty, dw + 4.0f, lh, shown, muted);
             }
@@ -6597,7 +6658,7 @@ private:
             hc = h.pos.column;
             hn = 1;
         }
-        const std::string body = attr.substr(nl + 1);
+        const std::string body = expand_tab_lines(attr.substr(nl + 1), ed.tab_size);
         if (body.find_first_not_of(" \n\t") == std::string::npos) return;
         if (body != h.shown_text) {
             h.shown_text = body;
