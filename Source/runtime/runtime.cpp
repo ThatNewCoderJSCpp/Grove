@@ -17,6 +17,9 @@
 #ifndef FIZMO_GRAPHICS
 #define FIZMO_GRAPHICS
 #endif
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fizmo/includes.hpp>
 
 #include <algorithm>
@@ -198,6 +201,7 @@ struct Rect {
 };
 
 constexpr Rect k_everywhere{ -1e7f, -1e7f, 2e7f, 2e7f };
+constexpr float k_far = 1e7f;
 
 std::optional<float> resolve_length(const bark::ComputedStyle& style, const std::string& property, float base, std::size_t index = 0) {
     const bark::ValueList* v = style.get(property);
@@ -425,6 +429,9 @@ std::vector<CodeTokenKind> code_marks(std::string_view text) {
 struct CodeEditor {
     CodeBuffer buffer;
     std::string synced;
+    std::uint64_t seen_stamp = 0;
+    std::vector<std::uint64_t> line_hashes;
+    int states_language = -1;
     std::string focus_start;
     std::vector<CodeLineState> states;
     std::size_t states_revision = static_cast<std::size_t>(-1);
@@ -486,6 +493,46 @@ struct DrawOp {
     const fizmo::graphics::Texture* texture = nullptr;
     float alpha = 1.0f;
 };
+
+struct FrameStatsLog {
+    using Clock = std::chrono::steady_clock;
+    bool enabled = std::getenv("GROVE_FRAME_STATS") != nullptr;
+    Clock::time_point since = Clock::now();
+    std::size_t frames = 0;
+    std::size_t skipped = 0;
+    double layout_ms = 0.0;
+    double draw_ms = 0.0;
+    double present_ms = 0.0;
+    double worst_ms = 0.0;
+    std::size_t ops = 0;
+    std::size_t drawn = 0;
+    std::size_t batches = 0;
+    std::size_t replayed = 0;
+    std::size_t culled = 0;
+    std::size_t laid = 0;
+    std::size_t dynamic = 0;
+
+    static double ms(Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); }
+
+    void report() {
+        if (!enabled) return;
+        const Clock::time_point now = Clock::now();
+        const double span = std::chrono::duration<double>(now - since).count();
+        if (span < 2.0) return;
+        const double n = frames == 0 ? 1.0 : static_cast<double>(frames);
+        std::fprintf(stderr, "grove: %.1fs  %zu frames (%zu skipped)  layout %.2fms  draw %.2fms  present %.2fms  worst %.2fms  ops %zu  drawn %zu  batches %zu  cache: replayed %zu culled %zu laid %zu dynamic %zu\n",
+                     span, frames, skipped, layout_ms / n, draw_ms / n, present_ms / n, worst_ms, static_cast<std::size_t>(ops / n), static_cast<std::size_t>(drawn / n), static_cast<std::size_t>(batches / n),
+                     static_cast<std::size_t>(replayed / n), static_cast<std::size_t>(culled / n), static_cast<std::size_t>(laid / n), static_cast<std::size_t>(dynamic / n));
+        *this = FrameStatsLog{};
+        enabled = true;
+        since = now;
+    }
+};
+
+FrameStatsLog& frame_stats_log() {
+    static FrameStatsLog log;
+    return log;
+}
 
 bool same_color(const bark::Rgba& a, const bark::Rgba& b) noexcept {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
@@ -789,6 +836,7 @@ public:
     void paint(fizmo::graphics::Renderer& r) {
         m_renderer = &r;
         const auto now = std::chrono::steady_clock::now();
+        FrameStatsLog& stats = frame_stats_log();
         m_dt = m_has_frame ? std::min(0.1f, std::chrono::duration<float>(now - m_last_frame).count()) : 0.0f;
         m_last_frame = now;
         m_has_frame = true;
@@ -826,6 +874,8 @@ public:
         }
 
         poll_dialogs();
+        ++m_frame_index;
+        prune_layout_cache();
         if (m_picker.node && !document().is_attached(*m_picker.node)) m_picker = ColorPicker{};
         if (m_menu.node && !document().is_attached(*m_menu.node)) m_menu = SelectMenu{};
         m_menu.anchored = false;
@@ -834,6 +884,12 @@ public:
         m_hits.clear();
         m_term_views.clear();
         m_runs.clear();
+        m_run_refs.clear();
+        m_partial_runs = false;
+        if (m_pending_select && !document().is_attached(*m_pending_select)) {
+            m_pending_select = nullptr;
+            m_force_full = false;
+        }
         if (m_sel_anchor.valid() && (!document().is_attached(*m_sel_anchor.block) || !document().is_attached(*m_sel_focus.block))) clear_text_selection();
         m_boxes.clear();
         m_opacity.clear();
@@ -857,28 +913,59 @@ public:
         layout_picker(r, w, h);
         layout_menu(r, w, h);
         layout_context(r, w, h);
+        if (m_pending_select && m_force_full) {
+            const Node* pending = m_pending_select;
+            m_pending_select = nullptr;
+            m_force_full = false;
+            select_contents(*pending);
+        }
+        const auto laid = std::chrono::steady_clock::now();
+        std::size_t drawn = 0;
+        std::size_t batches = 0;
+        int last_kind = -1;
+        const void* last_texture = nullptr;
+        build_draw_list();
         std::vector<Rect> clips;
         auto apply = [&r](const Rect& c) {
             const int cx = static_cast<int>(std::floor(c.x));
             const int cy = static_cast<int>(std::floor(c.y));
             r.set_clip_rect(cx, cy, static_cast<unsigned>(std::max(0.0f, std::ceil(c.x + c.w) - static_cast<float>(cx))), static_cast<unsigned>(std::max(0.0f, std::ceil(c.y + c.h) - static_cast<float>(cy))));
         };
-        for (const DrawOp& op : m_ops) {
+        for (const DrawOp* opp : m_draw_list) {
+            const DrawOp& op = *opp;
             if (op.kind == DrawOp::Kind::ClipPush) {
                 Rect c{ op.x, op.y, op.w, op.h };
                 if (!clips.empty()) c = c.intersect(clips.back());
                 clips.push_back(c);
                 apply(c);
+                last_kind = -1;
             } else if (op.kind == DrawOp::Kind::ClipPop) {
                 if (!clips.empty()) clips.pop_back();
                 if (clips.empty()) r.reset_clip_rect();
                 else apply(clips.back());
+                last_kind = -1;
             } else {
+                if (stats.enabled) {
+                    const int kind = op.kind == DrawOp::Kind::Text || op.kind == DrawOp::Kind::Math ? 1 : op.kind == DrawOp::Kind::Image ? 2 : 0;
+                    const void* texture = op.kind == DrawOp::Kind::Image ? static_cast<const void*>(op.texture) : nullptr;
+                    if (kind != last_kind || texture != last_texture) ++batches;
+                    last_kind = kind;
+                    last_texture = texture;
+                    ++drawn;
+                }
                 draw(r, op);
             }
         }
         r.reset_clip_rect();
         report_cursors();
+        if (stats.enabled) {
+            const auto done = std::chrono::steady_clock::now();
+            stats.layout_ms += FrameStatsLog::ms(now, laid);
+            stats.draw_ms += FrameStatsLog::ms(laid, done);
+            stats.ops += m_ops.size();
+            stats.drawn += drawn;
+            stats.batches += batches;
+        }
     }
 
     void on_event(const fizmo::windows::WindowEvent& e) {
@@ -1124,6 +1211,197 @@ private:
         op.style = style;
     }
 
+    static int draw_class(const DrawOp& op) {
+        switch (op.kind) {
+            case DrawOp::Kind::Text: return 1;
+            case DrawOp::Kind::Image: return 2;
+            case DrawOp::Kind::Math: return 3;
+            default: return 0;
+        }
+    }
+
+    static Rect op_rect(const DrawOp& op) {
+        if (op.kind == DrawOp::Kind::Circle || op.kind == DrawOp::Kind::CircleStroke) return Rect{ op.x - op.radius - 1.0f, op.y - op.radius - 1.0f, op.radius * 2.0f + 2.0f, op.radius * 2.0f + 2.0f };
+        if (op.kind == DrawOp::Kind::Math) return Rect{ op.x - 4.0f, op.y - 4.0f, 1e6f, 1e6f };
+        const float pad = static_cast<float>(op.stroke) + 1.0f;
+        return Rect{ op.x - pad, op.y - pad, std::max(op.w, 1.0f) + pad * 2.0f, std::max(op.h, 1.0f) + pad * 2.0f };
+    }
+
+    static bool overlaps(const Rect& a, const Rect& b) {
+        return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    }
+
+    struct DrawShape {
+        Rect rect;
+        float band = 0.0f;
+    };
+
+    static DrawShape op_shape(const DrawOp& op) {
+        DrawShape shape{ op_rect(op), 0.0f };
+        if (op.kind == DrawOp::Kind::Stroke && op.w > 8.0f && op.h > 8.0f) shape.band = static_cast<float>(op.stroke) + std::max(2.0f, op.radius * 0.35f) + 1.0f;
+        return shape;
+    }
+
+    static bool shape_hits(const DrawShape& s, const Rect& q) {
+        if (!overlaps(s.rect, q)) return false;
+        if (s.band <= 0.0f || s.band * 2.0f >= std::min(s.rect.w, s.rect.h)) return true;
+        const Rect& r = s.rect;
+        return overlaps(Rect{ r.x, r.y, r.w, s.band }, q) || overlaps(Rect{ r.x, r.y + r.h - s.band, r.w, s.band }, q) || overlaps(Rect{ r.x, r.y, s.band, r.h }, q) ||
+               overlaps(Rect{ r.x + r.w - s.band, r.y, s.band, r.h }, q);
+    }
+
+    static bool shapes_overlap(const DrawShape& a, const DrawShape& b) {
+        if (a.band > 0.0f && b.band > 0.0f) {
+            if (!overlaps(a.rect, b.rect)) return false;
+            const Rect& r = b.rect;
+            return shape_hits(a, Rect{ r.x, r.y, r.w, b.band }) || shape_hits(a, Rect{ r.x, r.y + r.h - b.band, r.w, b.band }) || shape_hits(a, Rect{ r.x, r.y, b.band, r.h }) ||
+                   shape_hits(a, Rect{ r.x + r.w - b.band, r.y, b.band, r.h });
+        }
+        if (a.band > 0.0f) return shape_hits(a, b.rect);
+        if (b.band > 0.0f) return shape_hits(b, a.rect);
+        return overlaps(a.rect, b.rect);
+    }
+
+    struct DrawLayer {
+        int cls = 0;
+        const void* texture = nullptr;
+        Rect box;
+        std::vector<const DrawOp*> items;
+        std::vector<DrawShape> rects;
+    };
+
+    void batch_segment(std::vector<const DrawOp*>& segment) {
+        if (segment.size() < 3) {
+            m_draw_list.insert(m_draw_list.end(), segment.begin(), segment.end());
+            segment.clear();
+            return;
+        }
+        std::vector<DrawLayer>& layers = m_draw_layers;
+        layers.clear();
+        for (const DrawOp* op : segment) {
+            const int cls = draw_class(*op);
+            const void* texture = op->kind == DrawOp::Kind::Image ? static_cast<const void*>(op->texture) : nullptr;
+            const DrawShape shape = op_shape(*op);
+            const Rect rect = shape.rect;
+            std::size_t target = layers.size();
+            const std::size_t floor = layers.size() > 12 ? layers.size() - 12 : 0;
+            for (std::size_t k = layers.size(); k-- > floor;) {
+                DrawLayer& layer = layers[k];
+                if (layer.cls == cls && layer.texture == texture && cls != 3) {
+                    target = k;
+                    break;
+                }
+                if (!overlaps(layer.box, rect)) continue;
+                bool hit = layer.rects.size() > 48;
+                for (std::size_t q = 0; !hit && q < layer.rects.size(); ++q) hit = shapes_overlap(layer.rects[q], shape);
+                if (hit) break;
+            }
+            if (target == layers.size()) {
+                DrawLayer fresh;
+                fresh.cls = cls;
+                fresh.texture = texture;
+                fresh.box = rect;
+                layers.push_back(std::move(fresh));
+            }
+            DrawLayer& layer = layers[target];
+            if (!layer.items.empty()) {
+                const float l = std::min(layer.box.x, rect.x);
+                const float t = std::min(layer.box.y, rect.y);
+                const float rr = std::max(layer.box.x + layer.box.w, rect.x + rect.w);
+                const float b = std::max(layer.box.y + layer.box.h, rect.y + rect.h);
+                layer.box = Rect{ l, t, rr - l, b - t };
+            }
+            layer.items.push_back(op);
+            layer.rects.push_back(shape);
+        }
+        for (const DrawLayer& layer : layers) m_draw_list.insert(m_draw_list.end(), layer.items.begin(), layer.items.end());
+        segment.clear();
+    }
+
+    void find_redundant_clips() {
+        m_redundant_clip.assign(m_ops.size(), 0);
+        struct Open {
+            std::size_t at;
+            Rect clip;
+            bool fits;
+        };
+        std::vector<Open> open;
+        for (std::size_t i = 0; i < m_ops.size(); ++i) {
+            const DrawOp& op = m_ops[i];
+            if (op.kind == DrawOp::Kind::ClipPush) {
+                open.push_back(Open{ i, Rect{ op.x, op.y, op.w, op.h }, true });
+                continue;
+            }
+            if (op.kind == DrawOp::Kind::ClipPop) {
+                if (open.empty()) continue;
+                const Open done = open.back();
+                open.pop_back();
+                if (done.fits) {
+                    m_redundant_clip[done.at] = 1;
+                    m_redundant_clip[i] = 1;
+                } else if (!open.empty()) {
+                    open.back().fits = false;
+                }
+                continue;
+            }
+            if (open.empty()) continue;
+            Open& top = open.back();
+            if (!top.fits) continue;
+            const Rect r = op.kind == DrawOp::Kind::Stroke || op.kind == DrawOp::Kind::Circle || op.kind == DrawOp::Kind::CircleStroke ? op_rect(op) : Rect{ op.x, op.y, op.w, op.h };
+            const float slack = 1.5f;
+            if (op.kind == DrawOp::Kind::Math || r.x + slack < top.clip.x || r.y + slack < top.clip.y || r.x + r.w - slack > top.clip.x + top.clip.w || r.y + r.h - slack > top.clip.y + top.clip.h) top.fits = false;
+        }
+        for (const Open& o : open) m_redundant_clip[o.at] = 0;
+    }
+
+    void build_draw_list() {
+        m_draw_list.clear();
+        m_draw_list.reserve(m_ops.size());
+        if (m_batching) find_redundant_clips();
+        std::vector<Rect> clips;
+        std::vector<const DrawOp*> segment;
+        for (std::size_t index = 0; index < m_ops.size(); ++index) {
+            const DrawOp& op = m_ops[index];
+            if (op.kind == DrawOp::Kind::ClipPush || op.kind == DrawOp::Kind::ClipPop) {
+                if (m_batching && m_redundant_clip[index]) continue;
+                batch_segment(segment);
+                if (op.kind == DrawOp::Kind::ClipPush) {
+                    Rect c{ op.x, op.y, op.w, op.h };
+                    if (!clips.empty()) c = c.intersect(clips.back());
+                    clips.push_back(c);
+                } else if (!clips.empty()) {
+                    clips.pop_back();
+                }
+                m_draw_list.push_back(&op);
+                continue;
+            }
+            if (!clips.empty() && !op_visible(op, clips.back())) continue;
+            if ((op.kind == DrawOp::Kind::Fill || op.kind == DrawOp::Kind::Stroke) && op.color.alpha() == 0) continue;
+            if (!m_batching) m_draw_list.push_back(&op);
+            else segment.push_back(&op);
+        }
+        batch_segment(segment);
+    }
+
+    static bool op_visible(const DrawOp& op, const Rect& clip) {
+        float x = op.x;
+        float y = op.y;
+        float w = std::max(op.w, 1.0f);
+        float h = std::max(op.h, 1.0f);
+        switch (op.kind) {
+            case DrawOp::Kind::Math: return true;
+            case DrawOp::Kind::Circle:
+            case DrawOp::Kind::CircleStroke:
+                x = op.x - op.radius;
+                y = op.y - op.radius;
+                w = h = op.radius * 2.0f;
+                break;
+            default: break;
+        }
+        const float pad = static_cast<float>(op.stroke) + 2.0f;
+        return x - pad < clip.x + clip.w && x + w + pad > clip.x && y - pad < clip.y + clip.h && y + h + pad > clip.y;
+    }
+
     static void draw(fizmo::graphics::Renderer& r, const DrawOp& op) {
         const int x = static_cast<int>(std::lround(op.x));
         const int y = static_cast<int>(std::lround(op.y));
@@ -1167,8 +1445,8 @@ private:
     fizmo::text::TextStyle text_style(const Node& element) {
         const bark::ComputedStyle& style = style_of(element);
         fizmo::text::TextStyle ts(font_size_of(element), text_color(element));
-        if (style.text("font-weight").value_or("") == "bold") ts.set_bold(true);
-        if (style.text("font-style").value_or("") == "italic") ts.set_italic(true);
+        if (style.text_view("font-weight") == "bold") ts.set_bold(true);
+        if (style.text_view("font-style") == "italic") ts.set_italic(true);
         const std::string decoration = style.text("text-decoration").value_or("");
         if (decoration.find("underline") != std::string::npos) ts.set_underline(true);
         if (decoration.find("line-through") != std::string::npos) ts.set_strikethrough(true);
@@ -1180,7 +1458,13 @@ private:
     }
 
     std::string style_key(const fizmo::text::TextStyle& style) {
-        return std::to_string(style.size()) + (style.is_bold() ? "b" : "") + (style.is_italic() ? "i" : "") + std::to_string(static_cast<int>(style.font()));
+        const double size = style.size();
+        const int font = static_cast<int>(style.font());
+        std::string key(sizeof(size) + 1 + sizeof(font), '\0');
+        std::memcpy(&key[0], &size, sizeof(size));
+        key[sizeof(size)] = static_cast<char>((style.is_bold() ? 1 : 0) | (style.is_italic() ? 2 : 0));
+        std::memcpy(&key[sizeof(size) + 1], &font, sizeof(font));
+        return key;
     }
 
     float text_width(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& style) {
@@ -1239,9 +1523,43 @@ private:
         std::size_t codes = 0;
         std::size_t terms = 0;
         std::size_t runs = 0;
+        std::size_t run_refs = 0;
     };
 
-    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size(), m_term_views.size(), m_runs.size() }; }
+    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size(), m_term_views.size(), m_runs.size(), m_run_refs.size() }; }
+
+    struct RunRef {
+        std::size_t at = 0;
+        const std::vector<TextRun>* runs = nullptr;
+        float dx = 0.0f;
+        float dy = 0.0f;
+        float clip_dx = 0.0f;
+        Rect clip;
+    };
+
+    std::vector<TextRun>& runs() {
+        if (m_run_refs.empty()) return m_runs;
+        std::vector<TextRun> merged;
+        std::size_t extra = 0;
+        for (const RunRef& ref : m_run_refs) extra += ref.runs->size();
+        merged.reserve(m_runs.size() + extra);
+        std::size_t next = 0;
+        for (const RunRef& ref : m_run_refs) {
+            const std::size_t at = std::min(ref.at, m_runs.size());
+            for (; next < at; ++next) merged.push_back(std::move(m_runs[next]));
+            for (const TextRun& t : *ref.runs) {
+                merged.push_back(t);
+                merged.back().x += ref.dx;
+                merged.back().y += ref.dy;
+                merged.back().clip = ref.clip;
+                merged.back().clip.x += ref.clip_dx;
+            }
+        }
+        for (; next < m_runs.size(); ++next) merged.push_back(std::move(m_runs[next]));
+        m_runs = std::move(merged);
+        m_run_refs.clear();
+        return m_runs;
+    }
 
     void shift_x(const Mark& from, float dx) {
         for (std::size_t i = from.ops; i < m_ops.size(); ++i) m_ops[i].x += dx;
@@ -1257,6 +1575,10 @@ private:
         }
         for (std::size_t i = from.codes; i < m_code_laid.size(); ++i) m_code[m_code_laid[i]].text_x += dx;
         for (std::size_t i = from.terms; i < m_term_views.size(); ++i) m_term_views[i].x += dx;
+        for (std::size_t i = from.run_refs; i < m_run_refs.size(); ++i) {
+            m_run_refs[i].dx += dx;
+            m_run_refs[i].clip_dx += dx;
+        }
         for (std::size_t i = from.runs; i < m_runs.size(); ++i) {
             m_runs[i].x += dx;
             m_runs[i].clip.x += dx;
@@ -1273,10 +1595,11 @@ private:
         m_code_laid.resize(m.codes);
         m_term_views.resize(m.terms);
         m_runs.resize(m.runs);
+        m_run_refs.resize(m.run_refs);
     }
 
     bool is_row(const Node& element, const bark::ComputedStyle& style) {
-        const std::string display = style.text("display").value_or("");
+        const std::string_view display = style.text_view("display");
         return display == "row" || (display.empty() && element.tag() == "row");
     }
 
@@ -1290,7 +1613,7 @@ private:
         if (node.is_text()) return true;
         if (!node.is_element()) return false;
         const bark::ComputedStyle& style = style_of(node);
-        const std::string display = style.text("display").value_or("");
+        const std::string_view display = style.text_view("display");
         if (display == "inline") return node.tag() != "math" && !input_kind_of(node);
         if (!display.empty()) return false;
         if (node.tag() == "math" || node.tag() == "img") return false;
@@ -1306,10 +1629,123 @@ private:
         if (node.is_text()) return false;
         if (!node.is_element()) return true;
         if (node.tag() == "window") return true;
-        return style_of(node).text("display").value_or("") == "none";
+        return style_of(node).text_view("display") == "none";
+    }
+
+    struct ChildRecord {
+        const Node* node = nullptr;
+        std::uint64_t info_stamp = 0;
+        std::uint64_t laid_stamp = 0;
+        bool skip = false;
+        bool inline_item = false;
+        float flex = 0.0f;
+        unsigned autos = 0;
+        bool measured = false;
+        float advance = 0.0f;
+        Rect bounds;
+    };
+
+    struct ChildCache {
+        std::uint64_t style = 0;
+        std::uint64_t generation = 0;
+        std::uint64_t used = 0;
+        float width = 0.0f;
+        float avail = 0.0f;
+        float total_flex = 0.0f;
+        unsigned autos = 0;
+        unsigned inlines = 0;
+        std::vector<ChildRecord> records;
+    };
+
+    void child_info(const Node& parent, ChildRecord& rec, bool preserve) {
+        const Node& child = *rec.node;
+        rec.info_stamp = child.tree_stamp();
+        rec.flex = 0.0f;
+        rec.autos = 0;
+        rec.inline_item = false;
+        rec.skip = skipped(child);
+        if (rec.skip) return;
+        if (is_inline_flow(child)) {
+            if (child.is_text() && !preserve && collapse_whitespace(child.text()).empty()) {
+                rec.skip = true;
+                return;
+            }
+            rec.inline_item = true;
+            return;
+        }
+        (void)parent;
+        const bark::ComputedStyle& bs = style_of(child);
+        rec.flex = flex_of(bs);
+        const AutoSides a = auto_sides(bs, "margin");
+        rec.autos = (a.top ? 1u : 0u) + (a.bottom ? 1u : 0u);
+    }
+
+    bool layout_children_cached(fizmo::graphics::Renderer& r, const Node& parent, float x, float& y, float width) {
+        if (!m_layout_caching || m_capturing > 0 || m_force_full || m_sel_anchor.valid()) return false;
+        const auto& kids = parent.children();
+        if (kids.size() < 24) return false;
+        const std::uint64_t key = m_styles.style_key(parent, m_project.diagnostics);
+        const std::uint64_t generation = layout_generation();
+        const float avail = m_avail_h;
+        ChildCache& cache = m_child_cache[&parent];
+        cache.used = m_frame_index;
+        bool valid = cache.style == key && cache.generation == generation && cache.width == width && cache.avail == avail && cache.records.size() == kids.size();
+        for (std::size_t i = 0; valid && i < kids.size(); ++i) valid = cache.records[i].node == kids[i].get();
+        const bool preserve = preserves_space(parent);
+        if (!valid) {
+            cache = ChildCache{};
+            cache.style = key;
+            cache.generation = generation;
+            cache.used = m_frame_index;
+            cache.width = width;
+            cache.avail = avail;
+            cache.records.resize(kids.size());
+            for (std::size_t i = 0; i < kids.size(); ++i) {
+                ChildRecord& rec = cache.records[i];
+                rec.node = kids[i].get();
+                child_info(parent, rec, preserve);
+                cache.total_flex += rec.flex;
+                cache.autos += rec.autos;
+                cache.inlines += rec.inline_item ? 1u : 0u;
+            }
+        } else {
+            for (ChildRecord& rec : cache.records) {
+                if (rec.info_stamp == rec.node->tree_stamp()) continue;
+                cache.total_flex -= rec.flex;
+                cache.autos -= rec.autos;
+                cache.inlines -= rec.inline_item ? 1u : 0u;
+                child_info(parent, rec, preserve);
+                cache.total_flex += rec.flex;
+                cache.autos += rec.autos;
+                cache.inlines += rec.inline_item ? 1u : 0u;
+            }
+        }
+        if (cache.inlines > 0) return false;
+        const bark::ComputedStyle& parent_style = style_of(parent);
+        const Alignment al = alignment_of(parent_style, false);
+        if (avail >= 0.0f && (cache.total_flex > 0.0f || cache.autos > 0 || al.main != "start")) return false;
+        for (ChildRecord& rec : cache.records) {
+            if (rec.skip) continue;
+            if (rec.measured && offscreen(rec.bounds, x, y)) {
+                y += rec.advance;
+                m_partial_runs = true;
+                continue;
+            }
+            const Mark before = mark();
+            const float y0 = y;
+            m_avail_h = avail;
+            place_block(r, *rec.node, x, y, width, al.cross, -1.0f);
+            rec.advance = y - y0;
+            rec.bounds = slice_bounds(before, x, y0, rec.advance);
+            rec.laid_stamp = rec.node->tree_stamp();
+            rec.measured = true;
+        }
+        m_avail_h = avail;
+        return true;
     }
 
     void layout_children(fizmo::graphics::Renderer& r, const Node& parent, float x, float& y, float width) {
+        if (layout_children_cached(r, parent, x, y, width)) return;
         std::vector<const Node*> blocks;
         std::vector<std::vector<const Node*>> runs;
         std::vector<int> order;
@@ -1529,7 +1965,7 @@ private:
         if (node.is_text()) return text_width(r, collapse_whitespace(node.text()), text_style(owner)) + 1.0f;
         if (!node.is_element()) return 0.0f;
         const bark::ComputedStyle& style = style_of(node);
-        if (style.text("display").value_or("") == "none") return 0.0f;
+        if (style.text_view("display") == "none") return 0.0f;
         const Box margin = box_of(style, "margin");
         const float margins = margin.left + margin.right;
         if (const std::optional<InputKind> kind = input_kind_of(node)) {
@@ -1590,7 +2026,7 @@ private:
     }
 
     bool is_inline_block(const Node& node, const bark::ComputedStyle& style) {
-        const std::string display = style.text("display").value_or("");
+        const std::string_view display = style.text_view("display");
         return display == "inline-block" || (display.empty() && (node.tag() == "button" || node.tag() == "input_file"));
     }
 
@@ -1599,7 +2035,7 @@ private:
         std::vector<const Node*> items;
         for (const auto& c : element.children()) {
             if (c->is_text() && collapse_whitespace(c->text()).empty()) continue;
-            if (c->is_element() && (c->tag() == "window" || style_of(*c).text("display").value_or("") == "none")) continue;
+            if (c->is_element() && (c->tag() == "window" || style_of(*c).text_view("display") == "none")) continue;
             if (c->is_element() || c->is_text()) items.push_back(c.get());
         }
         if (items.empty()) return;
@@ -1966,7 +2402,7 @@ private:
                 run.h = fh;
                 run.style = f.style;
                 run.clip = current_clip();
-                run.selectable = style_of(*run_owner).text("user-select").value_or("text") != "none";
+                run.selectable = style_of(*run_owner).text_view("user-select") != "none";
                 if (run.selectable && m_sel_anchor.valid()) draw_selection(r, run);
                 stream += text.size();
                 m_runs.push_back(std::move(run));
@@ -2757,7 +3193,7 @@ private:
             term_paste(node);
             return;
         }
-        if (ctrl && !shift && !alt && k == Key::C && term->has_selection()) {
+        if (ctrl && !shift && !alt && k == Key::C && term->has_selection() && node.attribute_or("copy-on-ctrl-c", "true") != "false") {
             term_copy(node);
             term->clear_selection();
             poke();
@@ -3021,7 +3457,7 @@ private:
     const TextRun* run_at(float px, float py, bool nearest, const Rect* within = nullptr) {
         const TextRun* best = nullptr;
         float best_score = 1e18f;
-        for (const TextRun& run : m_runs) {
+        for (const TextRun& run : runs()) {
             if (!run.selectable) continue;
             if (within && (std::abs(run.clip.x - within->x) > 0.5f || std::abs(run.clip.y - within->y) > 0.5f || std::abs(run.clip.w - within->w) > 0.5f || std::abs(run.clip.h - within->h) > 0.5f)) continue;
             if (!nearest) {
@@ -3061,7 +3497,7 @@ private:
 
     std::string block_text(const Node* block) {
         std::string out;
-        for (const TextRun& run : m_runs) {
+        for (const TextRun& run : runs()) {
             if (run.block != block) continue;
             while (out.size() < run.start) out += '\n';
             if (out.size() > run.start) out.resize(run.start);
@@ -3070,8 +3506,8 @@ private:
         return out;
     }
 
-    const Rect* anchor_clip() const {
-        for (const TextRun& run : m_runs) {
+    const Rect* anchor_clip() {
+        for (const TextRun& run : runs()) {
             if (run.block == m_sel_anchor.block && run.start <= m_sel_anchor.offset && m_sel_anchor.offset <= run.start + run.text.size()) return &run.clip;
         }
         return nullptr;
@@ -3116,7 +3552,7 @@ private:
         if (!has_text_selection()) return std::string();
         std::string out;
         const TextRun* prev = nullptr;
-        for (const TextRun& run : m_runs) {
+        for (const TextRun& run : runs()) {
             const auto [from, to] = run_selection(run);
             if (from >= to) continue;
             if (prev) {
@@ -3140,9 +3576,15 @@ private:
     }
 
     bool select_contents(const Node& node) {
+        if (m_partial_runs) {
+            m_pending_select = &node;
+            m_force_full = true;
+            poke();
+            return true;
+        }
         const TextRun* first = nullptr;
         const TextRun* last = nullptr;
-        for (const TextRun& run : m_runs) {
+        for (const TextRun& run : runs()) {
             if (!run.selectable) continue;
             if (run.owner != &node && !run.owner->is_inside(&node) && run.block != &node && !(run.block && run.block->is_inside(&node))) continue;
             if (!first) first = &run;
@@ -3801,19 +4243,65 @@ private:
         return text.empty() ? 0.0f : 10.0f + text_width(r, text, text_style(node));
     }
 
+    static std::uint64_t line_hash(const std::string& line) noexcept {
+        std::uint64_t h = 14695981039346656037ull;
+        for (const unsigned char c : line) {
+            h ^= c;
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+
+    void rehighlight(CodeEditor& ed, CodeLanguage lang) {
+        const std::size_t count = ed.buffer.line_count();
+        std::vector<std::uint64_t> hashes(count);
+        for (std::size_t i = 0; i < count; ++i) hashes[i] = line_hash(ed.buffer.line(i));
+        const std::size_t old_n = ed.states.size();
+        const bool reuse = old_n > 0 && ed.line_hashes.size() == old_n && ed.states_language == static_cast<int>(lang);
+        std::vector<CodeLineState> states(count);
+        std::size_t start = 0;
+        std::size_t suffix = 0;
+        if (reuse) {
+            std::size_t prefix = 0;
+            const std::size_t both = std::min(count, old_n);
+            while (prefix < both && hashes[prefix] == ed.line_hashes[prefix]) ++prefix;
+            while (suffix < both - prefix && hashes[count - 1 - suffix] == ed.line_hashes[old_n - 1 - suffix]) ++suffix;
+            start = prefix > 0 ? prefix - 1 : 0;
+            for (std::size_t i = 0; i < start; ++i) states[i] = ed.states[i];
+        }
+        CodeLineState st = reuse && start < old_n ? ed.states[start] : CodeLineState{};
+        for (std::size_t i = start; i < count; ++i) {
+            if (reuse && suffix > 0 && i >= count - suffix && i > start) {
+                const std::size_t j = i + old_n - count;
+                if (st == ed.states[j]) {
+                    for (std::size_t k = i; k < count; ++k) states[k] = ed.states[k + old_n - count];
+                    break;
+                }
+            }
+            states[i] = st;
+            highlight_code_line(lang, ed.buffer.line(i), st);
+        }
+        ed.states = std::move(states);
+        ed.line_hashes = std::move(hashes);
+        ed.states_language = static_cast<int>(lang);
+    }
+
     void layout_code(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, float forced_h) {
         const bark::ComputedStyle& style = style_of(element);
         CodeEditor& ed = m_code[&element];
         m_code_laid.push_back(&element);
-        const std::string value = input_string(element).value_or("");
-        if (value != ed.synced) {
-            const CodePos keep = ed.buffer.caret();
-            ed.buffer.set_text(value);
-            ed.buffer.set_caret(keep);
-            ed.synced = value;
+        const bool node_changed = ed.seen_stamp != element.tree_stamp();
+        if (node_changed) {
+            const std::string value = input_string(element).value_or("");
+            if (value != ed.synced) {
+                const CodePos keep = ed.buffer.caret();
+                ed.buffer.set_text(value);
+                ed.buffer.set_caret(keep);
+                ed.synced = value;
+            }
+            ed.tab_size = static_cast<std::size_t>(std::max<std::int64_t>(1, parse_integer(element.attribute_or("tab-size", "4")).value_or(4)));
         }
-        ed.tab_size = static_cast<std::size_t>(std::max<std::int64_t>(1, parse_integer(element.attribute_or("tab-size", "4")).value_or(4)));
-        const std::string caret_attr = element.attribute_or("caret", "");
+        const std::string caret_attr = node_changed ? element.attribute_or("caret", "") : std::string();
         if (!caret_attr.empty() && caret_attr != ed.caret_request) {
             ed.caret_request = caret_attr;
             const std::string where = caret_attr.substr(0, caret_attr.find('#'));
@@ -3857,12 +4345,7 @@ private:
 
         if (ed.states_revision != ed.buffer.revision() || ed.states.size() != count) {
             const CodeLanguage lang = code_language_from_name(element.attribute_or("language", "plain"));
-            ed.states.assign(count, CodeLineState{});
-            CodeLineState st;
-            for (std::size_t i = 0; i < count; ++i) {
-                ed.states[i] = st;
-                highlight_code_line(lang, ed.buffer.line(i), st);
-            }
+            rehighlight(ed, lang);
             ed.states_revision = ed.buffer.revision();
         }
 
@@ -3899,15 +4382,20 @@ private:
         const std::vector<CodeCursor> cursors = ed.buffer.cursors();
         const CodeLanguage lang = code_language_from_name(element.attribute_or("language", "plain"));
         const std::vector<CodeTokenLook> looks = code_token_looks(style);
-        const std::string spans_attr = element.attribute_or("semantic", "");
-        if (spans_attr != ed.overlay_spans) {
-            ed.overlay_spans = spans_attr;
-            ed.overlay.set_spans(spans_attr);
-        }
-        const std::string problems_attr = element.attribute_or("problems", "");
-        if (problems_attr != ed.overlay_problems) {
-            ed.overlay_problems = problems_attr;
-            ed.overlay.set_problems(problems_attr);
+        if (node_changed) {
+            const Attribute* spans_attr = element.find_attribute("semantic");
+            const std::string_view spans_text = spans_attr ? std::string_view(spans_attr->value) : std::string_view();
+            if (spans_text != ed.overlay_spans) {
+                ed.overlay_spans = std::string(spans_text);
+                ed.overlay.set_spans(ed.overlay_spans);
+            }
+            const Attribute* problems_attr = element.find_attribute("problems");
+            const std::string_view problems_text = problems_attr ? std::string_view(problems_attr->value) : std::string_view();
+            if (problems_text != ed.overlay_problems) {
+                ed.overlay_problems = std::string(problems_text);
+                ed.overlay.set_problems(ed.overlay_problems);
+            }
+            ed.seen_stamp = element.tree_stamp();
         }
         const CodeTokenLook error_line = code_extra_look(style, "code-error-line");
         const std::string mark_text = element.attribute_or("mark", "");
@@ -4163,10 +4651,264 @@ private:
         y += h;
     }
 
+    struct LayoutEntry {
+        std::uint64_t stamp = 0;
+        std::uint64_t style = 0;
+        std::uint64_t generation = 0;
+        std::uint64_t used = 0;
+        float width = 0.0f;
+        float avail = 0.0f;
+        float forced = 0.0f;
+        bool sized = false;
+        bool wide = false;
+        bool dynamic = false;
+        bool measured = false;
+        bool captured = false;
+        unsigned retries = 0;
+        unsigned streak = 0;
+        std::uint64_t changed_frame = 0;
+        float advance = 0.0f;
+        Rect bounds;
+        std::vector<DrawOp> ops;
+        std::vector<ElementBox> boxes;
+        std::vector<TextRun> runs;
+    };
+
+    std::uint64_t layout_generation() const {
+        return m_styles.revision();
+    }
+
+    bool captures_cleanly(const Mark& from) const {
+        if (m_hits.size() != from.hits || m_scrollers.size() != from.scrollers || m_swatches.size() != from.swatches || m_code_laid.size() != from.codes || m_term_views.size() != from.terms) return false;
+        for (std::size_t i = from.ops; i < m_ops.size(); ++i) {
+            const DrawOp::Kind k = m_ops[i].kind;
+            if (k == DrawOp::Kind::ClipPush || k == DrawOp::Kind::ClipPop || k == DrawOp::Kind::Math || k == DrawOp::Kind::Image) return false;
+        }
+        return true;
+    }
+
+    Rect slice_bounds(const Mark& from, float x, float y0, float advance) const {
+        float left = 0.0f;
+        float top = 0.0f;
+        float right = 0.0f;
+        float bottom = advance;
+        for (std::size_t i = from.ops; i < m_ops.size(); ++i) {
+            const DrawOp& op = m_ops[i];
+            if (op.kind == DrawOp::Kind::ClipPop) continue;
+            const float pad = op.kind == DrawOp::Kind::Circle || op.kind == DrawOp::Kind::CircleStroke ? op.radius : static_cast<float>(op.stroke) + 2.0f;
+            left = std::min(left, op.x - x - pad);
+            top = std::min(top, op.y - y0 - pad);
+            right = std::max(right, op.x - x + op.w + pad);
+            bottom = std::max(bottom, op.y - y0 + op.h + pad);
+        }
+        for (std::size_t i = from.boxes; i < m_boxes.size(); ++i) {
+            const ElementBox& b = m_boxes[i];
+            left = std::min(left, b.x - x);
+            top = std::min(top, b.y - y0);
+            right = std::max(right, b.x - x + b.w);
+            bottom = std::max(bottom, b.y - y0 + b.h);
+        }
+        return Rect{ left, top, right - left, bottom - top };
+    }
+
+    bool offscreen(const Rect& bounds, float x, float y) const {
+        if (m_capturing > 0) return false;
+        const Rect view = current_clip().intersect(Rect{ 0.0f, 0.0f, m_view_w, m_view_h });
+        const float bx = x + bounds.x;
+        const float by = y + bounds.y;
+        return !(bx < view.x + view.w && bx + bounds.w > view.x && by < view.y + view.h && by + bounds.h > view.y);
+    }
+
+    void layout_dynamic(fizmo::graphics::Renderer& r, LayoutEntry& e, const Node& element, float x, float& y, float width, bool sized, float forced_h) {
+        if (frame_stats_log().enabled) ++frame_stats_log().dynamic;
+        const Mark before = mark();
+        const float y0 = y;
+        layout_element_now(r, element, x, y, width, sized, forced_h);
+        e.advance = y - y0;
+        e.bounds = slice_bounds(before, x, y0, e.advance);
+        e.measured = true;
+    }
+
+    void capture_layout(LayoutEntry& e, const Mark& from, float x, float y0, float y1) {
+        e.advance = y1 - y0;
+        e.measured = true;
+        e.ops.assign(m_ops.begin() + static_cast<std::ptrdiff_t>(from.ops), m_ops.end());
+        e.boxes.assign(m_boxes.begin() + static_cast<std::ptrdiff_t>(from.boxes), m_boxes.end());
+        e.runs.assign(m_runs.begin() + static_cast<std::ptrdiff_t>(from.runs), m_runs.end());
+        float left = 0.0f;
+        float top = 0.0f;
+        float right = 0.0f;
+        float bottom = e.advance;
+        for (DrawOp& op : e.ops) {
+            op.x -= x;
+            op.y -= y0;
+            const float pad = op.kind == DrawOp::Kind::Circle || op.kind == DrawOp::Kind::CircleStroke ? op.radius : static_cast<float>(op.stroke) + 2.0f;
+            left = std::min(left, op.x - pad);
+            top = std::min(top, op.y - pad);
+            right = std::max(right, op.x + op.w + pad);
+            bottom = std::max(bottom, op.y + op.h + pad);
+        }
+        for (ElementBox& b : e.boxes) {
+            b.x -= x;
+            b.y -= y0;
+            left = std::min(left, b.x);
+            top = std::min(top, b.y);
+            right = std::max(right, b.x + b.w);
+            bottom = std::max(bottom, b.y + b.h);
+        }
+        for (TextRun& t : e.runs) {
+            t.x -= x;
+            t.y -= y0;
+        }
+        e.bounds = Rect{ left, top, right - left, bottom - top };
+    }
+
+    void replay_layout(const LayoutEntry& e, float x, float& y) {
+        const Rect clip = current_clip();
+        const Rect view = m_capturing == 0 ? clip.intersect(Rect{ 0.0f, 0.0f, m_view_w, m_view_h }) : k_everywhere;
+        const float bx = x + e.bounds.x;
+        const float by = y + e.bounds.y;
+        const bool visible = m_capturing > 0 || (bx < view.x + view.w && bx + e.bounds.w > view.x && by < view.y + view.h && by + e.bounds.h > view.y);
+        FrameStatsLog& stats = frame_stats_log();
+        if (stats.enabled) ++(visible ? stats.replayed : stats.culled);
+        if (visible) {
+            const bool whole = m_capturing > 0 || (by >= view.y && by + e.bounds.h <= view.y + view.h);
+            if (whole) m_ops.reserve(m_ops.size() + e.ops.size());
+            const Rect band{ -k_far, view.y - y, 2.0f * k_far, view.h };
+            for (const DrawOp& op : e.ops) {
+                if (!whole && op.kind != DrawOp::Kind::ClipPush && op.kind != DrawOp::Kind::ClipPop && !op_visible(op, band)) continue;
+                m_ops.push_back(op);
+                m_ops.back().x += x;
+                m_ops.back().y += y;
+            }
+            for (const ElementBox& b : e.boxes) {
+                m_boxes.push_back(b);
+                m_boxes.back().x += x;
+                m_boxes.back().y += y;
+                m_boxes.back().clip = clip;
+            }
+        }
+        if (m_capturing == 0 && !e.runs.empty()) {
+            m_run_refs.push_back(RunRef{ m_runs.size(), &e.runs, x, y, 0.0f, clip });
+        } else {
+            for (const TextRun& t : e.runs) {
+                m_runs.push_back(t);
+                m_runs.back().x += x;
+                m_runs.back().y += y;
+                m_runs.back().clip = clip;
+            }
+        }
+        y += e.advance;
+    }
+
+    void prune_layout_cache() {
+        if (m_frame_index % 120 != 0) return;
+        if (m_layout_cache.size() >= 256) {
+            for (auto it = m_layout_cache.begin(); it != m_layout_cache.end();) {
+                if (it->second.used + 120 < m_frame_index) it = m_layout_cache.erase(it);
+                else ++it;
+            }
+        }
+        for (auto it = m_child_cache.begin(); it != m_child_cache.end();) {
+            if (it->second.used + 120 < m_frame_index) it = m_child_cache.erase(it);
+            else ++it;
+        }
+    }
+
     void layout_element(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, bool sized = false, float forced_h = -1.0f) {
+        if (!m_layout_caching || m_sel_anchor.valid() || element.tag() == "window") {
+            layout_element_now(r, element, x, y, width, sized, forced_h);
+            return;
+        }
+        const std::uint64_t key = m_styles.style_key(element, m_project.diagnostics);
+        const std::uint64_t generation = layout_generation();
+        const bool wide = m_wide > 0;
+        auto found = m_layout_cache.find(&element);
+        if (found != m_layout_cache.end()) {
+            LayoutEntry& e = found->second;
+            e.used = m_frame_index;
+            const bool same = e.stamp == element.tree_stamp() && e.style == key && e.generation == generation && e.width == width && e.avail == m_avail_h && e.forced == forced_h && e.sized == sized && e.wide == wide;
+            if (same && !e.dynamic && e.captured) {
+                e.streak = 0;
+                replay_layout(e, x, y);
+                return;
+            }
+            if (same && e.dynamic) {
+                if (e.measured && !m_force_full && offscreen(e.bounds, x, y)) {
+                    y += e.advance;
+                    m_partial_runs = true;
+                    return;
+                }
+                layout_dynamic(r, e, element, x, y, width, sized, forced_h);
+                return;
+            }
+            bool volatile_entry = false;
+            if (!same && !e.dynamic) {
+                e.streak = e.changed_frame + 1 >= m_frame_index ? e.streak + 1 : 1;
+                e.changed_frame = m_frame_index;
+                volatile_entry = e.streak >= 3;
+            }
+            const bool retry_dynamic = e.dynamic && ++e.retries % 32 == 0;
+            if (!same && ((e.dynamic && !retry_dynamic) || volatile_entry)) {
+                e.stamp = element.tree_stamp();
+                e.style = key;
+                e.generation = generation;
+                e.width = width;
+                e.avail = m_avail_h;
+                e.forced = forced_h;
+                e.sized = sized;
+                e.wide = wide;
+                if (volatile_entry) {
+                    e.captured = false;
+                    e.ops.clear();
+                    e.boxes.clear();
+                    e.runs.clear();
+                }
+                layout_dynamic(r, e, element, x, y, width, sized, forced_h);
+                return;
+            }
+        }
+        const Mark before = mark();
+        const float y0 = y;
+        const float avail = m_avail_h;
+        if (frame_stats_log().enabled) ++frame_stats_log().laid;
+        ++m_capturing;
+        layout_element_now(r, element, x, y, width, sized, forced_h);
+        --m_capturing;
+        LayoutEntry& e = m_layout_cache[&element];
+        for (const RunRef& ref : m_run_refs) {
+            if (ref.runs == &e.runs) {
+                runs();
+                break;
+            }
+        }
+        e.stamp = element.tree_stamp();
+        e.style = key;
+        e.generation = generation;
+        e.used = m_frame_index;
+        e.width = width;
+        e.avail = avail;
+        e.forced = forced_h;
+        e.sized = sized;
+        e.wide = wide;
+        e.dynamic = !captures_cleanly(before);
+        if (e.dynamic) {
+            e.ops.clear();
+            e.boxes.clear();
+            e.runs.clear();
+            e.advance = y - y0;
+            e.bounds = slice_bounds(before, x, y0, e.advance);
+            e.measured = true;
+        } else {
+            capture_layout(e, before, x, y0, y);
+            e.captured = true;
+        }
+    }
+
+    void layout_element_now(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, bool sized = false, float forced_h = -1.0f) {
         if (element.tag() == "window") return;
         const bark::ComputedStyle& style = style_of(element);
-        if (style.text("display").value_or("") == "none") return;
+        if (style.text_view("display") == "none") return;
 
         const Box margin = box_of(style, "margin");
         y += margin.top;
@@ -4216,9 +4958,12 @@ private:
         else if (element.tag() == "img") fixed_h = std::nullopt;
         else if (const auto hgt = resolve_length(style, "height", m_avail_h)) fixed_h = *hgt;
         std::optional<float> max_h = resolve_length(style, "max-height", m_avail_h);
-        const std::string overflow = style.text("overflow").value_or("visible");
-        const std::string overflow_y = style.text("overflow-y").value_or(overflow);
-        const std::string overflow_x = style.text("overflow-x").value_or(overflow == "auto" || overflow == "scroll" ? std::string("hidden") : overflow);
+        const std::string_view overflow_raw = style.text_view("overflow");
+        const std::string_view overflow = overflow_raw.empty() ? std::string_view("visible") : overflow_raw;
+        const std::string_view overflow_y_raw = style.text_view("overflow-y");
+        const std::string_view overflow_y = overflow_y_raw.empty() ? overflow : overflow_y_raw;
+        const std::string_view overflow_x_raw = style.text_view("overflow-x");
+        const std::string_view overflow_x = !overflow_x_raw.empty() ? overflow_x_raw : (overflow == "auto" || overflow == "scroll") ? std::string_view("hidden") : overflow;
         const bool clips = overflow_y == "hidden" || overflow_y == "scroll" || overflow_y == "auto" || overflow_x == "hidden" || overflow_x == "scroll" || overflow_x == "auto";
         const bool scrolls = overflow_y == "scroll" || overflow_y == "auto";
         const bool scrolls_x = overflow_x == "scroll" || overflow_x == "auto";
@@ -4493,15 +5238,20 @@ private:
         m_modal = nullptr;
         m_modal_boxes = 0;
         m_modal_hits = 0;
-        std::vector<const Node*> open;
-        std::function<void(const Node&)> collect = [&](const Node& n) {
-            for (const auto& c : n.children()) {
-                if (!c->is_element() || c->tag() == "window") continue;
-                if (is_modal(*c) && c->has_attribute("open") && is_page_shown(*c)) open.push_back(c.get());
-                collect(*c);
-            }
-        };
-        collect(m_window);
+        if (m_modal_scan_stamp != m_window.tree_stamp()) {
+            m_open_modals.clear();
+            std::function<void(const Node&)> collect = [&](const Node& n) {
+                for (const auto& c : n.children()) {
+                    if (!c->is_element() || c->tag() == "window") continue;
+                    if (is_modal(*c) && c->has_attribute("open") && is_page_shown(*c)) m_open_modals.push_back(c.get());
+                    collect(*c);
+                }
+            };
+            collect(m_window);
+            m_modal_scan_stamp = m_window.tree_stamp();
+            m_modal_scan_revision = document().revision();
+        }
+        const std::vector<const Node*> open = m_open_modals;
         for (const Node* modal : open) {
             const bark::ComputedStyle& style = style_of(*modal);
             push_rect(DrawOp::Kind::Fill, 0, 0, view_w, view_h, to_color(style.color("backdrop").value_or(bark::Rgba{ 0, 0, 0, 140 })));
@@ -5848,8 +6598,10 @@ private:
 
     void code_changed(const Node* node, const std::string& typed = std::string()) {
         CodeEditor& ed = m_code[node];
+        const bool current = ed.seen_stamp == node->tree_stamp();
         ed.synced = ed.buffer.text();
         mutable_node(*node).set_attribute("value", ed.synced);
+        if (current) ed.seen_stamp = node->tree_stamp();
         document().touch();
         ed.reveal = true;
         Event input;
@@ -6088,6 +6840,10 @@ private:
     ContextMenu m_context;
     std::vector<TermView> m_term_views;
     std::vector<TextRun> m_runs;
+    std::vector<RunRef> m_run_refs;
+    std::vector<const Node*> m_open_modals;
+    std::uint64_t m_modal_scan_stamp = 0;
+    std::uint64_t m_modal_scan_revision = static_cast<std::uint64_t>(-1);
     CodeCompletion m_complete;
     fizmo::graphics::Renderer* m_renderer = nullptr;
     TextPoint m_sel_anchor;
@@ -6111,6 +6867,18 @@ private:
     std::shared_ptr<fizmo::images::BitmapImage> m_color_wheel_image;
     std::shared_ptr<fizmo::graphics::Texture> m_color_wheel;
     std::vector<ElementBox> m_boxes;
+    std::unordered_map<const Node*, LayoutEntry> m_layout_cache;
+    std::vector<const DrawOp*> m_draw_list;
+    std::vector<DrawLayer> m_draw_layers;
+    std::vector<unsigned char> m_redundant_clip;
+    bool m_batching = std::getenv("GROVE_BATCHING") == nullptr || std::string(std::getenv("GROVE_BATCHING")) != "0";
+    std::unordered_map<const Node*, ChildCache> m_child_cache;
+    bool m_force_full = false;
+    bool m_partial_runs = false;
+    const Node* m_pending_select = nullptr;
+    bool m_layout_caching = std::getenv("GROVE_LAYOUT_CACHE") == nullptr || std::string(std::getenv("GROVE_LAYOUT_CACHE")) != "0";
+    int m_capturing = 0;
+    std::uint64_t m_frame_index = 0;
     std::vector<const Node*> m_hover;
     std::vector<const Node*> m_active;
     const Node* m_pressed = nullptr;
@@ -6329,7 +7097,19 @@ public:
             if (m_doc.events().quit_requested()) break;
             reconcile();
             if (!host_for(&m_main)) break;
-            render();
+            bool quiet = true;
+            for (const auto& h : m_hosts) quiet = quiet && h->view->idle();
+            const Clock::time_point before = Clock::now();
+            if (!quiet || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_hosts.size() != m_painted_hosts || before - m_painted_at >= std::chrono::milliseconds(500)) {
+                render();
+                frame_stats_log().report();
+                m_painted_revision = m_doc.revision();
+                m_painted_stamp = m_doc.root().tree_stamp();
+                m_painted_hosts = m_hosts.size();
+                m_painted_at = before;
+            } else {
+                ++frame_stats_log().skipped;
+            }
             if (m_doc.events().quit_requested()) break;
 
             bool idle = true;
@@ -6593,10 +7373,19 @@ private:
         for (WindowHost* h : snapshot) {
             if (!host_alive(h) || !h->window || !h->window->is_open()) continue;
             fizmo::graphics::Renderer& r = *h->renderer;
+            const auto started = std::chrono::steady_clock::now();
             r.begin_frame();
             r.clear(h->background);
             h->view->paint(r);
+            const auto painted = std::chrono::steady_clock::now();
             r.present();
+            FrameStatsLog& stats = frame_stats_log();
+            if (stats.enabled) {
+                const auto presented = std::chrono::steady_clock::now();
+                ++stats.frames;
+                stats.present_ms += FrameStatsLog::ms(painted, presented);
+                stats.worst_ms = std::max(stats.worst_ms, FrameStatsLog::ms(started, presented));
+            }
             if (!host_alive(h)) continue;
             if (h->auto_height && !h->fitted && h->view->content_height() > 0.0f) {
                 const double limit = m_screen.height > 0 ? m_screen.height * 0.85 : 900.0;
@@ -6633,6 +7422,10 @@ private:
     const RunOptions& m_options;
     Node& m_main;
     std::vector<std::unique_ptr<WindowHost>> m_hosts;
+    std::uint64_t m_painted_revision = static_cast<std::uint64_t>(-1);
+    std::uint64_t m_painted_stamp = 0;
+    std::size_t m_painted_hosts = 0;
+    std::chrono::steady_clock::time_point m_painted_at{};
     std::uint64_t m_seen_revision = ~std::uint64_t(0);
     bark::Viewport m_screen{ 1920, 1080 };
 };

@@ -1,6 +1,7 @@
 #include "grove/markup/node.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 
 namespace grove {
@@ -37,11 +38,24 @@ std::string Node::attribute_or(std::string_view name, std::string fallback) cons
     return a ? a->value : std::move(fallback);
 }
 
+std::uint64_t Node::next_stamp() noexcept {
+    static std::uint64_t clock = 0;
+    return ++clock;
+}
+
+void Node::mark_changed(bool self) noexcept {
+    const std::uint64_t stamp = next_stamp();
+    if (self) m_self_stamp = stamp;
+    for (Node* n = this; n; n = n->m_parent) n->m_tree_stamp = stamp;
+}
+
 void Node::set_attribute(std::string_view name, std::string value) {
     for (Attribute& a : m_attributes) {
         if (a.name == name) {
+            if (a.has_value && a.value == value) return;
             a.value = std::move(value);
             a.has_value = true;
+            mark_changed(true);
             return;
         }
     }
@@ -50,12 +64,14 @@ void Node::set_attribute(std::string_view name, std::string value) {
     a.value = std::move(value);
     a.has_value = true;
     m_attributes.push_back(std::move(a));
+    mark_changed(true);
 }
 
 bool Node::remove_attribute(std::string_view name) {
     for (auto it = m_attributes.begin(); it != m_attributes.end(); ++it) {
         if (it->name == name) {
             m_attributes.erase(it);
+            mark_changed(true);
             return true;
         }
     }
@@ -73,8 +89,15 @@ std::vector<std::string> Node::classes() const {
 }
 
 bool Node::has_class(std::string_view name) const {
-    for (const std::string& c : classes()) {
-        if (c == name) return true;
+    const Attribute* a = find_attribute("class");
+    if (!a || name.empty()) return false;
+    const std::string_view list = a->value;
+    std::size_t i = 0;
+    while (i < list.size()) {
+        while (i < list.size() && std::isspace(static_cast<unsigned char>(list[i]))) ++i;
+        const std::size_t start = i;
+        while (i < list.size() && !std::isspace(static_cast<unsigned char>(list[i]))) ++i;
+        if (i > start && list.substr(start, i - start) == name) return true;
     }
     return false;
 }
@@ -82,6 +105,7 @@ bool Node::has_class(std::string_view name) const {
 Node* Node::append_child(std::unique_ptr<Node> child) {
     child->m_parent = this;
     m_children.push_back(std::move(child));
+    mark_changed(false);
     return m_children.back().get();
 }
 
@@ -89,6 +113,7 @@ Node* Node::insert_child(std::size_t index, std::unique_ptr<Node> child) {
     child->m_parent = this;
     index = std::min(index, m_children.size());
     auto it = m_children.insert(m_children.begin() + static_cast<std::ptrdiff_t>(index), std::move(child));
+    mark_changed(false);
     return it->get();
 }
 
@@ -98,6 +123,7 @@ std::unique_ptr<Node> Node::remove_child(const Node* child) {
         std::unique_ptr<Node> out = std::move(*it);
         m_children.erase(it);
         out->m_parent = nullptr;
+        mark_changed(false);
         return out;
     }
     return nullptr;
@@ -128,11 +154,16 @@ std::string Node::inner_text() const {
 
 void Node::set_inner_text(std::string text) {
     if (!is_element()) {
-        m_text = std::move(text);
+        set_text(std::move(text));
         return;
     }
     const bool raw = !m_children.empty() && m_children.front()->is_raw();
+    if (m_children.size() == 1 && (m_children.front()->is_text() || raw)) {
+        m_children.front()->set_text(std::move(text));
+        return;
+    }
     m_children.clear();
+    mark_changed(false);
     append_child(raw ? make_raw(std::move(text), m_span) : make_text(std::move(text), m_span));
 }
 
@@ -163,10 +194,11 @@ bool Document::is_attached(const Node& node) const noexcept {
 
 std::unique_ptr<Node> Document::take_detached(Node& node) {
     if (Node* parent = node.parent()) return parent->remove_child(&node);
-    for (auto it = m_detached.begin(); it != m_detached.end(); ++it) {
-        if (it->get() != &node) continue;
-        std::unique_ptr<Node> out = std::move(*it);
-        m_detached.erase(it);
+    for (std::size_t i = m_detached.size(); i-- > 0;) {
+        if (m_detached[i].get() != &node) continue;
+        std::unique_ptr<Node> out = std::move(m_detached[i]);
+        if (i + 1 != m_detached.size()) m_detached[i] = std::move(m_detached.back());
+        m_detached.pop_back();
         return out;
     }
     return nullptr;

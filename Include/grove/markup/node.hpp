@@ -40,7 +40,7 @@ struct Attribute {
 
 class Node {
 public:
-    Node(NodeKind kind, std::string name, Span span) : m_kind(kind), m_name(std::move(name)), m_span(span) {}
+    Node(NodeKind kind, std::string name, Span span) : m_kind(kind), m_name(std::move(name)), m_span(span), m_tree_stamp(next_stamp()), m_self_stamp(m_tree_stamp) {}
 
     NodeKind kind() const noexcept { return m_kind; }
     bool is_element() const noexcept { return m_kind == NodeKind::Element; }
@@ -53,7 +53,11 @@ public:
     Node* parent() const noexcept { return m_parent; }
 
     const std::string& text() const noexcept { return m_text; }
-    void set_text(std::string text) { m_text = std::move(text); }
+    void set_text(std::string text) {
+        if (text == m_text) return;
+        m_text = std::move(text);
+        mark_changed(true);
+    }
     const Span& text_span() const noexcept { return m_text_span; }
     void set_text_span(const Span& span) noexcept { m_text_span = span; }
 
@@ -64,7 +68,10 @@ public:
     std::string attribute_or(std::string_view name, std::string fallback) const;
     void set_attribute(std::string_view name, std::string value);
     bool remove_attribute(std::string_view name);
-    void add_attribute(Attribute attribute) { m_attributes.push_back(std::move(attribute)); }
+    void add_attribute(Attribute attribute) {
+        m_attributes.push_back(std::move(attribute));
+        mark_changed(true);
+    }
 
     std::string id() const { return attribute_or("id", ""); }
     std::vector<std::string> classes() const;
@@ -76,11 +83,24 @@ public:
     std::unique_ptr<Node> remove_child(const Node* child);
     std::size_t index_in_parent() const noexcept;
     bool is_inside(const Node* ancestor) const noexcept;
-    void clear_children() noexcept { m_children.clear(); }
+    void clear_children() noexcept {
+        m_children.clear();
+        mark_changed(false);
+    }
 
     unsigned state() const noexcept { return m_state; }
     bool has_state(unsigned bits) const noexcept { return (m_state & bits) == bits; }
-    void set_state(unsigned bits, bool on) noexcept { m_state = on ? (m_state | bits) : (m_state & ~bits); }
+    void set_state(unsigned bits, bool on) noexcept {
+        const unsigned next = on ? (m_state | bits) : (m_state & ~bits);
+        if (next == m_state) return;
+        m_state = next;
+        mark_changed(true);
+    }
+
+    std::uint64_t tree_stamp() const noexcept { return m_tree_stamp; }
+    std::uint64_t self_stamp() const noexcept { return m_self_stamp; }
+    void mark_changed(bool self = true) noexcept;
+    static std::uint64_t next_stamp() noexcept;
 
     std::string inner_text() const;
     void set_inner_text(std::string text);
@@ -102,6 +122,8 @@ private:
     std::vector<Attribute> m_attributes;
     std::vector<std::unique_ptr<Node>> m_children;
     unsigned m_state = 0;
+    std::uint64_t m_tree_stamp = 0;
+    std::uint64_t m_self_stamp = 0;
 };
 
 using NativeFunction = std::function<std::string(const std::vector<std::string>& args)>;

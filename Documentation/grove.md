@@ -385,7 +385,7 @@ if (term->columns() != cols || term->rows() != rows) resize_pty(term->columns(),
 
 What it supports: the VT100/VT220 and xterm control sequences (cursor movement, erasing, inserting and deleting characters and lines, scroll regions, origin mode, tab stops, saved cursors, character sets including DEC line drawing, the alternate screen), 16, 256 and 24-bit colors with bold, dim, italic, underline (single, double, curly), blink, inverse, hidden, strikethrough and overline, wide and combining characters, xterm's key encoding (with application cursor and keypad modes and modifier combinations), bracketed paste, focus reports, and mouse reporting (X10, normal, button and any motion, in the default, UTF-8, SGR and urxvt encodings). It answers DSR, DA1, DA2, DA3, DECRQM, DECRQSS, DECREQTPARM, window-size reports and OSC 4/10/11/12 color queries. 132-column mode clears the screen as DEC terminals do but keeps the width.
 
-With the keyboard focused on it, keys go to the program. Ctrl+Shift+C copies the selection (so does Ctrl+C while something is selected), Ctrl+Shift+V or Shift+Insert pastes, Shift+PageUp and Shift+PageDown scroll back, and Ctrl+Shift+Home and End go to the top and bottom of the scrollback. Drag to select (Alt+drag for a block), double-click for a word, Shift+click to extend; middle-click pastes. When the program asks for the mouse, clicks and the wheel go to it instead; hold Shift to select anyway. The wheel scrolls back through output, or moves through the alternate screen with arrow keys (as `less` and `man` expect).
+With the keyboard focused on it, keys go to the program. Ctrl+Shift+C copies the selection (so does Ctrl+C while something is selected, unless the element has `copy-on-ctrl-c="false"`, which sends Ctrl+C to the program like a plain terminal), Ctrl+Shift+V or Shift+Insert pastes, Shift+PageUp and Shift+PageDown scroll back, and Ctrl+Shift+Home and End go to the top and bottom of the scrollback. Drag to select (Alt+drag for a block), double-click for a word, Shift+click to extend; middle-click pastes. When the program asks for the mouse, clicks and the wheel go to it instead; hold Shift to select anyway. The wheel scrolls back through output, or moves through the alternate screen with arrow keys (as `less` and `man` expect).
 
 `key_down` still fires on the element first, so an app can take a key for itself with `prevent_default()`.
 
@@ -641,6 +641,21 @@ document.events().add_listener(owner, "menu", [](grove::Event& e) { /* e.key is 
 ```
 
 Each item has a `value`, a `label`, an optional `detail` drawn on the right (a shortcut, say) and can be `disabled`; `menu_separator()` draws a line. The menu opens at `x`, `y` (an event's `x` and `y` work as they are) and moves to stay inside the window. A click on an item or Enter on the highlighted one sends `menu` to the owner with `key` set to the item's value; Escape, a click outside, scrolling or another right-click closes it and sends `menu_close`. Up and Down move the highlight. `open_menu` returns `false` when nothing is drawing the document (`grove dump`, tests), and `close_menu(document)` closes an open one.
+
+## Performance
+
+Grove keeps the work for a frame proportional to what changed and what is on screen, not to the size of the document:
+
+- Every element remembers when it, or anything inside it, last changed. Setting an attribute, text, a class, a child or a hover/focus state through any Grove API records the change, so an app never has to tell Grove what to redraw. Setting something to the value it already has isn't a change.
+- Styles are computed once per element and kept until the element, an ancestor or the stylesheet changes. Rules are indexed by their last tag, id or class, so an element is only matched against rules that could apply to it.
+- Laid-out elements are kept too. An element that didn't change is placed again from the last frame instead of being measured and wrapped again, and elements scrolled out of view are skipped. Long lists, documents and logs cost about the same per frame as short ones, even when one big element is only partly on screen: only the parts inside the view are drawn.
+- Replacing an element's text with `set_inner_text` updates its text in place, and the same text again isn't a change. Creating, moving and removing elements costs the same however many elements the document has made before.
+- Elements that change every frame (a clock, a live value) are laid out directly instead of being cached, and elements off screen that keep changing are laid out once they scroll into view, so the content you're looking at doesn't jump.
+- Draws are grouped so shapes and text that don't overlap go to the GPU together, and clips that don't cut anything off are dropped. A screen of text, buttons and inputs is usually under ten batches.
+- When nothing has changed and nothing is moving, Grove redraws the window only twice a second.
+- Code editors only read the editor's text and attributes when the element changed, and re-highlight only the lines an edit touched.
+
+`GROVE_FRAME_STATS=1` prints, every two seconds, how many frames were drawn and skipped, the average time spent laying out, drawing and presenting, the worst frame, the number of draw operations and GPU batches, and how many elements were placed from the cache, skipped off screen or laid out again. `GROVE_LAYOUT_CACHE=0` and `GROVE_BATCHING=0` turn the layout cache and draw grouping off, to rule them out when something looks wrong.
 
 ## Making one executable
 

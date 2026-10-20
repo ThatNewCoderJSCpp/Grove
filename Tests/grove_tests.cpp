@@ -88,6 +88,97 @@ void test_bark() {
     CHECK(ws.color("color") && ws.color("color")->r == 255);
 }
 
+void test_change_stamps_and_style_cache() {
+    grove::Diagnostics d;
+    grove::Document doc = grove::parse_markup("<window><panel id=\"outer\" class=\"a\"><p id=\"inner\">t</p><p id=\"second\">u</p></panel></window>", "t.grove", d);
+    grove::Node* outer = doc.find_by_id("outer");
+    grove::Node* inner = doc.find_by_id("inner");
+    grove::Node* second = doc.find_by_id("second");
+    grove::Node* window = doc.first_by_tag("window");
+    const std::uint64_t window_before = window->tree_stamp();
+    const std::uint64_t outer_self = outer->self_stamp();
+    const std::uint64_t second_before = second->tree_stamp();
+    inner->set_attribute("class", "hot");
+    CHECK(inner->tree_stamp() > window_before);
+    CHECK(window->tree_stamp() == inner->tree_stamp());
+    CHECK(outer->self_stamp() == outer_self);
+    CHECK(second->tree_stamp() == second_before);
+    const std::uint64_t same = inner->tree_stamp();
+    inner->set_attribute("class", "hot");
+    CHECK(inner->tree_stamp() == same);
+    inner->set_state(grove::StateHover, false);
+    CHECK(inner->tree_stamp() == same);
+    inner->set_state(grove::StateHover, true);
+    CHECK(inner->tree_stamp() > same);
+    const std::uint64_t before_child = outer->self_stamp();
+    doc.append_child(*outer, *doc.create_element("p"));
+    CHECK(outer->self_stamp() == before_child);
+    CHECK(outer->tree_stamp() > before_child);
+    const grove::Node* text_node = second->children().front().get();
+    const std::uint64_t text_same = second->tree_stamp();
+    second->set_inner_text("u");
+    CHECK(second->tree_stamp() == text_same);
+    second->set_inner_text("v");
+    CHECK(second->children().size() == 1 && second->children().front().get() == text_node);
+    CHECK(second->inner_text() == "v");
+    CHECK(second->tree_stamp() > text_same);
+    for (int i = 0; i < 200; ++i) doc.remove(*doc.append_child(*outer, *doc.create_element("p")));
+    grove::Node* fresh = doc.create_element("p");
+    CHECK(doc.append_child(*outer, *fresh) == fresh);
+    CHECK(doc.remove(*fresh));
+    CHECK(doc.append_child(*second, *fresh) == fresh);
+
+    grove::bark::Stylesheet sheet = grove::bark::parse_stylesheet(
+        "p { color: #010101; }\n"
+        ".a p { color: #020202; }\n"
+        ".b p { color: #030303; }\n"
+        "p.hot { font-size: 20px; }\n"
+        "p:hover { background: #0a0a0a; }\n"
+        "p:first-child { margin: 3px; }\n",
+        "t.bark", d);
+    grove::bark::StyleEngine engine;
+    engine.add(sheet);
+    CHECK(engine.style_of(*second, d).color("color")->r == 2);
+    CHECK(engine.style_of(*inner, d).length("font-size") && *engine.style_of(*inner, d).length("font-size") == 20.0);
+    CHECK(engine.style_of(*inner, d).color("background")->r == 10);
+    CHECK(engine.style_of(*inner, d).get("margin") != nullptr);
+    CHECK(engine.style_of(*second, d).get("margin") == nullptr);
+    const std::uint64_t key = engine.style_key(*second, d);
+    engine.invalidate();
+    CHECK(engine.style_key(*second, d) == key);
+    outer->set_attribute("class", "b");
+    engine.invalidate();
+    CHECK(engine.style_of(*second, d).color("color")->r == 3);
+    CHECK(engine.style_key(*second, d) != key);
+    inner->set_state(grove::StateHover, false);
+    engine.invalidate();
+    CHECK(engine.style_of(*inner, d).get("background") == nullptr);
+    std::unique_ptr<grove::Node> taken = outer->remove_child(inner);
+    engine.invalidate();
+    CHECK(engine.style_of(*second, d).get("margin") != nullptr);
+    outer->insert_child(0, std::move(taken));
+    engine.invalidate();
+    CHECK(engine.style_of(*second, d).get("margin") == nullptr);
+    grove::bark::StyleEngine copy = engine;
+    CHECK(copy.style_of(*second, d).color("color")->r == 3);
+
+    grove::bark::ComputedStyle cs;
+    cs.set("display", grove::bark::ValueList{ grove::bark::Value::make_ident("row") });
+    cs.set("margin", grove::bark::ValueList{ grove::bark::Value::make_number(1, "px"), grove::bark::Value::make_number(2, "px") });
+    CHECK(cs.text_view("display") == "row");
+    CHECK(cs.text_view(std::string("display")) == "row");
+    CHECK(cs.text_view("missing").empty());
+    CHECK(cs.get("margin") && cs.get("margin")->size() == 2);
+    const grove::bark::ComputedStyle moved_from = cs;
+    grove::bark::ComputedStyle assigned;
+    assigned = moved_from;
+    CHECK(assigned.text_view("display") == "row");
+    assigned.set("display", grove::bark::ValueList{ grove::bark::Value::make_ident("none") });
+    CHECK(assigned.text_view("display") == "none");
+    CHECK(moved_from.text_view("display") == "row");
+    CHECK(*assigned.text("margin") == *moved_from.text("margin"));
+}
+
 void test_bark_errors() {
     grove::Diagnostics d;
     grove::bark::parse_stylesheet("a { color: $nope; }\nb { color #fff; }\nc { color: #zz; }", "t.bark", d);
@@ -1573,6 +1664,7 @@ int main() {
     test_menus();
     test_completion();
     test_terminal_basics();
+    test_change_stamps_and_style_cache();
     test_terminal_scrolling();
     test_terminal_alternate_screen();
     test_terminal_colors();

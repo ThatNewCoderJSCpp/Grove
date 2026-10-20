@@ -3,6 +3,7 @@
 #include "grove/bark/parser.hpp"
 
 #include <cctype>
+#include <string_view>
 
 #include <algorithm>
 
@@ -110,9 +111,41 @@ void split_align(const ValueList& align, std::string& horizontal, std::string& v
     }
 }
 
-const ValueList* ComputedStyle::get(const std::string& property) const {
-    auto it = m_values.find(property);
-    return it == m_values.end() ? nullptr : &it->second;
+namespace {
+
+std::uint64_t name_hash(std::string_view name) noexcept {
+    std::uint64_t h = 14695981039346656037ull;
+    for (const unsigned char c : name) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    return h | 1u;
+}
+
+} // namespace
+
+void ComputedStyle::build_index() const {
+    std::size_t size = 8;
+    while (size < m_values.size() * 2 + 2) size *= 2;
+    m_index.assign(size, Slot{});
+    for (const auto& [name, values] : m_values) {
+        const std::uint64_t h = name_hash(name);
+        std::size_t i = static_cast<std::size_t>(h) & (size - 1);
+        while (m_index[i].hash != 0) i = (i + 1) & (size - 1);
+        m_index[i] = Slot{ h, &name, &values };
+    }
+}
+
+const ValueList* ComputedStyle::get_view(std::string_view property) const {
+    if (m_values.empty()) return nullptr;
+    if (m_index.empty()) build_index();
+    const std::uint64_t h = name_hash(property);
+    const std::size_t mask = m_index.size() - 1;
+    for (std::size_t i = static_cast<std::size_t>(h) & mask;; i = (i + 1) & mask) {
+        const Slot& slot = m_index[i];
+        if (slot.hash == 0) return nullptr;
+        if (slot.hash == h && *slot.name == property) return slot.values;
+    }
 }
 
 std::optional<Rgba> ComputedStyle::color(const std::string& property) const {
@@ -123,6 +156,15 @@ std::optional<Rgba> ComputedStyle::color(const std::string& property) const {
 std::optional<double> ComputedStyle::length(const std::string& property, std::size_t index) const {
     const ValueList* v = get(property);
     return v ? as_length(*v, font_size(), m_viewport, index) : std::nullopt;
+}
+
+std::string_view ComputedStyle::text_view(std::string_view property) const {
+    const ValueList* v = get_view(property);
+    if (!v || v->empty()) return std::string_view();
+    if (v->size() == 1 && (v->front().is_ident() || v->front().is_string())) return v->front().text;
+    static thread_local std::string joined;
+    joined = as_text(*v).value_or("");
+    return joined;
 }
 
 std::optional<std::string> ComputedStyle::text(const std::string& property) const {
@@ -220,11 +262,111 @@ void StyleEngine::set_viewport(const Viewport& viewport) {
     if (viewport == m_viewport) return;
     m_viewport = viewport;
     m_cache.clear();
+    m_recent = RecentSlot();
+    ++m_revision;
 }
 
 void StyleEngine::add(const Stylesheet& sheet) {
     m_sheet.append(sheet);
     m_cache.clear();
+    m_recent = RecentSlot();
+    m_index_ready = false;
+    ++m_revision;
+}
+
+std::uint64_t StyleEngine::style_key(const Node& node, Diagnostics& diagnostics) {
+    style_of(node, diagnostics);
+    return m_recent.node == &node ? m_recent.entry->key : 0;
+}
+
+void StyleEngine::prune() {
+    m_recent = RecentSlot();
+    for (auto it = m_cache.begin(); it != m_cache.end();) {
+        if (it->second.checked + 2 < m_epoch) it = m_cache.erase(it);
+        else ++it;
+    }
+    m_prune_at = std::max<std::size_t>(4096, m_cache.size() * 2);
+}
+
+void StyleEngine::build_index() const {
+    m_index = RuleIndex{};
+    std::size_t order = 0;
+    const std::vector<Rule>& rules = m_sheet.rules();
+    m_index.first_order.reserve(rules.size());
+    for (std::size_t r = 0; r < rules.size(); ++r) {
+        m_index.first_order.push_back(order);
+        order += rules[r].declarations.size();
+        for (const Selector& s : rules[r].selectors) {
+            for (const Compound& c : s.parts) {
+                for (const std::string& p : c.pseudos) {
+                    if (p == "first-child" || p == "last-child" || p == "only-child") m_index.uses_position = true;
+                    else if (p == "empty") m_index.uses_empty = true;
+                    else if (p == "current") m_index.uses_current = true;
+                }
+            }
+            if (s.parts.empty()) continue;
+            const Compound& last = s.parts.back();
+            std::vector<std::size_t>* bucket = nullptr;
+            if (!last.id.empty()) bucket = &m_index.by_id[last.id];
+            else if (!last.classes.empty()) bucket = &m_index.by_class[last.classes.front()];
+            else if (!last.tag.empty() && last.tag != "*") bucket = &m_index.by_tag[last.tag];
+            else bucket = &m_index.universal;
+            if (bucket->empty() || bucket->back() != r) bucket->push_back(r);
+        }
+    }
+    m_index_ready = true;
+}
+
+namespace {
+
+[[maybe_unused]] void mix(std::uint64_t& h, std::string_view text) {
+    for (unsigned char c : text) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    h ^= 0xff;
+    h *= 1099511628211ull;
+}
+
+void mix(std::uint64_t& h, std::uint64_t v) {
+    for (int i = 0; i < 8; ++i) {
+        h ^= (v >> (i * 8)) & 0xff;
+        h *= 1099511628211ull;
+    }
+}
+
+std::size_t element_position(const Node& node, bool from_end) {
+    const Node* parent = node.parent();
+    if (!parent) return 0;
+    std::size_t before = 0;
+    std::size_t after = 0;
+    bool seen = false;
+    for (const auto& c : parent->children()) {
+        if (!c->is_element()) continue;
+        if (c.get() == &node) seen = true;
+        else if (seen) ++after;
+        else ++before;
+    }
+    return from_end ? after : before;
+}
+
+} // namespace
+
+std::uint64_t StyleEngine::key_of(const Node& node, std::uint64_t parent_key) const {
+    std::uint64_t h = 14695981039346656037ull;
+    mix(h, parent_key);
+    mix(h, node.self_stamp());
+    if (!node.is_element()) return h;
+    std::uint64_t flags = 1;
+    if (node.tag() == "page" && is_page_current(node)) flags |= 2u;
+    if (m_index.uses_empty && node.children().empty()) flags |= 4u;
+    if (m_index.uses_current && is_navigation_current(node)) flags |= 8u;
+    if (m_index.uses_position) {
+        if (element_position(node, false) == 0) flags |= 16u;
+        if (element_position(node, true) == 0) flags |= 32u;
+    }
+    mix(h, flags);
+    return h;
 }
 
 ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent, Diagnostics& diagnostics) const {
@@ -253,9 +395,31 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
         if (!words.empty()) out.set("align", words);
     }
 
+    if (!m_index_ready) build_index();
+    std::vector<std::size_t> picks = m_index.universal;
+    auto take = [&picks](const std::unordered_map<std::string, std::vector<std::size_t>>& map, const std::string& key) {
+        const auto found = map.find(key);
+        if (found != map.end()) picks.insert(picks.end(), found->second.begin(), found->second.end());
+    };
+    take(m_index.by_tag, node.tag());
+    if (const Attribute* id = node.find_attribute("id")) take(m_index.by_id, id->value);
+    if (const Attribute* cls = node.find_attribute("class")) {
+        const std::string& list = cls->value;
+        std::size_t i = 0;
+        while (i < list.size()) {
+            while (i < list.size() && std::isspace(static_cast<unsigned char>(list[i]))) ++i;
+            const std::size_t start = i;
+            while (i < list.size() && !std::isspace(static_cast<unsigned char>(list[i]))) ++i;
+            if (i > start) take(m_index.by_class, list.substr(start, i - start));
+        }
+    }
+    std::sort(picks.begin(), picks.end());
+    picks.erase(std::unique(picks.begin(), picks.end()), picks.end());
+
     std::vector<Candidate> candidates;
-    std::size_t order = 0;
-    for (const Rule& rule : m_sheet.rules()) {
+    const std::vector<Rule>& rules = m_sheet.rules();
+    for (const std::size_t r : picks) {
+        const Rule& rule = rules[r];
         Specificity best;
         bool matched = false;
         for (const Selector& s : rule.selectors) {
@@ -264,11 +428,11 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
             if (!matched || best < sp) best = sp;
             matched = true;
         }
-        for (const Declaration& d : rule.declarations) {
-            ++order;
-            if (matched) candidates.push_back(Candidate{ best, d.important, false, order, &d });
-        }
+        if (!matched) continue;
+        std::size_t order = m_index.first_order[r];
+        for (const Declaration& d : rule.declarations) candidates.push_back(Candidate{ best, d.important, false, ++order, &d });
     }
+    std::size_t order = m_index.first_order.empty() ? 0 : m_index.first_order.back() + rules.back().declarations.size();
 
     std::vector<Declaration> inline_decls;
     if (const Attribute* a = node.find_attribute("style")) {
@@ -326,11 +490,37 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
 }
 
 const ComputedStyle& StyleEngine::style_of(const Node& node, Diagnostics& diagnostics) {
+    if (m_recent.node == &node && m_recent.entry->checked == m_epoch) return m_recent.entry->style;
     auto it = m_cache.find(&node);
-    if (it != m_cache.end()) return it->second;
-    const ComputedStyle* parent = node.parent() ? &style_of(*node.parent(), diagnostics) : nullptr;
+    if (it != m_cache.end() && it->second.checked == m_epoch) {
+        m_recent.node = &node;
+        m_recent.entry = &it->second;
+        return it->second.style;
+    }
+    if (!m_index_ready) build_index();
+    const ComputedStyle* parent = nullptr;
+    std::uint64_t parent_key = 0;
+    if (const Node* p = node.parent()) {
+        parent = &style_of(*p, diagnostics);
+        const auto pe = m_cache.find(p);
+        if (pe != m_cache.end()) parent_key = pe->second.key;
+    }
+    const std::uint64_t key = key_of(node, parent_key);
+    it = m_cache.find(&node);
+    if (it != m_cache.end() && it->second.key == key) {
+        it->second.checked = m_epoch;
+        m_recent.node = &node;
+        m_recent.entry = &it->second;
+        return it->second.style;
+    }
     ComputedStyle computed = compute(node, parent, diagnostics);
-    return m_cache.emplace(&node, std::move(computed)).first->second;
+    Entry& slot = it != m_cache.end() ? it->second : m_cache[&node];
+    slot.key = key;
+    slot.checked = m_epoch;
+    slot.style = std::move(computed);
+    m_recent.node = &node;
+    m_recent.entry = &slot;
+    return slot.style;
 }
 
 } // namespace bark
