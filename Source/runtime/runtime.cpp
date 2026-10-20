@@ -4618,7 +4618,7 @@ private:
             }
             return false;
         };
-        const bool swatches = (lang == CodeLanguage::Bark || lang == CodeLanguage::Grove) && element.attribute_or("color-swatches", "true") != "false";
+        const bool swatches = (lang == CodeLanguage::Bark || lang == CodeLanguage::Grove || lang == CodeLanguage::Css || lang == CodeLanguage::Html) && element.attribute_or("color-swatches", "true") != "false";
         std::optional<std::pair<CodePos, std::size_t>> link_under;
         if ((m_mods & (ModifierControl | ModifierMeta)) != 0 && !m_code_drag && Rect{ inner_x + gutter, inner_y, inner_w - gutter, inner_h }.contains(m_mouse_x, m_mouse_y)) {
             if (const auto at = code_char_at(ed, m_mouse_x, m_mouse_y)) {
@@ -7401,6 +7401,18 @@ private:
                         } else {
                             buf.insert(text);
                         }
+                        edited = true;
+                    }
+                }
+                break;
+            case Key::Slash:
+                if (ctrl && !ro) {
+                    const CodeLanguage lang = code_language_from_name(node ? node->attribute_or("language", "plain") : std::string("plain"));
+                    std::string sample;
+                    for (std::size_t l = 0; l < buf.line_count() && l < 400; ++l) sample += buf.line(l) + "\n";
+                    const std::string marker = node && node->has_attribute("line-comment") ? node->attribute_or("line-comment", "") : code_line_comment(lang, sample);
+                    if (!marker.empty()) {
+                        buf.toggle_comment(marker);
                         edited = true;
                     }
                 }

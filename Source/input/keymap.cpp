@@ -190,6 +190,7 @@ const std::vector<KeyAction>& code_editor_actions() {
         { "redo", "Redo", "Redo what was undone", { chord("Y", true), chord("Z", true, true) }, false },
         { "indent", "Indent", "Indent the line, or every selected line", { chord("Tab") }, false },
         { "outdent", "Outdent", "Outdent the line, or every selected line", { chord("Tab", false, true) }, false },
+        { "toggle-comment", "Toggle comment", "Comment out the line, or every selected line, with the language's line comment; again uncomments", { chord("/", true) }, false },
         { "delete-word-left", "Delete word left", "Delete back to the start of the word", { chord("Backspace", true) }, false },
         { "delete-word-right", "Delete word right", "Delete forward to the end of the word", { chord("Delete", true) }, false },
         { "word-left", "Word left", "Move the caret back a word", { chord("Left", true) }, false },

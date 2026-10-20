@@ -28,7 +28,18 @@ enum class CodeLanguage {
     Walnut,
     Grove,
     Bark,
-    CMake
+    CMake,
+    Html,
+    Css,
+    JavaScript,
+    Json,
+    Rust,
+    Zig,
+    Python,
+    Lua,
+    Java,
+    CSharp,
+    Assembly
 };
 
 enum class CodeTokenKind {
@@ -77,10 +88,12 @@ struct CodeLineState {
     int bracket_level = -1;
     bool bracket_comment = false;
     int comment_depth = 0;
+    int embedded = 0;
 
     bool operator==(const CodeLineState& o) const noexcept {
         return block_comment == o.block_comment && markup_comment == o.markup_comment && string_open == o.string_open && raw_string == o.raw_string &&
-               raw_delimiter == o.raw_delimiter && bracket_level == o.bracket_level && bracket_comment == o.bracket_comment && comment_depth == o.comment_depth;
+               raw_delimiter == o.raw_delimiter && bracket_level == o.bracket_level && bracket_comment == o.bracket_comment && comment_depth == o.comment_depth &&
+               embedded == o.embedded;
     }
     bool operator!=(const CodeLineState& o) const noexcept { return !(*this == o); }
 };
@@ -90,6 +103,7 @@ const char* to_string(CodeTokenKind kind) noexcept;
 CodeLanguage code_language_from_name(std::string_view name) noexcept;
 CodeLanguage code_language_for_path(std::string_view path) noexcept;
 const std::vector<CodeLanguage>& code_languages() noexcept;
+std::string code_line_comment(CodeLanguage language, std::string_view sample);
 const std::vector<CodeTokenKind>& code_token_kinds() noexcept;
 std::optional<CodeTokenKind> code_token_kind_from_name(std::string_view name) noexcept;
 CodeTokenKind code_token_fallback(CodeTokenKind kind) noexcept;
@@ -214,6 +228,7 @@ public:
     void delete_selection();
     void indent(std::size_t tab_size, bool spaces);
     void outdent(std::size_t tab_size);
+    void toggle_comment(std::string_view marker);
 
     std::vector<CodeCursor> cursors() const;
     std::size_t cursor_count() const noexcept { return m_extra.size() + 1; }

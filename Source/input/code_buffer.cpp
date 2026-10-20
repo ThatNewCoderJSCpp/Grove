@@ -2,6 +2,8 @@
 #include "grove/markup/tags.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <iterator>
 #include <numeric>
 
 namespace grove {
@@ -254,7 +256,10 @@ std::string code_open_tag(std::string_view line) {
     std::size_t j = lt + 1;
     while (j < h.size() && name_char(h[j])) ++j;
     std::string name = h.substr(lt + 1, j - lt - 1);
-    if (name.empty() || tag_content(name) == TagContent::Void) return {};
+    static const char* const html_void[] = { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr" };
+    std::string lowered = name;
+    for (char& c : lowered) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (name.empty() || tag_content(name) == TagContent::Void || std::find(std::begin(html_void), std::end(html_void), lowered) != std::end(html_void)) return {};
     return name;
 }
 
@@ -574,8 +579,30 @@ void CodeBuffer::new_line(std::size_t tab_size, bool spaces, CodeLanguage langua
     while (after < current.size() && space_char(current[after])) ++after;
     const char closer = after < current.size() ? current[after] : '\0';
     const std::string rest = trimmed(std::string_view(current).substr(after));
-    const bool opens = opener == '{' || opener == '(' || opener == '[';
-    std::string tag = language == CodeLanguage::Grove && opener == '>' ? code_open_tag(std::string_view(current).substr(0, before)) : std::string();
+    const std::string head_text = trimmed(std::string_view(current).substr(0, before));
+    auto ends_word = [&](std::string_view w) {
+        if (head_text.size() < w.size() || head_text.compare(head_text.size() - w.size(), w.size(), w) != 0) return false;
+        return head_text.size() == w.size() || !word_char(head_text[head_text.size() - w.size() - 1]);
+    };
+    auto starts_word = [&](std::string_view w) {
+        if (head_text.size() < w.size() || head_text.compare(0, w.size(), w) != 0) return false;
+        return head_text.size() == w.size() || !word_char(head_text[w.size()]);
+    };
+    bool block_word = false;
+    std::string word_closer;
+    if (language == CodeLanguage::Python && opener == ':' && head_text.find('#') == std::string::npos) block_word = true;
+    if (language == CodeLanguage::Lua && head_text.rfind("--", 0) != 0) {
+        if (ends_word("then") || ends_word("do") || ends_word("else") || (head_text.find("function") != std::string::npos && !head_text.empty() && head_text.back() == ')')) {
+            block_word = true;
+            word_closer = ends_word("else") ? std::string() : "end";
+        } else if (ends_word("repeat")) {
+            block_word = true;
+            word_closer = "until ";
+        }
+    }
+    const bool dedent = language == CodeLanguage::Python && (starts_word("return") || starts_word("pass") || starts_word("break") || starts_word("continue") || starts_word("raise"));
+    const bool opens = opener == '{' || opener == '(' || opener == '[' || block_word;
+    std::string tag = (language == CodeLanguage::Grove || language == CodeLanguage::Html) && opener == '>' ? code_open_tag(std::string_view(current).substr(0, before)) : std::string();
     const bool tag_split = !tag.empty() && rest.rfind("</" + tag, 0) == 0;
     const bool closes = (opener == '{' && closer == '}') || (opener == '(' && closer == ')') || (opener == '[' && closer == ']') || tag_split;
     std::string close_text;
@@ -599,13 +626,45 @@ void CodeBuffer::new_line(std::size_t tab_size, bool spaces, CodeLanguage langua
                     const std::string block = code_block_closer(language, header);
                     if (rest.empty() && unclosed(clean, '{', '}') > 0) close_text = block;
                     else if (rest == "}" && block != "}") { close_text = block; replace_rest = true; }
-                } else if (rest.empty() && unclosed(clean, opener, opener == '(' ? ')' : ']') > 0) {
+                } else if ((opener == '(' || opener == '[') && rest.empty() && unclosed(clean, opener, opener == '(' ? ')' : ']') > 0) {
                     close_text = std::string(1, opener == '(' ? ')' : ']');
                 }
             }
         }
     }
     const std::string unit = spaces ? std::string(tab_size ? tab_size : 4, ' ') : std::string("\t");
+    if (dedent && !opens) {
+        if (!indent.empty() && indent.back() == '\t') indent.pop_back();
+        else indent.erase(indent.size() - std::min(indent.size(), unit.size()));
+    }
+    if (close_blocks && !word_closer.empty() && rest.empty() && language == CodeLanguage::Lua) {
+        long balance = 0;
+        for (const std::string& row : m_lines) {
+            const std::string code = row.substr(0, row.find("--"));
+            std::size_t k = 0;
+            while (k < code.size()) {
+                if (code[k] == '"' || code[k] == '\'') {
+                    const char q = code[k];
+                    ++k;
+                    while (k < code.size() && code[k] != q) k += code[k] == '\\' ? 2 : 1;
+                    ++k;
+                    continue;
+                }
+                if (!word_char(code[k])) {
+                    ++k;
+                    continue;
+                }
+                std::size_t e = k;
+                while (e < code.size() && word_char(code[e])) ++e;
+                const std::string w = code.substr(k, e - k);
+                if (w == "function" || w == "then" || w == "do" || w == "repeat") ++balance;
+                else if (w == "elseif") --balance;
+                else if (w == "end" || w == "until") --balance;
+                k = e;
+            }
+        }
+        if (balance > 0) close_text = word_closer;
+    }
     std::string text = "\n" + indent + (opens || !tag.empty() ? unit : std::string());
     const std::size_t caret_offset = text.size();
     if (!close_text.empty()) text += "\n" + indent + close_text;
@@ -752,6 +811,55 @@ void CodeBuffer::indent(std::size_t tab_size, bool spaces) {
     };
     shift(m_caret);
     shift(m_anchor);
+    m_last_edit = EditKind::None;
+    changed();
+}
+
+void CodeBuffer::toggle_comment(std::string_view marker) {
+    if (marker.empty()) return;
+    if (!m_extra.empty() && !m_batch) {
+        for_each_cursor([&](std::size_t) { toggle_comment(marker); });
+        return;
+    }
+    const auto [a, b] = selection();
+    const std::size_t last = (b.column == 0 && b.line > a.line) ? b.line - 1 : b.line;
+    std::size_t indent = static_cast<std::size_t>(-1);
+    bool all = true;
+    bool any = false;
+    for (std::size_t l = a.line; l <= last && l < m_lines.size(); ++l) {
+        const std::string& s = m_lines[l];
+        const std::size_t ws = leading_whitespace(s);
+        if (ws >= s.size()) continue;
+        any = true;
+        indent = std::min(indent, ws);
+        if (s.compare(ws, marker.size(), marker) != 0) all = false;
+    }
+    if (!any) return;
+    remember(EditKind::Other);
+    for (std::size_t l = a.line; l <= last && l < m_lines.size(); ++l) {
+        const std::string s = m_lines[l];
+        const std::size_t ws = leading_whitespace(s);
+        if (ws >= s.size()) continue;
+        if (all) {
+            std::size_t n = marker.size();
+            if (ws + n < s.size() && s[ws + n] == ' ') ++n;
+            erase_range(CodePos{ l, ws }, CodePos{ l, ws + n });
+            auto shift = [&](CodePos& p) {
+                if (p.line == l && p.column > ws) p.column -= std::min(n, p.column - ws);
+            };
+            shift(m_caret);
+            shift(m_anchor);
+        } else {
+            const std::string text = std::string(marker) + " ";
+            insert_at(CodePos{ l, indent }, text);
+            auto shift = [&](CodePos& p) {
+                if (p.line == l && p.column >= indent && !(p.column == 0 && indent == 0 && p.line == b.line && b.column == 0 && b.line > a.line)) p.column += text.size();
+            };
+            shift(m_caret);
+            shift(m_anchor);
+        }
+    }
+    forget_preferred();
     m_last_edit = EditKind::None;
     changed();
 }

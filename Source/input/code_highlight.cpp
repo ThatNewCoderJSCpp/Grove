@@ -1160,6 +1160,1178 @@ std::vector<CodeToken> highlight_cmake(std::string_view line, CodeLineState& sta
     return out;
 }
 
+const std::set<std::string>& js_control() {
+    static const std::set<std::string> k = {
+        "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "return", "throw", "try", "catch", "finally", "await", "yield",
+    };
+    return k;
+}
+
+const std::set<std::string>& js_keywords() {
+    static const std::set<std::string> k = {
+        "var", "let", "const", "function", "class", "extends", "new", "delete", "typeof", "instanceof", "in", "of", "import", "export", "from", "as",
+        "async", "static", "get", "set", "super", "void", "with", "debugger",
+    };
+    return k;
+}
+
+const std::set<std::string>& js_constants() {
+    static const std::set<std::string> k = { "true", "false", "null", "undefined", "NaN", "Infinity" };
+    return k;
+}
+
+const std::set<std::string>& js_globals() {
+    static const std::set<std::string> k = {
+        "console", "document", "window", "globalThis", "navigator", "location", "history", "localStorage", "sessionStorage", "Math", "JSON", "Date",
+        "Promise", "Array", "Object", "String", "Number", "Boolean", "Symbol", "BigInt", "Map", "Set", "WeakMap", "WeakSet", "RegExp", "Error",
+        "TypeError", "RangeError", "SyntaxError", "Intl", "Reflect", "Proxy", "fetch", "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+        "requestAnimationFrame", "require", "module", "exports", "process", "Buffer", "__dirname", "__filename", "$", "jQuery", "alert", "parseInt",
+        "parseFloat", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent", "structuredClone", "queueMicrotask",
+    };
+    return k;
+}
+
+bool js_ident_start(char c) noexcept { return ident_start(c) || c == '$'; }
+
+bool js_ident_char(char c) noexcept { return ident_char(c) || c == '$'; }
+
+bool js_regex_allowed(const std::vector<CodeToken>& out, std::string_view line) {
+    for (auto it = out.rbegin(); it != out.rend(); ++it) {
+        if (it->kind == CodeTokenKind::Comment) continue;
+        const std::string_view text = line.substr(it->begin, it->end - it->begin);
+        if (text.find_first_not_of(" \t") == std::string_view::npos) continue;
+        if (it->kind == CodeTokenKind::Operator) {
+            const char last = text.back();
+            return last != ')' && last != ']' && last != '}';
+        }
+        if (it->kind == CodeTokenKind::ControlKeyword) return true;
+        if (it->kind == CodeTokenKind::Keyword) return text != "this" && text != "super";
+        return false;
+    }
+    return true;
+}
+
+std::size_t js_regex_end(std::string_view line, std::size_t i) {
+    bool in_class = false;
+    std::size_t j = i + 1;
+    while (j < line.size()) {
+        const char c = line[j];
+        if (c == '\\') {
+            j += 2;
+            continue;
+        }
+        if (c == '[') in_class = true;
+        else if (c == ']') in_class = false;
+        else if (c == '/' && !in_class) {
+            ++j;
+            while (j < line.size() && std::isalpha(static_cast<unsigned char>(line[j]))) ++j;
+            return j;
+        }
+        ++j;
+    }
+    return std::string_view::npos;
+}
+
+std::vector<CodeToken> highlight_javascript(std::string_view line, CodeLineState& state);
+
+std::size_t js_template(std::vector<CodeToken>& out, std::string_view line, std::size_t i, CodeLineState& state) {
+    std::size_t run = i;
+    while (i < line.size()) {
+        const char c = line[i];
+        if (c == '\\' && i + 1 < line.size()) {
+            push(out, run, i, CodeTokenKind::String);
+            push(out, i, i + 2, CodeTokenKind::Escape);
+            i += 2;
+            run = i;
+            continue;
+        }
+        if (c == '`') {
+            push(out, run, i + 1, CodeTokenKind::String);
+            state.string_open = false;
+            return i + 1;
+        }
+        if (c == '$' && i + 1 < line.size() && line[i + 1] == '{') {
+            push(out, run, i, CodeTokenKind::String);
+            push(out, i, i + 2, CodeTokenKind::Operator);
+            int depth = 1;
+            std::size_t j = i + 2;
+            while (j < line.size() && depth > 0) {
+                if (line[j] == '{') ++depth;
+                else if (line[j] == '}' && --depth == 0) break;
+                ++j;
+            }
+            CodeLineState inner;
+            for (CodeToken t : highlight_javascript(line.substr(i + 2, j - (i + 2)), inner)) {
+                t.begin += i + 2;
+                t.end += i + 2;
+                out.push_back(t);
+            }
+            if (j < line.size()) push(out, j, j + 1, CodeTokenKind::Operator);
+            i = std::min(line.size(), j + 1);
+            run = i;
+            continue;
+        }
+        ++i;
+    }
+    push(out, run, line.size(), CodeTokenKind::String);
+    state.string_open = true;
+    return line.size();
+}
+
+std::vector<CodeToken> highlight_javascript(std::string_view line, CodeLineState& state) {
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    if (state.block_comment) {
+        const std::size_t close = line.find("*/");
+        if (close == std::string_view::npos) {
+            push(out, 0, line.size(), CodeTokenKind::Comment);
+            return out;
+        }
+        push(out, 0, close + 2, CodeTokenKind::Comment);
+        state.block_comment = false;
+        i = close + 2;
+    }
+    if (state.string_open) i = js_template(out, line, i, state);
+    while (i < line.size()) {
+        const char c = line[i];
+        if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') {
+            push(out, i, line.size(), CodeTokenKind::Comment);
+            break;
+        }
+        if (c == '/' && i + 1 < line.size() && line[i + 1] == '*') {
+            const std::size_t close = line.find("*/", i + 2);
+            if (close == std::string_view::npos) {
+                push(out, i, line.size(), CodeTokenKind::Comment);
+                state.block_comment = true;
+                break;
+            }
+            push(out, i, close + 2, CodeTokenKind::Comment);
+            i = close + 2;
+            continue;
+        }
+        if (c == '/' && js_regex_allowed(out, line)) {
+            const std::size_t end = js_regex_end(line, i);
+            if (end != std::string_view::npos) {
+                push(out, i, end, CodeTokenKind::String);
+                i = end;
+                continue;
+            }
+        }
+        if (c == '"' || c == '\'') {
+            const std::size_t end = skip_string(line, i, c);
+            push_quoted(out, line, i, end);
+            i = end;
+            continue;
+        }
+        if (c == '`') {
+            push(out, i, i + 1, CodeTokenKind::String);
+            i = js_template(out, line, i + 1, state);
+            continue;
+        }
+        if (digit(c) || (c == '.' && i + 1 < line.size() && digit(line[i + 1]))) {
+            std::size_t end = i + 1;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '.' || ((line[end] == '+' || line[end] == '-') && (line[end - 1] == 'e' || line[end - 1] == 'E') && !(line[i] == '0' && i + 1 < line.size() && (line[i + 1] == 'x' || line[i + 1] == 'X'))))) ++end;
+            push(out, i, end, CodeTokenKind::Number);
+            i = end;
+            continue;
+        }
+        if (js_ident_start(c)) {
+            std::size_t end = i;
+            while (end < line.size() && js_ident_char(line[end])) ++end;
+            const std::string word(line.substr(i, end - i));
+            std::size_t next = end;
+            while (next < line.size() && (line[next] == ' ' || line[next] == '\t')) ++next;
+            std::size_t prev = i;
+            while (prev > 0 && (line[prev - 1] == ' ' || line[prev - 1] == '\t')) --prev;
+            const bool member = prev > 0 && line[prev - 1] == '.' && !(prev > 1 && line[prev - 2] == '.');
+            CodeTokenKind kind = CodeTokenKind::Plain;
+            if (!member && js_control().count(word)) kind = CodeTokenKind::ControlKeyword;
+            else if (!member && (word == "this")) kind = CodeTokenKind::ThisKeyword;
+            else if (!member && js_keywords().count(word)) kind = CodeTokenKind::Keyword;
+            else if (!member && js_constants().count(word)) kind = CodeTokenKind::Constant;
+            else if (next < line.size() && line[next] == '(') kind = CodeTokenKind::Function;
+            else if (member) kind = CodeTokenKind::Property;
+            else if (js_globals().count(word)) kind = CodeTokenKind::BuiltinType;
+            else if (std::isupper(static_cast<unsigned char>(word[0])) && !all_upper(word)) kind = CodeTokenKind::Type;
+            else if (all_upper(word)) kind = CodeTokenKind::Constant;
+            else if (next < line.size() && line[next] == ':' && !(next + 1 < line.size() && line[next + 1] == ':')) kind = CodeTokenKind::Property;
+            push(out, i, end, kind);
+            i = end;
+            continue;
+        }
+        if (c == '#' && i + 1 < line.size() && js_ident_start(line[i + 1])) {
+            std::size_t end = i + 1;
+            while (end < line.size() && js_ident_char(line[end])) ++end;
+            push(out, i, end, CodeTokenKind::Property);
+            i = end;
+            continue;
+        }
+        if (c == ' ' || c == '\t') {
+            std::size_t end = i;
+            while (end < line.size() && (line[end] == ' ' || line[end] == '\t')) ++end;
+            push(out, i, end, CodeTokenKind::Plain);
+            i = end;
+            continue;
+        }
+        push(out, i, i + 1, std::ispunct(static_cast<unsigned char>(c)) && c != ';' && c != ',' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+std::vector<CodeToken> highlight_json(std::string_view line, CodeLineState& state) {
+    (void)state;
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        const char c = line[i];
+        if (c == '"') {
+            const std::size_t end = skip_string(line, i, c);
+            std::size_t next = end;
+            while (next < line.size() && (line[next] == ' ' || line[next] == '\t')) ++next;
+            if (next < line.size() && line[next] == ':') push(out, i, end, CodeTokenKind::Property);
+            else push_quoted(out, line, i, end);
+            i = end;
+            continue;
+        }
+        if (digit(c) || (c == '-' && i + 1 < line.size() && digit(line[i + 1]))) {
+            std::size_t end = i + 1;
+            while (end < line.size() && (digit(line[end]) || line[end] == '.' || line[end] == 'e' || line[end] == 'E' || line[end] == '+' || line[end] == '-')) ++end;
+            push(out, i, end, CodeTokenKind::Number);
+            i = end;
+            continue;
+        }
+        if (ident_start(c)) {
+            std::size_t end = i;
+            while (end < line.size() && ident_char(line[end])) ++end;
+            const std::string_view word = line.substr(i, end - i);
+            push(out, i, end, word == "true" || word == "false" || word == "null" ? CodeTokenKind::Constant : CodeTokenKind::Plain);
+            i = end;
+            continue;
+        }
+        push(out, i, i + 1, c == '{' || c == '}' || c == '[' || c == ']' || c == ':' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+std::vector<CodeToken> highlight_css(std::string_view line, CodeLineState& state) {
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    if (state.block_comment) {
+        const std::size_t close = line.find("*/");
+        if (close == std::string_view::npos) {
+            push(out, 0, line.size(), CodeTokenKind::Comment);
+            return out;
+        }
+        push(out, 0, close + 2, CodeTokenKind::Comment);
+        state.block_comment = false;
+        i = close + 2;
+    }
+    int& depth = state.comment_depth;
+    bool value = false;
+    bool selector = true;
+    std::size_t decided = static_cast<std::size_t>(-1);
+    auto decide = [&](std::size_t from) {
+        std::size_t j = from;
+        char quote = '\0';
+        while (j < line.size()) {
+            const char d = line[j];
+            if (quote) {
+                if (d == '\\') ++j;
+                else if (d == quote) quote = '\0';
+            } else if (d == '"' || d == '\'') {
+                quote = d;
+            } else if (d == '/' && j + 1 < line.size() && line[j + 1] == '*') {
+                const std::size_t close = line.find("*/", j + 2);
+                if (close == std::string_view::npos) break;
+                j = close + 1;
+            } else if (d == '{') {
+                selector = true;
+                return;
+            } else if (d == ';' || d == '}') {
+                break;
+            }
+            ++j;
+        }
+        selector = depth <= 0;
+    };
+    while (i < line.size()) {
+        if (decided != i && (decided == static_cast<std::size_t>(-1) || i == 0)) {
+            decide(i);
+            decided = i;
+        }
+        const char c = line[i];
+        if (c == '/' && i + 1 < line.size() && line[i + 1] == '*') {
+            const std::size_t close = line.find("*/", i + 2);
+            if (close == std::string_view::npos) {
+                push(out, i, line.size(), CodeTokenKind::Comment);
+                state.block_comment = true;
+                break;
+            }
+            push(out, i, close + 2, CodeTokenKind::Comment);
+            i = close + 2;
+            continue;
+        }
+        if (c == '{' || c == '}' || c == ';') {
+            if (c == '{') ++depth;
+            if (c == '}' && depth > 0) --depth;
+            push(out, i, i + 1, CodeTokenKind::Plain);
+            ++i;
+            value = false;
+            decide(i);
+            decided = i;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            const std::size_t end = skip_string(line, i, c);
+            push(out, i, end, CodeTokenKind::String);
+            i = end;
+            continue;
+        }
+        if (c == '@') {
+            std::size_t end = i + 1;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '-')) ++end;
+            push(out, i, end, CodeTokenKind::ControlKeyword);
+            i = end;
+            continue;
+        }
+        if (c == '!' && line.compare(i, 10, "!important") == 0) {
+            push(out, i, i + 10, CodeTokenKind::ControlKeyword);
+            i += 10;
+            continue;
+        }
+        if (selector) {
+            if (c == '.' || c == '#') {
+                std::size_t end = i + 1;
+                while (end < line.size() && (ident_char(line[end]) || line[end] == '-')) ++end;
+                push(out, i, end, CodeTokenKind::Attribute);
+                i = end;
+                continue;
+            }
+            if (c == ':') {
+                std::size_t end = i + 1;
+                if (end < line.size() && line[end] == ':') ++end;
+                while (end < line.size() && (ident_char(line[end]) || line[end] == '-')) ++end;
+                push(out, i, end, CodeTokenKind::Keyword);
+                i = end;
+                continue;
+            }
+            if (ident_start(c) || c == '*') {
+                std::size_t end = i + 1;
+                while (end < line.size() && (ident_char(line[end]) || line[end] == '-')) ++end;
+                push(out, i, end, CodeTokenKind::Tag);
+                i = end;
+                continue;
+            }
+            push(out, i, i + 1, c == '>' || c == '+' || c == '~' || c == ',' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+            ++i;
+            continue;
+        }
+        if (c == ':' && !value) {
+            push(out, i, i + 1, CodeTokenKind::Operator);
+            value = true;
+            ++i;
+            continue;
+        }
+        if (c == '#' && value) {
+            std::size_t end = i + 1;
+            while (end < line.size() && std::isxdigit(static_cast<unsigned char>(line[end]))) ++end;
+            push(out, i, end, CodeTokenKind::Constant);
+            i = end;
+            continue;
+        }
+        if (digit(c) || ((c == '-' || c == '.' || c == '+') && i + 1 < line.size() && (digit(line[i + 1]) || line[i + 1] == '.'))) {
+            std::size_t end = i + 1;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '.' || line[end] == '%')) ++end;
+            push(out, i, end, CodeTokenKind::Number);
+            i = end;
+            continue;
+        }
+        if (ident_start(c) || c == '-') {
+            std::size_t end = i;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '-')) ++end;
+            if (end == i) {
+                push(out, i, i + 1, CodeTokenKind::Operator);
+                ++i;
+                continue;
+            }
+            CodeTokenKind kind = CodeTokenKind::Keyword;
+            if (!value) kind = line.compare(i, 2, "--") == 0 ? CodeTokenKind::Variable : CodeTokenKind::Property;
+            else if (end < line.size() && line[end] == '(') kind = CodeTokenKind::Function;
+            else if (line.compare(i, 2, "--") == 0) kind = CodeTokenKind::Variable;
+            push(out, i, end, kind);
+            i = end;
+            continue;
+        }
+        push(out, i, i + 1, std::ispunct(static_cast<unsigned char>(c)) && c != ',' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+std::size_t find_closing_tag(std::string_view line, std::size_t from, std::string_view tag) {
+    std::size_t at = from;
+    while ((at = line.find("</", at)) != std::string_view::npos) {
+        if (at + 2 + tag.size() <= line.size() && lower(line.substr(at + 2, tag.size())) == tag) return at;
+        at += 2;
+    }
+    return std::string_view::npos;
+}
+
+void push_embedded(std::vector<CodeToken>& out, std::vector<CodeToken> tokens, std::size_t offset) {
+    for (CodeToken t : tokens) {
+        t.begin += offset;
+        t.end += offset;
+        out.push_back(t);
+    }
+}
+
+std::vector<CodeToken> highlight_html(std::string_view line, CodeLineState& state) {
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        if (state.embedded != 0) {
+            const std::string_view tag = state.embedded == 1 ? "script" : "style";
+            const std::size_t close = find_closing_tag(line, i, tag);
+            const std::size_t stop = close == std::string_view::npos ? line.size() : close;
+            const std::string_view piece = line.substr(i, stop - i);
+            if (state.embedded == 1) push_embedded(out, highlight_javascript(piece, state), i);
+            else push_embedded(out, highlight_css(piece, state), i);
+            i = stop;
+            if (close == std::string_view::npos) return out;
+            state.embedded = 0;
+            state.block_comment = false;
+            state.string_open = false;
+            state.comment_depth = 0;
+            continue;
+        }
+        if (state.markup_comment) {
+            const std::size_t close = line.find("-->", i);
+            if (close == std::string_view::npos) {
+                push(out, i, line.size(), CodeTokenKind::Comment);
+                return out;
+            }
+            push(out, i, close + 3, CodeTokenKind::Comment);
+            state.markup_comment = false;
+            i = close + 3;
+            continue;
+        }
+        if (line.compare(i, 4, "<!--") == 0) {
+            state.markup_comment = true;
+            continue;
+        }
+        const char c = line[i];
+        if (c == '<' && i + 1 < line.size() && (std::isalpha(static_cast<unsigned char>(line[i + 1])) || line[i + 1] == '/' || line[i + 1] == '!')) {
+            std::size_t j = i + 1;
+            const bool closing = line[j] == '/';
+            if (line[j] == '/' || line[j] == '!') ++j;
+            push(out, i, j, CodeTokenKind::Operator);
+            std::size_t end = j;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '-' || line[end] == ':')) ++end;
+            push(out, j, end, CodeTokenKind::Tag);
+            const std::string name = lower(line.substr(j, end - j));
+            i = end;
+            bool self_closing = false;
+            while (i < line.size() && line[i] != '>') {
+                const char a = line[i];
+                if (a == '"' || a == '\'') {
+                    const std::size_t e = skip_string(line, i, a);
+                    push(out, i, e, CodeTokenKind::String);
+                    i = e;
+                } else if (ident_start(a) || a == '@' || a == ':') {
+                    std::size_t e = i;
+                    while (e < line.size() && (ident_char(line[e]) || line[e] == '-' || line[e] == ':' || line[e] == '@' || line[e] == '.')) ++e;
+                    push(out, i, e, CodeTokenKind::Attribute);
+                    i = e;
+                } else {
+                    self_closing = a == '/';
+                    push(out, i, i + 1, a == '=' || a == '/' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+                    ++i;
+                }
+            }
+            if (i < line.size()) {
+                push(out, i, i + 1, CodeTokenKind::Operator);
+                ++i;
+                if (!closing && !self_closing && name == "script") state.embedded = 1;
+                if (!closing && !self_closing && name == "style") state.embedded = 2;
+            }
+            continue;
+        }
+        if (c == '&') {
+            const std::size_t semi = line.find(';', i);
+            if (semi != std::string_view::npos && semi - i <= 32 && semi > i + 1) {
+                push(out, i, semi + 1, CodeTokenKind::Constant);
+                i = semi + 1;
+                continue;
+            }
+        }
+        push(out, i, i + 1, CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+
+struct Syntax {
+    std::vector<std::string_view> line_comments;
+    std::string_view block_open;
+    std::string_view block_close;
+    bool nested_blocks = false;
+    std::set<std::string> control;
+    std::set<std::string> keywords;
+    std::set<std::string> types;
+    std::set<std::string> constants;
+    std::set<std::string> self_words;
+    std::set<std::string> builtins;
+    bool chars = false;
+    bool lifetimes = false;
+    bool rust_strings = false;
+    bool rust_macros = false;
+    bool rust_attributes = false;
+    bool annotations = false;
+    bool zig_builtins = false;
+    bool zig_multiline = false;
+    bool triple_strings = false;
+    bool python_prefixes = false;
+    bool lua_long = false;
+    bool csharp_strings = false;
+    bool hash_directives = false;
+    bool def_names = false;
+};
+
+const Syntax& rust_syntax() {
+    static const Syntax s = [] {
+        Syntax x;
+        x.line_comments = { "//" };
+        x.block_open = "/*";
+        x.block_close = "*/";
+        x.nested_blocks = true;
+        x.control = { "if", "else", "match", "loop", "while", "for", "in", "break", "continue", "return", "yield", "await" };
+        x.keywords = { "as", "async", "const", "crate", "dyn", "enum", "extern", "fn", "impl", "let", "mod", "move", "mut", "pub", "ref", "static", "struct",
+                       "trait", "type", "union", "unsafe", "use", "where", "macro_rules" };
+        x.types = { "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "str", "String",
+                    "Vec", "Option", "Result", "Box", "Rc", "Arc", "RefCell", "Cell", "HashMap", "HashSet", "BTreeMap", "BTreeSet", "VecDeque" };
+        x.constants = { "true", "false", "None", "Some", "Ok", "Err" };
+        x.self_words = { "self", "Self", "super" };
+        x.chars = true;
+        x.lifetimes = true;
+        x.rust_strings = true;
+        x.rust_macros = true;
+        x.rust_attributes = true;
+        return x;
+    }();
+    return s;
+}
+
+const Syntax& zig_syntax() {
+    static const Syntax s = [] {
+        Syntax x;
+        x.line_comments = { "//" };
+        x.control = { "if", "else", "switch", "while", "for", "break", "continue", "return", "defer", "errdefer", "try", "catch", "orelse", "unreachable",
+                      "suspend", "resume", "nosuspend" };
+        x.keywords = { "const", "var", "fn", "pub", "struct", "enum", "union", "error", "opaque", "test", "comptime", "inline", "noinline", "export", "extern",
+                       "packed", "align", "callconv", "threadlocal", "usingnamespace", "and", "or", "anytype", "asm", "volatile", "allowzero", "linksection",
+                       "noalias", "addrspace" };
+        x.types = { "i8", "i16", "i32", "i64", "i128", "isize", "u1", "u8", "u16", "u32", "u64", "u128", "usize", "f16", "f32", "f64", "f80", "f128", "bool",
+                    "void", "noreturn", "type", "anyerror", "anyopaque", "anyframe", "comptime_int", "comptime_float", "c_int", "c_uint", "c_long", "c_ulong",
+                    "c_char", "c_short", "c_ushort", "c_longlong", "c_ulonglong", "c_longdouble" };
+        x.constants = { "true", "false", "null", "undefined" };
+        x.chars = true;
+        x.zig_builtins = true;
+        x.zig_multiline = true;
+        return x;
+    }();
+    return s;
+}
+
+const Syntax& python_syntax() {
+    static const Syntax s = [] {
+        Syntax x;
+        x.line_comments = { "#" };
+        x.control = { "if", "elif", "else", "for", "while", "break", "continue", "return", "pass", "try", "except", "finally", "raise", "with", "yield",
+                      "await", "match", "case", "assert" };
+        x.keywords = { "def", "class", "lambda", "import", "from", "as", "global", "nonlocal", "del", "in", "is", "not", "and", "or", "async" };
+        x.constants = { "True", "False", "None", "NotImplemented", "Ellipsis", "__name__", "__file__", "__main__" };
+        x.self_words = { "self", "cls" };
+        x.builtins = { "print", "len", "range", "input", "int", "float", "str", "bool", "list", "dict", "set", "tuple", "object", "isinstance",
+                       "issubclass", "enumerate", "zip", "map", "filter", "sorted", "reversed", "sum", "min", "max", "abs", "round", "open", "super",
+                       "property", "staticmethod", "classmethod", "repr", "hash", "id", "iter", "next", "any", "all", "format", "getattr", "setattr",
+                       "hasattr", "delattr", "vars", "dir", "chr", "ord", "bin", "hex", "oct", "pow", "divmod", "callable", "exec", "eval", "bytes",
+                       "bytearray", "frozenset", "complex", "slice", "type", "Exception", "BaseException", "ValueError", "TypeError", "KeyError",
+                       "IndexError", "RuntimeError", "StopIteration", "AttributeError", "ImportError", "ModuleNotFoundError", "OSError",
+                       "FileNotFoundError", "ZeroDivisionError", "NotImplementedError", "KeyboardInterrupt" };
+        x.triple_strings = true;
+        x.python_prefixes = true;
+        x.annotations = true;
+        x.def_names = true;
+        return x;
+    }();
+    return s;
+}
+
+const Syntax& lua_syntax() {
+    static const Syntax s = [] {
+        Syntax x;
+        x.line_comments = { "--" };
+        x.control = { "if", "then", "else", "elseif", "end", "for", "while", "do", "repeat", "until", "break", "return", "goto", "in" };
+        x.keywords = { "local", "function", "and", "or", "not" };
+        x.constants = { "true", "false", "nil" };
+        x.self_words = { "self" };
+        x.builtins = { "print", "type", "pairs", "ipairs", "tostring", "tonumber", "require", "pcall", "xpcall", "error", "assert", "select", "next",
+                       "rawget", "rawset", "rawequal", "rawlen", "setmetatable", "getmetatable", "unpack", "load", "loadfile", "dofile",
+                       "collectgarbage", "string", "table", "math", "io", "os", "coroutine", "utf8", "debug", "package", "_G", "_VERSION" };
+        x.lua_long = true;
+        x.def_names = true;
+        return x;
+    }();
+    return s;
+}
+
+const Syntax& java_syntax() {
+    static const Syntax s = [] {
+        Syntax x;
+        x.line_comments = { "//" };
+        x.block_open = "/*";
+        x.block_close = "*/";
+        x.control = { "if", "else", "switch", "case", "default", "for", "while", "do", "break", "continue", "return", "throw", "try", "catch", "finally", "yield" };
+        x.keywords = { "abstract", "assert", "class", "enum", "extends", "final", "implements", "import", "instanceof", "interface", "native", "new", "package",
+                       "private", "protected", "public", "static", "strictfp", "synchronized", "throws", "transient", "volatile", "var", "record",
+                       "sealed", "permits", "module", "requires", "exports", "opens", "uses", "provides" };
+        x.types = { "boolean", "byte", "char", "short", "int", "long", "float", "double", "void", "String", "Object", "Integer", "Long", "Double", "Float",
+                    "Boolean", "Character", "Byte", "Short", "List", "ArrayList", "Map", "HashMap", "Set", "HashSet", "System", "Math", "Scanner" };
+        x.constants = { "true", "false", "null" };
+        x.self_words = { "this", "super" };
+        x.chars = true;
+        x.triple_strings = true;
+        x.annotations = true;
+        return x;
+    }();
+    return s;
+}
+
+const Syntax& csharp_syntax() {
+    static const Syntax s = [] {
+        Syntax x;
+        x.line_comments = { "//" };
+        x.block_open = "/*";
+        x.block_close = "*/";
+        x.control = { "if", "else", "switch", "case", "default", "for", "foreach", "while", "do", "break", "continue", "return", "throw", "try", "catch",
+                      "finally", "goto", "yield", "await", "when" };
+        x.keywords = { "abstract", "as", "async", "base", "checked", "class", "const", "delegate", "enum", "event", "explicit", "extern", "fixed", "implicit",
+                       "in", "interface", "internal", "is", "lock", "namespace", "new", "operator", "out", "override", "params", "private", "protected",
+                       "public", "readonly", "ref", "sealed", "sizeof", "stackalloc", "static", "struct", "typeof", "unchecked", "unsafe", "using",
+                       "virtual", "volatile", "var", "get", "set", "init", "value", "record", "partial", "where", "global", "nameof", "dynamic",
+                       "required", "file", "scoped", "not", "and", "or", "with" };
+        x.types = { "bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "long", "ulong", "short", "ushort", "object", "string",
+                    "void", "nint", "nuint", "String", "Console", "List", "Dictionary", "Task", "Math", "Exception" };
+        x.constants = { "true", "false", "null" };
+        x.self_words = { "this" };
+        x.chars = true;
+        x.csharp_strings = true;
+        x.hash_directives = true;
+        return x;
+    }();
+    return s;
+}
+
+bool starts_at(std::string_view line, std::size_t i, std::string_view what) {
+    return !what.empty() && i + what.size() <= line.size() && line.compare(i, what.size(), what) == 0;
+}
+
+std::size_t lua_long_open(std::string_view line, std::size_t i) {
+    if (i >= line.size() || line[i] != '[') return std::string_view::npos;
+    std::size_t j = i + 1;
+    while (j < line.size() && line[j] == '=') ++j;
+    if (j < line.size() && line[j] == '[') return j - i - 1;
+    return std::string_view::npos;
+}
+
+std::size_t close_multiline(std::vector<CodeToken>& out, std::string_view line, std::size_t i, CodeLineState& state, CodeTokenKind kind) {
+    const std::string closer = state.raw_delimiter;
+    std::size_t at = i;
+    while (true) {
+        const std::size_t found = closer.empty() ? std::string_view::npos : line.find(closer, at);
+        if (found == std::string_view::npos) {
+            push(out, i, line.size(), kind);
+            return line.size();
+        }
+        if (kind == CodeTokenKind::String && !state.raw_string && found > 0 && line[found - 1] == '\\') {
+            at = found + 1;
+            continue;
+        }
+        push(out, i, found + closer.size(), kind);
+        if (kind == CodeTokenKind::Comment) state.block_comment = false;
+        else state.string_open = false;
+        state.raw_delimiter.clear();
+        state.raw_string = false;
+        return found + closer.size();
+    }
+}
+
+std::size_t generic_block_comment(std::vector<CodeToken>& out, std::string_view line, std::size_t i, std::size_t skip, const Syntax& syn, CodeLineState& state) {
+    std::size_t j = i + skip;
+    while (j < line.size()) {
+        if (syn.nested_blocks && starts_at(line, j, syn.block_open)) {
+            ++state.comment_depth;
+            j += syn.block_open.size();
+            continue;
+        }
+        if (starts_at(line, j, syn.block_close)) {
+            j += syn.block_close.size();
+            if (--state.comment_depth <= 0) {
+                state.comment_depth = 0;
+                state.block_comment = false;
+                push(out, i, j, CodeTokenKind::Comment);
+                return j;
+            }
+            continue;
+        }
+        ++j;
+    }
+    push(out, i, line.size(), CodeTokenKind::Comment);
+    return line.size();
+}
+
+std::size_t open_multiline(std::vector<CodeToken>& out, std::string_view line, std::size_t begin, std::size_t body, const std::string& closer, bool raw, CodeLineState& state, CodeTokenKind kind) {
+    if (kind == CodeTokenKind::Comment) state.block_comment = true;
+    else state.string_open = true;
+    state.raw_string = raw;
+    state.raw_delimiter = closer;
+    push(out, begin, body, kind);
+    return close_multiline(out, line, body, state, kind);
+}
+
+std::vector<CodeToken> highlight_generic(const Syntax& syn, std::string_view line, CodeLineState& state) {
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    if (state.block_comment) {
+        if (!state.raw_delimiter.empty()) i = close_multiline(out, line, 0, state, CodeTokenKind::Comment);
+        else i = generic_block_comment(out, line, 0, 0, syn, state);
+    } else if (state.string_open) {
+        i = close_multiline(out, line, 0, state, CodeTokenKind::String);
+    }
+    if (syn.hash_directives && i == 0) {
+        const std::size_t first = skip_spaces(line, 0);
+        if (first < line.size() && line[first] == '#') {
+            push(out, 0, line.size(), CodeTokenKind::Preprocessor);
+            return out;
+        }
+    }
+    if (syn.zig_multiline && i == 0) {
+        const std::size_t first = skip_spaces(line, 0);
+        if (starts_at(line, first, "\\\\")) {
+            push(out, 0, first, CodeTokenKind::Plain);
+            push(out, first, line.size(), CodeTokenKind::String);
+            return out;
+        }
+    }
+    bool after_def = false;
+    while (i < line.size()) {
+        const char c = line[i];
+        bool handled = false;
+        for (std::string_view m : syn.line_comments) {
+            if (!starts_at(line, i, m)) continue;
+            if (syn.lua_long) {
+                const std::size_t level = lua_long_open(line, i + m.size());
+                if (level != std::string_view::npos) {
+                    i = open_multiline(out, line, i, i + m.size() + level + 2, "]" + std::string(level, '=') + "]", true, state, CodeTokenKind::Comment);
+                    handled = true;
+                    break;
+                }
+            }
+            push(out, i, line.size(), CodeTokenKind::Comment);
+            return out;
+        }
+        if (handled) continue;
+        if (!syn.block_open.empty() && starts_at(line, i, syn.block_open)) {
+            state.block_comment = true;
+            state.comment_depth = 1;
+            i = generic_block_comment(out, line, i, syn.block_open.size(), syn, state);
+            continue;
+        }
+        if (syn.lua_long && c == '[') {
+            const std::size_t level = lua_long_open(line, i);
+            if (level != std::string_view::npos) {
+                i = open_multiline(out, line, i, i + level + 2, "]" + std::string(level, '=') + "]", true, state, CodeTokenKind::String);
+                continue;
+            }
+        }
+        if (syn.rust_attributes && c == '#' && (starts_at(line, i, "#[") || starts_at(line, i, "#!["))) {
+            int depth = 0;
+            std::size_t j = i;
+            while (j < line.size()) {
+                if (line[j] == '[') ++depth;
+                else if (line[j] == ']' && --depth == 0) {
+                    ++j;
+                    break;
+                }
+                ++j;
+            }
+            push(out, i, j, CodeTokenKind::Attribute);
+            i = j;
+            continue;
+        }
+        if (syn.zig_builtins && c == '@' && i + 1 < line.size() && line[i + 1] == '"') {
+            const std::size_t end = skip_string(line, i + 1, '"');
+            push(out, i, end, CodeTokenKind::Plain);
+            i = end;
+            continue;
+        }
+        if ((syn.annotations || syn.zig_builtins) && c == '@' && i + 1 < line.size() && ident_start(line[i + 1])) {
+            std::size_t j = i + 1;
+            while (j < line.size() && (ident_char(line[j]) || (syn.annotations && line[j] == '.'))) ++j;
+            push(out, i, j, syn.zig_builtins ? CodeTokenKind::Function : CodeTokenKind::Attribute);
+            i = j;
+            continue;
+        }
+        const bool word_start = i == 0 || !ident_char(line[i - 1]);
+        if (syn.rust_strings && word_start && (c == 'r' || c == 'b' || c == 'c')) {
+            std::size_t j = i;
+            if (line[j] == 'b' || line[j] == 'c') ++j;
+            if (j < line.size() && line[j] == 'r') {
+                std::size_t k = j + 1;
+                while (k < line.size() && line[k] == '#') ++k;
+                if (k < line.size() && line[k] == '"') {
+                    i = open_multiline(out, line, i, k + 1, "\"" + std::string(k - j - 1, '#'), true, state, CodeTokenKind::String);
+                    continue;
+                }
+            }
+            if (j > i && j < line.size() && (line[j] == '"' || line[j] == '\'')) {
+                const std::size_t end = skip_string(line, j, line[j]);
+                push(out, i, j, CodeTokenKind::String);
+                push_quoted(out, line, j, end);
+                i = end;
+                continue;
+            }
+        }
+        if (syn.csharp_strings && (c == '@' || c == '$')) {
+            std::size_t j = i;
+            bool verbatim = false;
+            while (j < line.size() && (line[j] == '@' || line[j] == '$') && j - i < 4) {
+                if (line[j] == '@') verbatim = true;
+                ++j;
+            }
+            if (j < line.size() && line[j] == '"') {
+                if (starts_at(line, j, "\"\"\"")) {
+                    std::size_t q = j;
+                    while (q < line.size() && line[q] == '"') ++q;
+                    i = open_multiline(out, line, i, q, std::string(q - j, '"'), true, state, CodeTokenKind::String);
+                    continue;
+                }
+                if (verbatim) {
+                    std::size_t k = j + 1;
+                    while (k < line.size()) {
+                        if (line[k] == '"') {
+                            if (k + 1 < line.size() && line[k + 1] == '"') {
+                                k += 2;
+                                continue;
+                            }
+                            break;
+                        }
+                        ++k;
+                    }
+                    if (k >= line.size()) {
+                        push(out, i, line.size(), CodeTokenKind::String);
+                        state.string_open = true;
+                        state.raw_string = true;
+                        state.raw_delimiter = "\"";
+                        return out;
+                    }
+                    push(out, i, k + 1, CodeTokenKind::String);
+                    i = k + 1;
+                    continue;
+                }
+                const std::size_t end = skip_string(line, j, '"');
+                push(out, i, j, CodeTokenKind::String);
+                push_quoted(out, line, j, end);
+                i = end;
+                continue;
+            }
+        }
+        if (syn.python_prefixes && word_start && std::isalpha(static_cast<unsigned char>(c))) {
+            std::size_t j = i;
+            while (j < line.size() && j - i < 2 && std::string_view("rRbBfFuU").find(line[j]) != std::string_view::npos) ++j;
+            if (j > i && j < line.size() && (line[j] == '"' || line[j] == '\'')) {
+                const bool raw = line.substr(i, j - i).find_first_of("rR") != std::string_view::npos;
+                if (starts_at(line, j, "\"\"\"") || starts_at(line, j, "\'\'\'")) {
+                    i = open_multiline(out, line, i, j + 3, std::string(line.substr(j, 3)), raw, state, CodeTokenKind::String);
+                    continue;
+                }
+                const std::size_t end = skip_string(line, j, line[j]);
+                push(out, i, j, CodeTokenKind::String);
+                if (raw) push(out, j, end, CodeTokenKind::String);
+                else push_quoted(out, line, j, end);
+                i = end;
+                continue;
+            }
+        }
+        if (syn.triple_strings && (starts_at(line, i, "\"\"\"") || (syn.python_prefixes && starts_at(line, i, "\'\'\'")))) {
+            i = open_multiline(out, line, i, i + 3, std::string(line.substr(i, 3)), false, state, CodeTokenKind::String);
+            continue;
+        }
+        if (c == '"' || (c == '\'' && !syn.chars)) {
+            const std::size_t end = skip_string(line, i, c);
+            push_quoted(out, line, i, end);
+            i = end;
+            continue;
+        }
+        if (c == '\'' && syn.chars) {
+            if (syn.lifetimes && i + 1 < line.size() && ident_start(line[i + 1])) {
+                std::size_t j = i + 1;
+                while (j < line.size() && ident_char(line[j])) ++j;
+                if (j >= line.size() || line[j] != '\'') {
+                    push(out, i, j, CodeTokenKind::Attribute);
+                    i = j;
+                    continue;
+                }
+            }
+            const std::size_t end = skip_string(line, i, '\'');
+            push_quoted(out, line, i, end);
+            i = end;
+            continue;
+        }
+        if (digit(c) || (c == '.' && i + 1 < line.size() && digit(line[i + 1]) && word_start)) {
+            std::size_t end = i + 1;
+            const bool hex = line[i] == '0' && i + 1 < line.size() && (line[i + 1] == 'x' || line[i + 1] == 'X');
+            while (end < line.size() && (ident_char(line[end]) || (line[end] == '.' && end + 1 < line.size() && digit(line[end + 1])) ||
+                                         ((line[end] == '+' || line[end] == '-') && (line[end - 1] == 'e' || line[end - 1] == 'E') && !hex))) {
+                ++end;
+            }
+            push(out, i, end, CodeTokenKind::Number);
+            i = end;
+            continue;
+        }
+        if (ident_start(c)) {
+            std::size_t end = i;
+            while (end < line.size() && ident_char(line[end])) ++end;
+            const std::string word(line.substr(i, end - i));
+            const std::size_t next = skip_spaces(line, end);
+            std::size_t prev = i;
+            while (prev > 0 && (line[prev - 1] == ' ' || line[prev - 1] == '\t')) --prev;
+            const bool member = prev > 0 && (line[prev - 1] == '.' || (syn.lua_long && line[prev - 1] == ':' && !(prev > 1 && line[prev - 2] == ':'))) && !(prev > 1 && line[prev - 2] == '.');
+            if (syn.rust_macros && end < line.size() && line[end] == '!' && !(end + 1 < line.size() && line[end + 1] == '=')) {
+                push(out, i, end + 1, CodeTokenKind::Preprocessor);
+                i = end + 1;
+                continue;
+            }
+            CodeTokenKind kind = CodeTokenKind::Plain;
+            if (after_def) {
+                kind = word == "class" ? CodeTokenKind::Keyword : (syn.def_names && !syn.lua_long && std::isupper(static_cast<unsigned char>(word[0])) ? CodeTokenKind::Type : CodeTokenKind::Function);
+                after_def = false;
+            } else if (!member && syn.control.count(word)) {
+                kind = CodeTokenKind::ControlKeyword;
+            } else if (!member && syn.self_words.count(word)) {
+                kind = CodeTokenKind::ThisKeyword;
+            } else if (!member && syn.keywords.count(word)) {
+                kind = CodeTokenKind::Keyword;
+                if (syn.def_names && (word == "def" || word == "class" || word == "function")) after_def = true;
+            } else if (!member && syn.constants.count(word)) {
+                kind = CodeTokenKind::Constant;
+            } else if (!member && syn.types.count(word)) {
+                kind = CodeTokenKind::BuiltinType;
+            } else if (!member && syn.builtins.count(word)) {
+                kind = CodeTokenKind::BuiltinType;
+            } else if (next < line.size() && line[next] == '(') {
+                kind = CodeTokenKind::Function;
+            } else if (member) {
+                kind = CodeTokenKind::Property;
+            } else if (all_upper(word)) {
+                kind = CodeTokenKind::Constant;
+            } else if (std::isupper(static_cast<unsigned char>(word[0])) && !syn.lua_long) {
+                kind = CodeTokenKind::Type;
+            } else if (syn.rust_macros && next + 1 < line.size() && line[next] == ':' && line[next + 1] == ':') {
+                kind = CodeTokenKind::Namespace;
+            }
+            push(out, i, end, kind);
+            i = end;
+            continue;
+        }
+        if (c == ' ' || c == '\t') {
+            std::size_t end = i;
+            while (end < line.size() && (line[end] == ' ' || line[end] == '\t')) ++end;
+            push(out, i, end, CodeTokenKind::Plain);
+            i = end;
+            continue;
+        }
+        push(out, i, i + 1, std::ispunct(static_cast<unsigned char>(c)) && c != ';' && c != ',' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+const std::set<std::string>& asm_jumps() {
+    static const std::set<std::string> k = {
+        "jmp", "je", "jne", "jz", "jnz", "jg", "jge", "jl", "jle", "ja", "jae", "jb", "jbe", "jc", "jnc", "jo", "jno", "js", "jns", "jp", "jnp", "jecxz",
+        "jrcxz", "call", "ret", "retq", "callq", "jmpq", "loop", "loope", "loopne", "syscall", "int", "iret", "iretq", "sysenter", "hlt", "b", "bl", "blr",
+        "br", "bx", "blx", "beq", "bne", "bgt", "bge", "blt", "ble", "bhi", "bhs", "blo", "bls", "bmi", "bpl", "cbz", "cbnz", "tbz", "tbnz", "svc", "eret",
+        "j", "jal", "jalr", "jr", "beqz", "bnez", "bltz", "bgez", "blez", "bgtz", "bltu", "bgeu", "ecall", "ebreak", "mret", "sret", "b.eq", "b.ne",
+        "b.gt", "b.ge", "b.lt", "b.le", "b.hi", "b.hs", "b.lo", "b.ls", "b.mi", "b.pl", "b.cs", "b.cc", "b.vs", "b.vc",
+    };
+    return k;
+}
+
+const std::set<std::string>& asm_directives() {
+    static const std::set<std::string> k = {
+        "section", "segment", "global", "globl", "extern", "bits", "default", "db", "dw", "dd", "dq", "dt", "do", "dy", "dz", "resb", "resw", "resd", "resq",
+        "rest", "reso", "equ", "times", "incbin", "align", "alignb", "org", "struc", "endstruc", "istruc", "iend", "use16", "use32", "use64",
+        "proc", "endp", "end", "include", "includelib", "model", "data", "code", "stack", "const", "public", "externdef", "proto", "invoke",
+        "real4", "real8", "ends", "assume", "macro", "endm", "local", "format", "entry", "import", "label", "option", "comm", "common", "cpu", "absolute",
+    };
+    return k;
+}
+
+const std::set<std::string>& asm_sizes() {
+    static const std::set<std::string> k = { "byte", "word", "dword", "qword", "tword", "oword", "yword", "zword", "ptr", "near", "far", "short", "xmmword",
+                                             "ymmword", "zmmword", "rel", "abs", "wrt", "strict", "nosplit", "seg" };
+    return k;
+}
+
+bool asm_data_word(const std::string& w) {
+    static const std::set<std::string> k = { "db", "dw", "dd", "dq", "dt", "do", "dy", "dz", "resb", "resw", "resd", "resq", "rest", "reso", "equ", "times",
+                                             "byte", "word", "dword", "qword", "real4", "real8", "label", "proc", "macro", "struc", "struct", "segment", "ends", "endp" };
+    return k.count(w) > 0;
+}
+
+bool asm_register(const std::string& w) {
+    static const std::set<std::string> fixed = {
+        "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp", "eip", "ax", "bx", "cx",
+        "dx", "si", "di", "bp", "sp", "ip", "al", "bl", "cl", "dl", "ah", "bh", "ch", "dh", "sil", "dil", "bpl", "spl", "cs", "ds", "es", "fs", "gs", "ss",
+        "eflags", "rflags", "lr", "pc", "fp", "xzr", "wzr", "zero", "ra", "gp", "tp", "cpsr", "spsr", "apsr", "fpscr", "nzcv",
+    };
+    if (fixed.count(w)) return true;
+    auto numbered = [&](std::string_view prefix, int most) {
+        if (w.size() <= prefix.size() || w.compare(0, prefix.size(), prefix) != 0) return false;
+        std::string digits = w.substr(prefix.size());
+        if (prefix == "r") {
+            while (!digits.empty() && (digits.back() == 'b' || digits.back() == 'w' || digits.back() == 'd')) digits.pop_back();
+        }
+        if (digits.empty() || digits.size() > 2 || digits.find_first_not_of("0123456789") != std::string::npos) return false;
+        return std::stoi(digits) <= most;
+    };
+    return numbered("r", 31) || numbered("x", 30) || numbered("w", 30) || numbered("xmm", 31) || numbered("ymm", 31) || numbered("zmm", 31) ||
+           numbered("mm", 7) || numbered("k", 7) || numbered("a", 7) || numbered("t", 9) || numbered("s", 11) || numbered("v", 31) || numbered("q", 31) ||
+           numbered("d", 31) || numbered("f", 31) || numbered("fa", 7) || numbered("ft", 11) || numbered("fs", 11) || numbered("st", 7) || numbered("cr", 8) ||
+           numbered("dr", 7);
+}
+
+std::vector<CodeToken> highlight_assembly(std::string_view line, CodeLineState& state) {
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    if (state.block_comment) {
+        const std::size_t close = line.find("*/");
+        if (close == std::string_view::npos) {
+            push(out, 0, line.size(), CodeTokenKind::Comment);
+            return out;
+        }
+        push(out, 0, close + 2, CodeTokenKind::Comment);
+        state.block_comment = false;
+        i = close + 2;
+    }
+    const std::size_t first = skip_spaces(line, i);
+    bool statement_start = true;
+    while (i < line.size()) {
+        const char c = line[i];
+        if (c == ';' || (c == '/' && i + 1 < line.size() && line[i + 1] == '/')) {
+            push(out, i, line.size(), CodeTokenKind::Comment);
+            break;
+        }
+        if (c == '#' && i == first && i + 1 < line.size() && std::isalpha(static_cast<unsigned char>(line[i + 1]))) {
+            push(out, i, line.size(), CodeTokenKind::Preprocessor);
+            break;
+        }
+        if ((c == '#' || c == '@') && (i + 1 >= line.size() || line[i + 1] == ' ' || line[i + 1] == '\t' || line[i + 1] == '#' || line[i + 1] == '!')) {
+            push(out, i, line.size(), CodeTokenKind::Comment);
+            break;
+        }
+        if (c == '/' && i + 1 < line.size() && line[i + 1] == '*') {
+            const std::size_t close = line.find("*/", i + 2);
+            if (close == std::string_view::npos) {
+                push(out, i, line.size(), CodeTokenKind::Comment);
+                state.block_comment = true;
+                break;
+            }
+            push(out, i, close + 2, CodeTokenKind::Comment);
+            i = close + 2;
+            continue;
+        }
+        if (c == '"' || c == '\'' || c == '`') {
+            const std::size_t end = skip_string(line, i, c);
+            push_quoted(out, line, i, end);
+            i = end;
+            statement_start = false;
+            continue;
+        }
+        if (c == ' ' || c == '\t') {
+            std::size_t end = i;
+            while (end < line.size() && (line[end] == ' ' || line[end] == '\t')) ++end;
+            push(out, i, end, CodeTokenKind::Plain);
+            i = end;
+            continue;
+        }
+        if ((c == '$' || c == '#') && i + 1 < line.size() && (digit(line[i + 1]) || line[i + 1] == '-')) {
+            std::size_t end = i + 2;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '.')) ++end;
+            push(out, i, end, CodeTokenKind::Number);
+            i = end;
+            continue;
+        }
+        if (digit(c)) {
+            std::size_t end = i;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '.')) ++end;
+            const std::string_view text = line.substr(i, end - i);
+            const bool label = statement_start && end < line.size() && line[end] == ':';
+            const bool label_ref = text.size() >= 2 && (text.back() == 'f' || text.back() == 'b') && text.find_first_not_of("0123456789") == text.size() - 1;
+            if (label) {
+                push(out, i, end + 1, CodeTokenKind::Function);
+                i = end + 1;
+                continue;
+            }
+            push(out, i, end, label_ref ? CodeTokenKind::Function : CodeTokenKind::Number);
+            i = end;
+            statement_start = false;
+            continue;
+        }
+        if (c == '%' || c == '$' || ident_start(c) || c == '.' || c == '?') {
+            std::size_t end = i + 1;
+            while (end < line.size() && (ident_char(line[end]) || line[end] == '.' || line[end] == '$' || line[end] == '?' || line[end] == '@')) ++end;
+            const std::string word = lower(line.substr(i, end - i));
+            const std::string bare = (word[0] == '%' || word[0] == '$') ? word.substr(1) : word;
+            const std::size_t next = skip_spaces(line, end);
+            if (statement_start && next < line.size() && line[next] == ':' && !(next + 1 < line.size() && (line[next + 1] == ':' || line[next + 1] == '='))) {
+                push(out, i, next + 1, CodeTokenKind::Function);
+                i = next + 1;
+                continue;
+            }
+            CodeTokenKind kind = CodeTokenKind::Plain;
+            if (word[0] != '.' && asm_register(bare)) kind = CodeTokenKind::Variable;
+            else if (word[0] == '%') kind = CodeTokenKind::Preprocessor;
+            else if (word[0] == '.' && statement_start) kind = CodeTokenKind::Preprocessor;
+            else if (statement_start && asm_directives().count(bare)) kind = CodeTokenKind::Preprocessor;
+            else if (statement_start && next > end && asm_data_word(lower(line.substr(next, std::min(line.size(), line.find_first_of(" \t,", next)) - next)))) kind = CodeTokenKind::Function;
+            else if (statement_start) kind = asm_jumps().count(bare) ? CodeTokenKind::ControlKeyword : CodeTokenKind::Keyword;
+            else if (asm_sizes().count(bare)) kind = CodeTokenKind::BuiltinType;
+            else if (asm_directives().count(bare)) kind = CodeTokenKind::Preprocessor;
+            push(out, i, end, kind);
+            i = end;
+            if (!(kind == CodeTokenKind::Function && statement_start)) statement_start = false;
+            continue;
+        }
+        push(out, i, i + 1, std::ispunct(static_cast<unsigned char>(c)) && c != ',' ? CodeTokenKind::Operator : CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+void add_syntax_words(std::vector<CodeWord>& out, const Syntax& syn) {
+    for (const std::string& w : syn.control) out.push_back(CodeWord{ w, CodeTokenKind::ControlKeyword });
+    for (const std::string& w : syn.keywords) out.push_back(CodeWord{ w, CodeTokenKind::Keyword });
+    for (const std::string& w : syn.types) out.push_back(CodeWord{ w, CodeTokenKind::BuiltinType });
+    for (const std::string& w : syn.constants) out.push_back(CodeWord{ w, CodeTokenKind::Constant });
+    for (const std::string& w : syn.self_words) out.push_back(CodeWord{ w, CodeTokenKind::ThisKeyword });
+    for (const std::string& w : syn.builtins) out.push_back(CodeWord{ w, CodeTokenKind::Function });
+}
+
 } // namespace
 
 const char* to_string(CodeLanguage language) noexcept {
@@ -1171,6 +2343,17 @@ const char* to_string(CodeLanguage language) noexcept {
         case CodeLanguage::Grove: return "grove";
         case CodeLanguage::Bark: return "bark";
         case CodeLanguage::CMake: return "cmake";
+        case CodeLanguage::Html: return "html";
+        case CodeLanguage::Css: return "css";
+        case CodeLanguage::JavaScript: return "javascript";
+        case CodeLanguage::Json: return "json";
+        case CodeLanguage::Rust: return "rust";
+        case CodeLanguage::Zig: return "zig";
+        case CodeLanguage::Python: return "python";
+        case CodeLanguage::Lua: return "lua";
+        case CodeLanguage::Java: return "java";
+        case CodeLanguage::CSharp: return "csharp";
+        case CodeLanguage::Assembly: return "asm";
     }
     return "plain";
 }
@@ -1214,9 +2397,20 @@ CodeLanguage code_language_from_name(std::string_view name) noexcept {
     if (n == "c" || n == "h") return CodeLanguage::C;
     if (n == "cpp" || n == "c++" || n == "cxx" || n == "cc" || n == "hpp" || n == "hh" || n == "hxx") return CodeLanguage::Cpp;
     if (n == "walnut" || n == "wal" || n == "walh" || n == "hwal") return CodeLanguage::Walnut;
-    if (n == "grove" || n == "html" || n == "xml" || n == "markup") return CodeLanguage::Grove;
-    if (n == "bark" || n == "css") return CodeLanguage::Bark;
+    if (n == "html" || n == "htm" || n == "xhtml") return CodeLanguage::Html;
+    if (n == "css") return CodeLanguage::Css;
+    if (n == "javascript" || n == "js" || n == "mjs" || n == "cjs" || n == "jsx") return CodeLanguage::JavaScript;
+    if (n == "json" || n == "jsonc" || n == "webmanifest") return CodeLanguage::Json;
+    if (n == "grove" || n == "xml" || n == "markup" || n == "svg") return CodeLanguage::Grove;
+    if (n == "bark") return CodeLanguage::Bark;
     if (n == "cmake" || n == "cmakelists" || n == "cmakelists.txt") return CodeLanguage::CMake;
+    if (n == "rust" || n == "rs") return CodeLanguage::Rust;
+    if (n == "zig" || n == "zon") return CodeLanguage::Zig;
+    if (n == "python" || n == "py" || n == "pyw" || n == "pyi") return CodeLanguage::Python;
+    if (n == "lua") return CodeLanguage::Lua;
+    if (n == "java") return CodeLanguage::Java;
+    if (n == "csharp" || n == "c#" || n == "cs" || n == "csx") return CodeLanguage::CSharp;
+    if (n == "asm" || n == "assembly" || n == "s" || n == "nasm" || n == "masm" || n == "gas" || n == "inc") return CodeLanguage::Assembly;
     return CodeLanguage::Plain;
 }
 
@@ -1230,8 +2424,68 @@ CodeLanguage code_language_for_path(std::string_view path) noexcept {
 }
 
 const std::vector<CodeLanguage>& code_languages() noexcept {
-    static const std::vector<CodeLanguage> all = { CodeLanguage::C, CodeLanguage::Cpp, CodeLanguage::Walnut, CodeLanguage::Grove, CodeLanguage::Bark, CodeLanguage::CMake };
+    static const std::vector<CodeLanguage> all = { CodeLanguage::C, CodeLanguage::Cpp, CodeLanguage::Walnut, CodeLanguage::Grove, CodeLanguage::Bark, CodeLanguage::CMake,
+                                                   CodeLanguage::Html, CodeLanguage::Css, CodeLanguage::JavaScript, CodeLanguage::Json, CodeLanguage::Rust,
+                                                   CodeLanguage::Zig, CodeLanguage::Python, CodeLanguage::Lua, CodeLanguage::Java, CodeLanguage::CSharp,
+                                                   CodeLanguage::Assembly };
     return all;
+}
+
+std::string code_line_comment(CodeLanguage language, std::string_view sample) {
+    switch (language) {
+        case CodeLanguage::C:
+        case CodeLanguage::Cpp:
+        case CodeLanguage::Walnut:
+        case CodeLanguage::JavaScript:
+        case CodeLanguage::Rust:
+        case CodeLanguage::Zig:
+        case CodeLanguage::Java:
+        case CodeLanguage::CSharp:
+        case CodeLanguage::Bark: return "//";
+        case CodeLanguage::Python:
+        case CodeLanguage::CMake: return "#";
+        case CodeLanguage::Lua: return "--";
+        case CodeLanguage::Assembly: {
+            std::size_t semi = 0;
+            std::size_t hash = 0;
+            std::size_t slashes = 0;
+            std::size_t at = 0;
+            bool gas = false;
+            bool arm64 = false;
+            std::size_t start = 0;
+            while (start < sample.size()) {
+                std::size_t end = sample.find('\n', start);
+                if (end == std::string_view::npos) end = sample.size();
+                const std::string_view row = sample.substr(start, end - start);
+                start = end + 1;
+                const std::size_t first = row.find_first_not_of(" \t");
+                if (first == std::string_view::npos) continue;
+                const char c = row[first];
+                if (c == ';') ++semi;
+                else if (c == '#' && (first + 1 >= row.size() || row[first + 1] == ' ')) ++hash;
+                else if (row.compare(first, 2, "//") == 0) ++slashes;
+                else if (c == '@' && (first + 1 >= row.size() || row[first + 1] == ' ')) ++at;
+                if (row.find(".globl") != std::string_view::npos || row.find(".global") != std::string_view::npos || row.find(".section") != std::string_view::npos ||
+                    row.find("%r") != std::string_view::npos || row.find("%e") != std::string_view::npos) {
+                    gas = true;
+                }
+                if (row.find(" x0") != std::string_view::npos || row.find(" w0") != std::string_view::npos || row.find("stp ") != std::string_view::npos ||
+                    row.find("ldp ") != std::string_view::npos) {
+                    arm64 = true;
+                }
+            }
+            const std::size_t most = std::max({ semi, hash, slashes, at });
+            if (most > 0) {
+                if (most == semi) return ";";
+                if (most == hash) return "#";
+                if (most == slashes) return "//";
+                return "@";
+            }
+            if (arm64) return "//";
+            return gas ? "#" : ";";
+        }
+        default: return "";
+    }
 }
 
 const std::vector<CodeTokenKind>& code_token_kinds() noexcept {
@@ -1290,6 +2544,17 @@ const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) no
     static const std::vector<K> grove = { K::Tag, K::Attribute, K::String, K::Constant, K::Comment, K::Operator };
     static const std::vector<K> bark = { K::Tag, K::Attribute, K::Property, K::Keyword, K::Function, K::Constant, K::Number, K::String, K::Comment, K::Operator };
     static const std::vector<K> cmake = { K::Function, K::Keyword, K::Variable, K::Attribute, K::Constant, K::String, K::Escape, K::Number, K::Comment };
+    static const std::vector<K> html = { K::Tag, K::Attribute, K::String, K::Constant, K::Comment, K::Operator, K::Keyword, K::ControlKeyword, K::Function,
+                                         K::Property, K::BuiltinType, K::Number };
+    static const std::vector<K> javascript = { K::Keyword, K::ControlKeyword, K::ThisKeyword, K::Function, K::Property, K::Type, K::BuiltinType, K::Constant,
+                                               K::String, K::Escape, K::Number, K::Comment, K::Operator };
+    static const std::vector<K> css = { K::Tag, K::Attribute, K::Keyword, K::ControlKeyword, K::Property, K::Variable, K::Function, K::Constant, K::Number,
+                                        K::String, K::Comment, K::Operator };
+    static const std::vector<K> json = { K::Property, K::String, K::Escape, K::Number, K::Constant, K::Operator };
+    static const std::vector<K> general = { K::Keyword, K::ControlKeyword, K::ThisKeyword, K::Type, K::BuiltinType, K::Function, K::Property, K::Namespace,
+                                            K::Constant, K::String, K::Escape, K::Number, K::Comment, K::Operator, K::Attribute, K::Preprocessor };
+    static const std::vector<K> assembly = { K::Keyword, K::ControlKeyword, K::Variable, K::Function, K::Preprocessor, K::BuiltinType, K::Number,
+                                             K::String, K::Escape, K::Comment, K::Operator };
     switch (language) {
         case CodeLanguage::C: return c;
         case CodeLanguage::Cpp: return cpp;
@@ -1297,6 +2562,17 @@ const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) no
         case CodeLanguage::Grove: return grove;
         case CodeLanguage::Bark: return bark;
         case CodeLanguage::CMake: return cmake;
+        case CodeLanguage::Html: return html;
+        case CodeLanguage::Css: return css;
+        case CodeLanguage::JavaScript: return javascript;
+        case CodeLanguage::Json: return json;
+        case CodeLanguage::Rust:
+        case CodeLanguage::Zig:
+        case CodeLanguage::Python:
+        case CodeLanguage::Lua:
+        case CodeLanguage::Java:
+        case CodeLanguage::CSharp: return general;
+        case CodeLanguage::Assembly: return assembly;
         case CodeLanguage::Plain: break;
     }
     return code_token_kinds();
@@ -1310,6 +2586,17 @@ std::vector<CodeToken> highlight_code_line(CodeLanguage language, std::string_vi
         case CodeLanguage::Grove: return highlight_markup(line, state);
         case CodeLanguage::Bark: return highlight_bark(line, state);
         case CodeLanguage::CMake: return highlight_cmake(line, state);
+        case CodeLanguage::Html: return highlight_html(line, state);
+        case CodeLanguage::Css: return highlight_css(line, state);
+        case CodeLanguage::JavaScript: return highlight_javascript(line, state);
+        case CodeLanguage::Json: return highlight_json(line, state);
+        case CodeLanguage::Rust: return highlight_generic(rust_syntax(), line, state);
+        case CodeLanguage::Zig: return highlight_generic(zig_syntax(), line, state);
+        case CodeLanguage::Python: return highlight_generic(python_syntax(), line, state);
+        case CodeLanguage::Lua: return highlight_generic(lua_syntax(), line, state);
+        case CodeLanguage::Java: return highlight_generic(java_syntax(), line, state);
+        case CodeLanguage::CSharp: return highlight_generic(csharp_syntax(), line, state);
+        case CodeLanguage::Assembly: return highlight_assembly(line, state);
         case CodeLanguage::Plain: break;
     }
     std::vector<CodeToken> out;
@@ -1486,10 +2773,27 @@ std::vector<CodeWord> code_language_words(CodeLanguage language) {
             add(walnut_types(), CodeTokenKind::BuiltinType);
             add(constants(), CodeTokenKind::Constant);
             break;
+        case CodeLanguage::JavaScript:
+        case CodeLanguage::Html:
+            add(js_control(), CodeTokenKind::ControlKeyword);
+            add(js_keywords(), CodeTokenKind::Keyword);
+            add(js_constants(), CodeTokenKind::Constant);
+            add(js_globals(), CodeTokenKind::BuiltinType);
+            break;
         case CodeLanguage::CMake:
             add(cmake_control(), CodeTokenKind::Keyword);
             add(cmake_constants(), CodeTokenKind::Constant);
             add(cmake_operators(), CodeTokenKind::Operator);
+            break;
+        case CodeLanguage::Rust: add_syntax_words(out, rust_syntax()); break;
+        case CodeLanguage::Zig: add_syntax_words(out, zig_syntax()); break;
+        case CodeLanguage::Python: add_syntax_words(out, python_syntax()); break;
+        case CodeLanguage::Lua: add_syntax_words(out, lua_syntax()); break;
+        case CodeLanguage::Java: add_syntax_words(out, java_syntax()); break;
+        case CodeLanguage::CSharp: add_syntax_words(out, csharp_syntax()); break;
+        case CodeLanguage::Assembly:
+            add(asm_jumps(), CodeTokenKind::ControlKeyword);
+            add(asm_directives(), CodeTokenKind::Preprocessor);
             break;
         default:
             break;

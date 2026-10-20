@@ -1077,7 +1077,7 @@ void test_code_highlight_languages() {
     CHECK(grove::code_language_from_name("cmake") == grove::CodeLanguage::CMake);
     CHECK(grove::code_token_kind_from_name("namespace") == grove::CodeTokenKind::Namespace);
     CHECK(!grove::code_token_kind_from_name("nope"));
-    CHECK(grove::code_token_kinds().size() == 27 && grove::code_languages().size() == 6);
+    CHECK(grove::code_token_kinds().size() == 27 && grove::code_languages().size() == 17);
     CHECK(grove::bark::is_known_property("code-keyword") && grove::bark::is_known_property("code-mark"));
 }
 
@@ -1649,6 +1649,120 @@ void test_code_find() {
     CHECK(grove::code_match_before(m, grove::CodePos{ 1, 0 }) == 1);
 }
 
+void test_more_languages() {
+    using grove::CodeTokenKind;
+    using grove::CodeLanguage;
+    auto kinds = [](CodeLanguage lang, const std::vector<std::string>& lines) {
+        grove::CodeLineState st;
+        std::vector<std::vector<std::pair<std::string, CodeTokenKind>>> out;
+        for (const std::string& l : lines) {
+            std::vector<std::pair<std::string, CodeTokenKind>> row;
+            for (const grove::CodeToken& t : grove::highlight_code_line(lang, l, st)) row.emplace_back(l.substr(t.begin, t.end - t.begin), t.kind);
+            out.push_back(row);
+        }
+        return out;
+    };
+    auto has = [](const std::vector<std::pair<std::string, CodeTokenKind>>& row, const std::string& text, CodeTokenKind kind) {
+        for (const auto& [t, k] : row) {
+            if (t == text && k == kind) return true;
+        }
+        return false;
+    };
+    CHECK(grove::code_language_for_path("src/main.rs") == CodeLanguage::Rust && grove::code_language_for_path("a.zig") == CodeLanguage::Zig &&
+          grove::code_language_for_path("x.py") == CodeLanguage::Python && grove::code_language_for_path("x.lua") == CodeLanguage::Lua &&
+          grove::code_language_for_path("Main.java") == CodeLanguage::Java && grove::code_language_for_path("P.cs") == CodeLanguage::CSharp &&
+          grove::code_language_for_path("boot.asm") == CodeLanguage::Assembly && grove::code_language_for_path("start.S") == CodeLanguage::Assembly);
+    auto rs = kinds(CodeLanguage::Rust, { "fn main<'a>(x: &'a str) -> Vec<u8> { println!(\"{}\", x); }", "#[derive(Debug)] /* a /* b */", "still */ let s = r#\"raw \"q\"", "end\"#; 'c'" });
+    CHECK(has(rs[0], "fn", CodeTokenKind::Keyword) && has(rs[0], "'a", CodeTokenKind::Attribute) && has(rs[0], "println!", CodeTokenKind::Preprocessor) &&
+          has(rs[0], "Vec", CodeTokenKind::BuiltinType) && has(rs[0], "u8", CodeTokenKind::BuiltinType));
+    CHECK(has(rs[1], "#[derive(Debug)]", CodeTokenKind::Attribute) && has(rs[2], "still */", CodeTokenKind::Comment) && has(rs[2], "let", CodeTokenKind::Keyword));
+    CHECK(has(rs[3], "end\"#", CodeTokenKind::String) && has(rs[3], "'c'", CodeTokenKind::String));
+    auto zig = kinds(CodeLanguage::Zig, { "const std = @import(\"std\");", "    \\\\ multi line", "pub fn main() !void { try x; }" });
+    CHECK(has(zig[0], "@import", CodeTokenKind::Function) && has(zig[0], "const", CodeTokenKind::Keyword) && has(zig[1], "\\\\ multi line", CodeTokenKind::String));
+    CHECK(has(zig[2], "void", CodeTokenKind::BuiltinType) && has(zig[2], "try", CodeTokenKind::ControlKeyword));
+    auto py = kinds(CodeLanguage::Python, { "@dataclass", "def area(self, r=2):  # note", "    s = f'{r}' + \"\"\"doc", "more\"\"\"; return None" });
+    CHECK(has(py[0], "@dataclass", CodeTokenKind::Attribute) && has(py[1], "area", CodeTokenKind::Function) && has(py[1], "self", CodeTokenKind::ThisKeyword) &&
+          has(py[1], "# note", CodeTokenKind::Comment));
+    CHECK(has(py[3], "more\"\"\"", CodeTokenKind::String) && has(py[3], "return", CodeTokenKind::ControlKeyword) && has(py[3], "None", CodeTokenKind::Constant));
+    auto lua = kinds(CodeLanguage::Lua, { "local function f(t) --[[ long", "comment ]] return t:len() end", "print([==[raw]==])" });
+    CHECK(has(lua[0], "local", CodeTokenKind::Keyword) && has(lua[0], "f", CodeTokenKind::Function) && has(lua[1], "comment ]]", CodeTokenKind::Comment) &&
+          has(lua[1], "end", CodeTokenKind::ControlKeyword) && has(lua[1], "len", CodeTokenKind::Function));
+    CHECK(has(lua[2], "[==[raw]==]", CodeTokenKind::String) && has(lua[2], "print", CodeTokenKind::BuiltinType));
+    auto java = kinds(CodeLanguage::Java, { "@Override public static void main(String[] args) { System.out.println('c'); }" });
+    CHECK(has(java[0], "@Override", CodeTokenKind::Attribute) && has(java[0], "public", CodeTokenKind::Keyword) && has(java[0], "println", CodeTokenKind::Function) &&
+          has(java[0], "String", CodeTokenKind::BuiltinType));
+    auto cs = kinds(CodeLanguage::CSharp, { "#region Setup", "var p = @\"C:\\dir\"; string s = $\"{p}\"; foreach (var x in xs) {}" });
+    CHECK(has(cs[0], "#region Setup", CodeTokenKind::Preprocessor) && has(cs[1], "@\"C:\\dir\"", CodeTokenKind::String) && has(cs[1], "foreach", CodeTokenKind::ControlKeyword));
+    auto as = kinds(CodeLanguage::Assembly, { "section .text", "global _start", "_start: mov rax, 60 ; exit", "msg db \"hi\", 10", "    movq %rsp, %rbp  # gas", "    jmp .L2" });
+    CHECK(has(as[0], "section", CodeTokenKind::Preprocessor) && has(as[1], "global", CodeTokenKind::Preprocessor) && has(as[2], "_start:", CodeTokenKind::Function));
+    CHECK(has(as[2], "mov", CodeTokenKind::Keyword) && has(as[2], "rax", CodeTokenKind::Variable) && has(as[2], "60", CodeTokenKind::Number) && has(as[2], "; exit", CodeTokenKind::Comment));
+    CHECK(has(as[3], "msg", CodeTokenKind::Function) && has(as[3], "db", CodeTokenKind::Preprocessor));
+    CHECK(has(as[4], "%rsp", CodeTokenKind::Variable) && has(as[4], "# gas", CodeTokenKind::Comment) && has(as[5], "jmp", CodeTokenKind::ControlKeyword));
+    CHECK(grove::code_line_comment(CodeLanguage::Python, "") == "#" && grove::code_line_comment(CodeLanguage::Lua, "") == "--" &&
+          grove::code_line_comment(CodeLanguage::Assembly, ".globl main\nmain:\n movq %rsp, %rbp\n") == "#" && grove::code_line_comment(CodeLanguage::Assembly, "section .text\n") == ";");
+
+    grove::CodeBuffer buf;
+    buf.set_text("a = 1\n    b = 2\n");
+    buf.set_caret(grove::CodePos{ 0, 0 });
+    buf.set_caret(grove::CodePos{ 1, 3 }, true);
+    buf.toggle_comment("#");
+    CHECK(buf.text() == "# a = 1\n#     b = 2\n");
+    buf.toggle_comment("#");
+    CHECK(buf.text() == "a = 1\n    b = 2\n");
+    buf.set_text("def f(x):");
+    buf.set_caret(grove::CodePos{ 0, 9 });
+    buf.new_line(4, true, CodeLanguage::Python, true);
+    CHECK(buf.text() == "def f(x):\n    ");
+    buf.insert("return x");
+    buf.new_line(4, true, CodeLanguage::Python, true);
+    CHECK(buf.text() == "def f(x):\n    return x\n");
+    buf.set_text("if x then");
+    buf.set_caret(grove::CodePos{ 0, 9 });
+    buf.new_line(2, true, CodeLanguage::Lua, true);
+    CHECK(buf.text() == "if x then\n  \nend");
+}
+
+void test_web_highlighting() {
+    using grove::CodeTokenKind;
+    using grove::CodeLanguage;
+    auto kinds = [](CodeLanguage lang, const std::vector<std::string>& lines) {
+        grove::CodeLineState st;
+        std::vector<std::vector<std::pair<std::string, CodeTokenKind>>> out;
+        for (const std::string& l : lines) {
+            std::vector<std::pair<std::string, CodeTokenKind>> row;
+            for (const grove::CodeToken& t : grove::highlight_code_line(lang, l, st)) row.emplace_back(l.substr(t.begin, t.end - t.begin), t.kind);
+            out.push_back(row);
+        }
+        return out;
+    };
+    auto has = [](const std::vector<std::pair<std::string, CodeTokenKind>>& row, const std::string& text, CodeTokenKind kind) {
+        for (const auto& [t, k] : row) {
+            if (t == text && k == kind) return true;
+        }
+        return false;
+    };
+    CHECK(grove::code_language_for_path("site/index.html") == CodeLanguage::Html);
+    CHECK(grove::code_language_for_path("a.css") == CodeLanguage::Css);
+    CHECK(grove::code_language_for_path("app.mjs") == CodeLanguage::JavaScript);
+    CHECK(grove::code_language_for_path("package.json") == CodeLanguage::Json);
+    auto js = kinds(CodeLanguage::JavaScript, { "const x = this.count + 1; // c", "if (a) return /ab+c/gi.test(s);", "let t = `a ${b} c", "d`; doc.get(1)" });
+    CHECK(has(js[0], "const", CodeTokenKind::Keyword) && has(js[0], "this", CodeTokenKind::ThisKeyword) && has(js[0], "count", CodeTokenKind::Property) && has(js[0], "// c", CodeTokenKind::Comment));
+    CHECK(has(js[1], "if", CodeTokenKind::ControlKeyword) && has(js[1], "/ab+c/gi", CodeTokenKind::String) && has(js[1], "test", CodeTokenKind::Function));
+    CHECK(has(js[2], "b", CodeTokenKind::Plain) && has(js[2], "${", CodeTokenKind::Operator));
+    CHECK(has(js[3], "d`", CodeTokenKind::String) && has(js[3], "get", CodeTokenKind::Function));
+    auto html = kinds(CodeLanguage::Html, { "<div class=\"a\">&amp;", "<script>", "let x = 2; </script><p>", "<style>p { color: red; }</style>" });
+    CHECK(has(html[0], "div", CodeTokenKind::Tag) && has(html[0], "class", CodeTokenKind::Attribute) && has(html[0], "&amp;", CodeTokenKind::Constant));
+    CHECK(has(html[2], "let", CodeTokenKind::Keyword) && has(html[2], "2", CodeTokenKind::Number) && has(html[2], "p", CodeTokenKind::Tag));
+    CHECK(has(html[3], "color", CodeTokenKind::Property) && has(html[3], "style", CodeTokenKind::Tag));
+    auto css = kinds(CodeLanguage::Css, { ".card > a:hover, #top {", "  color: #ff0000 !important;", "  margin: 4px calc(1em + 2px);", "}", "@media (max-width: 600px) {", "  p { --gap: 3px; }", "}" });
+    CHECK(has(css[0], ".card", CodeTokenKind::Attribute) && has(css[0], "a", CodeTokenKind::Tag) && has(css[0], ":hover", CodeTokenKind::Keyword) && has(css[0], "#top", CodeTokenKind::Attribute));
+    CHECK(has(css[1], "color", CodeTokenKind::Property) && has(css[1], "#ff0000", CodeTokenKind::Constant) && has(css[1], "!important", CodeTokenKind::ControlKeyword));
+    CHECK(has(css[2], "margin", CodeTokenKind::Property) && has(css[2], "4px", CodeTokenKind::Number) && has(css[2], "calc", CodeTokenKind::Function));
+    CHECK(has(css[4], "@media", CodeTokenKind::ControlKeyword) && has(css[5], "p", CodeTokenKind::Tag) && has(css[5], "--gap", CodeTokenKind::Variable));
+    auto json = kinds(CodeLanguage::Json, { "{ \"name\": \"x\", \"n\": 2, \"ok\": true }" });
+    CHECK(has(json[0], "\"name\"", CodeTokenKind::Property) && has(json[0], "\"x\"", CodeTokenKind::String) && has(json[0], "true", CodeTokenKind::Constant));
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1704,6 +1818,8 @@ int main() {
     test_terminal_input_encoding();
     test_terminal_selection_and_resize();
     test_code_find();
+    test_web_highlighting();
+    test_more_languages();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }
