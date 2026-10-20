@@ -167,6 +167,9 @@ void push_quoted(std::vector<CodeToken>& out, std::string_view line, std::size_t
         const char n = line[i + 1];
         if (n == 'x') {
             while (e < end && std::isxdigit(static_cast<unsigned char>(line[e]))) ++e;
+        } else if ((n == 'u' || n == 's') && e < end && line[e] == '{') {
+            const std::size_t close = line.find('}', e);
+            e = close == std::string_view::npos || close >= end ? end : close + 1;
         } else if (n == 'u') {
             e = i + 6;
         } else if (n == 'U') {

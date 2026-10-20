@@ -5219,6 +5219,15 @@ private:
             if (scrolls) {
                 max_scroll = std::max(0.0f, natural_bottom - bottom);
                 float& s = m_elem_scroll[&element];
+                if (style.text_view("scroll-anchor") == "bottom") {
+                    const auto known = m_elem_scroll_end.find(&element);
+                    const bool pinned = known == m_elem_scroll_end.end() || s >= known->second - 2.0f;
+                    m_elem_scroll_end[&element] = max_scroll;
+                    if (pinned && s != max_scroll) {
+                        s = max_scroll;
+                        poke();
+                    }
+                }
                 s = std::clamp(s, 0.0f, max_scroll);
                 if (max_scroll > 0.0f) {
                     const float track = bottom - top;
@@ -6161,6 +6170,8 @@ private:
             Event input;
             input.type = "input";
             input.text = text;
+            input.edit_text = m_edit;
+            input.has_edit_text = true;
             dispatch(m_focus, input);
         }
     }
@@ -6324,6 +6335,8 @@ private:
                     m_invalid = false;
                     Event input;
                     input.type = "input";
+                    input.edit_text = m_edit;
+                    input.has_edit_text = true;
                     dispatch(m_focus, input);
                 }
                 break;
@@ -7335,6 +7348,7 @@ private:
     BarDrag m_bar_hot;
     std::unordered_map<const Node*, float> m_elem_scroll;
     std::unordered_map<const Node*, float> m_elem_scroll_x;
+    std::unordered_map<const Node*, float> m_elem_scroll_end;
     std::vector<const Node*> m_code_laid;
     int m_wide = 0;
     std::unordered_map<const Node*, CodeEditor> m_code;

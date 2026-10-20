@@ -81,6 +81,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "padding",
         "position",
         "right",
+        "scroll-anchor",
         "selection-color",
         "size",
         "tab-size",

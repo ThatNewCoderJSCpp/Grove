@@ -520,7 +520,7 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `key_down`, `key_up` | a key is pressed or released; `key` is a name like `A`, `Enter`, `Delete`, `F2` or `UpArrow`, never a control character. While an `input_string` is being typed in, its value is the text typed so far during `key_down`, and a handler that sets the value replaces what's in the field | `key`, `shift()`, `ctrl()`, `alt()`, `meta()` |
 | `text` | text is typed | `text` |
 | `focus`, `blur` | an element gains or loses focus (doesn't bubble) | |
-| `input` | an input's value changes while editing | |
+| `input` | an input's value changes while editing. A typed field's value stays the last committed one until Enter or leaving it, so in C++ `edit_text` holds the text typed so far (with `has_edit_text` set) for handlers that react as you type, like a search box | `edit_text`, `has_edit_text` |
 | `change` | an input's value is committed (Enter, a click, leaving the field, picking a file) | |
 | `cursor` | the caret of an `input_code` moves | `x()` is the line, `y()` the column, both from 1 |
 | `hover` | the mouse rests on a character of an `input_code` | `x()` is the line, `y()` the column; answer by setting its `hover` attribute |

@@ -31,6 +31,8 @@ struct Event {
     int button = 0;
     std::string key;
     std::string text;
+    std::string edit_text;
+    bool has_edit_text = false;
     unsigned modifiers = 0;
     bool bubbles = true;
     bool propagation_stopped = false;
