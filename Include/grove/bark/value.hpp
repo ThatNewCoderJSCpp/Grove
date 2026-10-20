@@ -4,6 +4,7 @@
 #include "../common/diagnostics.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -75,6 +76,8 @@ std::optional<double> as_length(const ValueList& values, double font_size, const
 std::optional<double> as_length(const Value& value, double font_size, const Viewport& viewport) noexcept;
 std::optional<double> evaluate_length(const Value& value, double font_size, const Viewport& viewport, std::optional<double> percent_base) noexcept;
 bool is_math_function(const Value& value) noexcept;
+bool uses_var(const ValueList& values) noexcept;
+bool substitute_vars(ValueList& values, const std::function<const ValueList*(const std::string&)>& lookup, int depth = 0);
 std::optional<std::string> as_text(const ValueList& values);
 
 } // namespace bark

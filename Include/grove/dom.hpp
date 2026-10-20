@@ -127,6 +127,16 @@ public:
     void set_style(const std::string& property, const std::string& value) { grove_set_style(doc(), m_element, property.c_str(), value.c_str()); }
     void remove_style(const std::string& property) { grove_set_style(doc(), m_element, property.c_str(), ""); }
     std::string computed_style(const std::string& property) const { return detail::str(grove_computed_style(doc(), m_element, property.c_str())); }
+    bool has_computed_style(const std::string& property) const { return grove_has_computed_style(doc(), m_element, property.c_str()); }
+    double computed_number(const std::string& property, double fallback = 0.0) const { return grove_computed_number(doc(), m_element, property.c_str(), fallback); }
+    double computed_number_at(const std::string& property, std::int64_t index, double fallback = 0.0) const { return index < 0 ? fallback : grove_computed_number_at(doc(), m_element, property.c_str(), static_cast<size_t>(index), fallback); }
+    std::string computed_color(const std::string& property) const { return detail::str(grove_computed_color(doc(), m_element, property.c_str())); }
+    bool computed_bool(const std::string& property, bool fallback = false) const {
+        const std::string v = computed_style(property);
+        if (v == "true" || v == "yes" || v == "on" || v == "1") return true;
+        if (v == "false" || v == "no" || v == "off" || v == "0") return false;
+        return fallback;
+    }
 
     Element parent() const { return Element(grove_parent(m_element)); }
     std::int64_t child_count() const { return static_cast<std::int64_t>(grove_child_count(m_element)); }

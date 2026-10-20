@@ -116,7 +116,7 @@ private:
             || ((c == '-' || c == '+') && (Cursor::is_digit(m_cursor.peek(1)) || (m_cursor.peek(1) == '.' && Cursor::is_digit(m_cursor.peek(2)))));
         if (number_start) return lex_number(start);
 
-        if (is_ident_start(c) || (c == '-' && is_ident_start(m_cursor.peek(1)))) {
+        if (is_ident_start(c) || (c == '-' && is_ident_start(m_cursor.peek(1))) || (c == '-' && m_cursor.peek(1) == '-' && is_ident_start(m_cursor.peek(2)))) {
             std::string id = read_ident();
             return make(Tok::Ident, start, std::move(id));
         }
@@ -486,7 +486,7 @@ private:
         const Token name = advance();
         d.property = name.text;
         d.span = name.span;
-        if (is_known_property(name.text)) {
+        if (is_known_property(name.text) || is_custom_property(name.text)) {
             mark(MarkKind::Property, name.span);
         } else {
             mark(MarkKind::UnknownProperty, name.span);
@@ -605,6 +605,7 @@ private:
             v.args.erase(std::remove_if(v.args.begin(), v.args.end(), [](const Value& a) { return a.is_ident("/"); }), v.args.end());
         }
         if (is_math_name(v.text)) {
+            if (uses_var(v.args)) return true;
             if (!evaluate_length(v, 16.0, Viewport{ 1000.0, 1000.0 }, 100.0)) {
                 m_diag.error(m_file, v.span, v.text + "() can't be worked out; it takes lengths like 100%, 16px, 2em or 10vw joined with + - * / (and commas for min, max and clamp)");
                 return false;

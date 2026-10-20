@@ -112,6 +112,10 @@ GROVE_API bool grove_toggle_class(grove_document* document, grove_element* eleme
 GROVE_API const char* grove_get_style(const grove_element* element, const char* property);
 GROVE_API void grove_set_style(grove_document* document, grove_element* element, const char* property, const char* value);
 GROVE_API const char* grove_computed_style(grove_document* document, grove_element* element, const char* property);
+GROVE_API bool grove_has_computed_style(grove_document* document, grove_element* element, const char* property);
+GROVE_API double grove_computed_number(grove_document* document, grove_element* element, const char* property, double fallback);
+GROVE_API double grove_computed_number_at(grove_document* document, grove_element* element, const char* property, size_t index, double fallback);
+GROVE_API const char* grove_computed_color(grove_document* document, grove_element* element, const char* property);
 GROVE_API bool grove_focus(grove_document* document, grove_element* element);
 GROVE_API bool grove_has_state(const grove_element* element, const char* state);
 GROVE_API uint64_t grove_add_event_listener(grove_document* document, grove_element* element, const char* type, grove_listener_fn fn, void* user_data, grove_release_fn release);

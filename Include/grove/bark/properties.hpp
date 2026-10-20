@@ -8,6 +8,7 @@ namespace grove {
 namespace bark {
 
 bool is_known_property(std::string_view name) noexcept;
+bool is_custom_property(std::string_view name) noexcept;
 const std::vector<std::string_view>& known_properties() noexcept;
 
 } // namespace bark

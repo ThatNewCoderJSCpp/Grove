@@ -42,6 +42,28 @@ Comments are `// line` and `/* block */`.
 
 `$name = value;` defines a variable (`$name: value;` works too). Variables can hold several values (`$pad = 8px 16px;`), are visible to every later rule and later stylesheet, and work inside `style="..."` attributes. An unknown variable is an error.
 
+## Custom properties
+
+A property whose name starts with `--` is yours: Grove keeps it, doesn't warn about it, and lets children inherit it, the same as CSS custom properties. Unlike a `$variable`, its value can differ from element to element, follow `:hover` and classes, and be read by scripts.
+
+```bark
+body {
+    --accent: #89b4fa;
+    --gap: 6px;
+}
+
+.card {
+    --glow: 4px;
+    padding: var(--gap);
+    border-color: var(--accent, white);
+    margin: calc(var(--gap) * 2);
+}
+```
+
+- `var(--name)` puts the value in place, from this element or the nearest parent that sets it. `var(--name, fallback)` uses the fallback when nothing does. It works on its own, inside other values and functions, and inside `calc()`, `min()`, `max()` and `clamp()`.
+- Scripts read any property, custom or not, with `computed_style("--glow")` (the text), `computed_number("--glow")` (a number, with lengths in pixels: `2em` comes back as 32), `computed_color("--accent")` (`#rrggbbaa`), `computed_bool("--spin")` (`true`, `yes`, `on` or `1`) and `has_computed_style`. See [Scripts](grove.md#the-document-like-javascript).
+- A property without `--` that Grove doesn't know is still kept for scripts to read, but `grove check` warns about it in case it's a typo, and it isn't inherited.
+
 ## Selectors
 
 | Selector | Matches |

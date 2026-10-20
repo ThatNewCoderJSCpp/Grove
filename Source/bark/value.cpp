@@ -277,5 +277,37 @@ std::string to_string(const ValueList& values) {
     return s;
 }
 
+bool uses_var(const ValueList& values) noexcept {
+    for (const Value& v : values) {
+        if (v.kind != ValueKind::Function) continue;
+        if (v.text == "var" || uses_var(v.args)) return true;
+    }
+    return false;
+}
+
+bool substitute_vars(ValueList& values, const std::function<const ValueList*(const std::string&)>& lookup, int depth) {
+    if (depth > 8) return false;
+    bool all = true;
+    ValueList out;
+    out.reserve(values.size());
+    for (Value& v : values) {
+        if (v.kind == ValueKind::Function && v.text == "var") {
+            const std::string name = v.args.empty() ? std::string() : v.args.front().text;
+            const ValueList* found = name.empty() ? nullptr : lookup(name);
+            ValueList replacement;
+            if (found) replacement = *found;
+            else if (v.args.size() > 1) replacement.assign(v.args.begin() + 1, v.args.end());
+            else all = false;
+            if (uses_var(replacement) && !substitute_vars(replacement, lookup, depth + 1)) all = false;
+            out.insert(out.end(), replacement.begin(), replacement.end());
+            continue;
+        }
+        if (v.kind == ValueKind::Function && uses_var(v.args) && !substitute_vars(v.args, lookup, depth + 1)) all = false;
+        out.push_back(std::move(v));
+    }
+    values = std::move(out);
+    return all;
+}
+
 } // namespace bark
 } // namespace grove

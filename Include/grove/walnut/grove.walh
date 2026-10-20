@@ -19,6 +19,11 @@ extern "C++" from "<grove/dom.hpp>" {
         function set_style(const string&: property, const string&: value) -> void;
         function remove_style(const string&: property) -> void;
         function computed_style(const string&: property) const -> string;
+        function has_computed_style(const string&: property) const -> bool;
+        function computed_number(const string&: property, short float: fallback) const -> short float;
+        function computed_number_at(const string&: property, long int: index, short float: fallback) const -> short float;
+        function computed_color(const string&: property) const -> string;
+        function computed_bool(const string&: property, bool: fallback) const -> bool;
         function parent() const -> NativeElement;
         function child_count() const -> long int;
         function child(long int: index) const -> NativeElement;
@@ -225,6 +230,34 @@ public:
     function computed_style(const string&: property) const -> string {
         return raw.computed_style(property);
     } end function computed_style
+
+    function has_computed_style(const string&: property) const -> bool {
+        return raw.has_computed_style(property);
+    } end function has_computed_style
+
+    function computed_number(const string&: property) const -> short float {
+        return raw.computed_number(property, 0.0);
+    } end function computed_number
+
+    function computed_number(const string&: property, short float: fallback) const -> short float {
+        return raw.computed_number(property, fallback);
+    } end function computed_number
+
+    function computed_number_at(const string&: property, long int: index, short float: fallback) const -> short float {
+        return raw.computed_number_at(property, index, fallback);
+    } end function computed_number_at
+
+    function computed_color(const string&: property) const -> string {
+        return raw.computed_color(property);
+    } end function computed_color
+
+    function computed_bool(const string&: property) const -> bool {
+        return raw.computed_bool(property, false);
+    } end function computed_bool
+
+    function computed_bool(const string&: property, bool: fallback) const -> bool {
+        return raw.computed_bool(property, fallback);
+    } end function computed_bool
 
     function parent() const -> Element {
         Element: out;

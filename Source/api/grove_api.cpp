@@ -7,6 +7,7 @@
 #include "grove/native.hpp"
 #include "grove/pages.hpp"
 
+#include <cstdlib>
 #include <array>
 #include <cstring>
 #include <iostream>
@@ -404,6 +405,36 @@ const char* grove_computed_style(grove_document* document, grove_element* elemen
     const grove::DocumentHost& host = doc_of(document)->host();
     if (!host.computed_style) return grove_get_style(element, property);
     return keep(host.computed_style(*node_of(element), property));
+}
+
+bool grove_has_computed_style(grove_document* document, grove_element* element, const char* property) {
+    const char* text = grove_computed_style(document, element, property);
+    return text && *text;
+}
+
+double grove_computed_number_at(grove_document* document, grove_element* element, const char* property, size_t index, double fallback) {
+    if (!document || !element || !property) return fallback;
+    const grove::DocumentHost& host = doc_of(document)->host();
+    double out = fallback;
+    if (host.computed_number && host.computed_number(*node_of(element), property, index, out)) return out;
+    if (index == 0) {
+        const char* text = grove_get_style(element, property);
+        char* end = nullptr;
+        const double v = text ? std::strtod(text, &end) : 0.0;
+        if (text && end != text) return v;
+    }
+    return fallback;
+}
+
+double grove_computed_number(grove_document* document, grove_element* element, const char* property, double fallback) {
+    return grove_computed_number_at(document, element, property, 0, fallback);
+}
+
+const char* grove_computed_color(grove_document* document, grove_element* element, const char* property) {
+    if (!document || !element || !property) return "";
+    const grove::DocumentHost& host = doc_of(document)->host();
+    if (!host.computed_color) return "";
+    return keep(host.computed_color(*node_of(element), property));
 }
 
 bool grove_focus(grove_document* document, grove_element* element) {

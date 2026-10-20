@@ -95,6 +95,10 @@ const std::vector<std::string_view>& known_properties() noexcept {
     return names;
 }
 
+bool is_custom_property(std::string_view name) noexcept {
+    return name.size() > 2 && name[0] == '-' && name[1] == '-';
+}
+
 bool is_known_property(std::string_view name) noexcept {
     const auto& names = known_properties();
     return std::find(names.begin(), names.end(), name) != names.end();

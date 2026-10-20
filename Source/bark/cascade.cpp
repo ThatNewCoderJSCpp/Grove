@@ -1,6 +1,7 @@
 #include "grove/bark/cascade.hpp"
 #include "grove/pages.hpp"
 #include "grove/bark/parser.hpp"
+#include "grove/bark/properties.hpp"
 
 #include <cctype>
 #include <string_view>
@@ -375,7 +376,7 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
     out.set_viewport(m_viewport);
     if (parent) {
         for (const auto& [name, values] : parent->values()) {
-            if (is_inherited_property(name)) out.set(name, values);
+            if (is_inherited_property(name) || is_custom_property(name)) out.set(name, values);
         }
     }
     if (!node.is_element()) return out;
@@ -443,6 +444,7 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
 
     std::stable_sort(candidates.begin(), candidates.end(), weaker);
     bool declared_text_align = false;
+    bool has_vars = false;
     for (const Candidate& c : candidates) {
         const Declaration& d = *c.declaration;
         if (d.property == "text-align") declared_text_align = true;
@@ -452,6 +454,21 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
             continue;
         }
         out.set(d.property, d.values);
+        if (!has_vars && uses_var(d.values)) has_vars = true;
+    }
+    if (has_vars) {
+        auto lookup = [&out](const std::string& name) { return out.get(name); };
+        for (int pass = 0; pass < 2; ++pass) {
+            std::vector<std::pair<std::string, ValueList>> resolved;
+            for (const auto& [name, values] : out.values()) {
+                if (!uses_var(values)) continue;
+                if (pass == 0 && !is_custom_property(name)) continue;
+                ValueList copy = values;
+                substitute_vars(copy, lookup);
+                resolved.emplace_back(name, std::move(copy));
+            }
+            for (auto& [name, values] : resolved) out.set(name, std::move(values));
+        }
     }
 
     if (const ValueList* ta = out.get("text-align"); ta && ta->size() == 1 && ta->front().is_ident()) {

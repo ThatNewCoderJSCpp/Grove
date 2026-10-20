@@ -147,13 +147,37 @@ struct MenuItem {
     bool separator = false;
 };
 
+struct WindowInfo {
+    double width = 0.0;
+    double height = 0.0;
+    int x = 0;
+    int y = 0;
+    std::string monitor;
+    double monitor_width = 0.0;
+    double monitor_height = 0.0;
+    double refresh_rate = 0.0;
+    double dpi_scale = 1.0;
+    double frame_ms = 0.0;
+    double layout_ms = 0.0;
+    double draw_ms = 0.0;
+    double present_ms = 0.0;
+    double frames_per_second = 0.0;
+    std::uint64_t frames = 0;
+    std::size_t draw_ops = 0;
+    std::string renderer;
+};
+
 struct DocumentHost {
     std::function<std::string(const Node&, const std::string&)> computed_style;
+    std::function<bool(const Node&, const std::string&, std::size_t, double&)> computed_number;
+    std::function<std::string(const Node&, const std::string&)> computed_color;
     std::function<bool(Node*)> focus;
     double viewport_width = 0.0;
     double viewport_height = 0.0;
     Node* main_window = nullptr;
     std::function<bool(const Node&, double&, double&)> window_size;
+    std::function<bool(const Node&, WindowInfo&)> window_info;
+    std::function<void*(const Node&, std::string_view)> native_window;
     std::function<bool(Node&, double, double)> resize_window;
     std::function<bool(Node&, double, double)> move_window;
     std::function<bool(Node&)> focus_window;

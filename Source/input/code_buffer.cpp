@@ -681,10 +681,13 @@ void CodeBuffer::backspace_to_tab_stop(std::size_t tab_size) {
         return;
     }
     const std::size_t display = code_display_column(l, m_caret.column, tab_size);
-    const std::size_t step = display % tab_size == 0 ? tab_size : display % tab_size;
+    if (display % tab_size != 0) {
+        backspace(false);
+        return;
+    }
     std::size_t start = m_caret.column;
-    while (start > 0 && m_caret.column - start < step && l[start - 1] == ' ') --start;
-    if (m_caret.column - start <= 1) {
+    while (start > 0 && m_caret.column - start < tab_size && l[start - 1] == ' ') --start;
+    if (m_caret.column - start < tab_size) {
         backspace(false);
         return;
     }
@@ -768,7 +771,9 @@ void CodeBuffer::outdent(std::size_t tab_size) {
     for (std::size_t l = a.line; l <= last; ++l) {
         const std::string& s = m_lines[l];
         std::size_t n = 0;
-        if (!s.empty() && s[0] == '\t') n = 1;
+        const bool after_text = a == b && l == a.line && a.column > leading_whitespace(s) && a.column <= s.size() && (s[a.column - 1] == ' ' || s[a.column - 1] == '\t');
+        if (after_text) n = 0;
+        else if (!s.empty() && s[0] == '\t') n = 1;
         else while (n < tab_size && n < s.size() && s[n] == ' ') ++n;
         if (n == 0) {
             const std::size_t at = l == a.line ? a.column : code_byte_column(s, anchor_display, tab_size);

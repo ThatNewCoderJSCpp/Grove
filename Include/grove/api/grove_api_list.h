@@ -67,6 +67,10 @@
     X(const char*, grove_get_style, (const grove_element* element, const char* property), (element, property)) \
     X(void, grove_set_style, (grove_document* document, grove_element* element, const char* property, const char* value), (document, element, property, value)) \
     X(const char*, grove_computed_style, (grove_document* document, grove_element* element, const char* property), (document, element, property)) \
+    X(bool, grove_has_computed_style, (grove_document* document, grove_element* element, const char* property), (document, element, property)) \
+    X(double, grove_computed_number, (grove_document* document, grove_element* element, const char* property, double fallback), (document, element, property, fallback)) \
+    X(double, grove_computed_number_at, (grove_document* document, grove_element* element, const char* property, size_t index, double fallback), (document, element, property, index, fallback)) \
+    X(const char*, grove_computed_color, (grove_document* document, grove_element* element, const char* property), (document, element, property)) \
     X(bool, grove_focus, (grove_document* document, grove_element* element), (document, element)) \
     X(bool, grove_has_state, (const grove_element* element, const char* state), (element, state)) \
     X(uint64_t, grove_add_event_listener, (grove_document* document, grove_element* element, const char* type, grove_listener_fn fn, void* user_data, grove_release_fn release), (document, element, type, fn, user_data, release)) \

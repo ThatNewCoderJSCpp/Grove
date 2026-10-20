@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <cmath>
 #include <functional>
 #include <future>
@@ -795,6 +796,9 @@ public:
 
     const Node& root() const noexcept { return m_window; }
     float content_height() const noexcept { return m_content_height; }
+    double last_layout_ms() const noexcept { return m_last_layout_ms; }
+    double last_draw_ms() const noexcept { return m_last_draw_ms; }
+    std::size_t last_ops() const noexcept { return m_last_ops; }
 
     void apply_autofocus() {
         const Node* found = nullptr;
@@ -986,6 +990,12 @@ public:
         }
         r.reset_clip_rect();
         report_cursors();
+        {
+            const auto finished = std::chrono::steady_clock::now();
+            m_last_layout_ms = FrameStatsLog::ms(now, laid);
+            m_last_draw_ms = FrameStatsLog::ms(laid, finished);
+            m_last_ops = m_ops.size();
+        }
         if (stats.enabled) {
             const auto done = std::chrono::steady_clock::now();
             stats.layout_ms += FrameStatsLog::ms(now, laid);
@@ -1176,6 +1186,38 @@ public:
     std::string computed(const Node& node, const std::string& property) {
         const bark::ValueList* v = style_of(node).get(property);
         return v ? bark::to_string(*v) : std::string();
+    }
+
+    bool computed_number(const Node& node, const std::string& property, std::size_t index, double& out) {
+        const bark::ComputedStyle& style = style_of(node);
+        const bark::ValueList* v = style.get(property);
+        if (!v || index >= v->size()) return false;
+        const bark::Value& value = (*v)[index];
+        if (value.is_number() && value.unit.empty()) {
+            out = value.number;
+            return true;
+        }
+        if (const auto px = resolve_length(style, property, m_view_w, index)) {
+            out = *px;
+            return true;
+        }
+        if (value.is_ident("true") || value.is_ident("yes") || value.is_ident("on")) {
+            out = 1.0;
+            return true;
+        }
+        if (value.is_ident("false") || value.is_ident("no") || value.is_ident("off")) {
+            out = 0.0;
+            return true;
+        }
+        return false;
+    }
+
+    std::string computed_color(const Node& node, const std::string& property) {
+        const auto c = style_of(node).color(property);
+        if (!c) return {};
+        char buf[16];
+        std::snprintf(buf, sizeof buf, "#%02x%02x%02x%02x", c->r, c->g, c->b, c->a);
+        return buf;
     }
 
 private:
@@ -3951,6 +3993,14 @@ private:
         return { "W", Color(140, 146, 160, 255) };
     }
 
+    static std::string kind_name(const std::string& kind) {
+        if (kind.empty() || kind == "word") return "word";
+        if (kind == "macro-function") return "macro";
+        if (kind == "local") return "variable";
+        if (kind == "member") return "field";
+        return kind;
+    }
+
     void completion_from_attribute() {
         CodeCompletion& c = m_complete;
         const Node* node = c.open ? c.node : c.waiting;
@@ -4049,16 +4099,22 @@ private:
         if (c.top + c.visible > c.shown.size()) c.top = c.shown.size() - c.visible;
         if (c.active < c.top) c.top = c.active;
         if (c.active >= c.top + c.visible) c.top = c.active + 1 - c.visible;
+        const bool show_icons = c.node->attribute_or("complete-icons", "true") != "false";
+        const bool show_kinds = c.node->attribute_or("complete-kinds", "false") != "false";
         float widest_label = 0.0f;
         float widest_detail = 0.0f;
+        float widest_kind = 0.0f;
         for (std::size_t i = 0; i < c.shown.size() && i < 200; ++i) {
             const CompletionItem& it = c.items[c.shown[i].index];
             widest_label = std::max(widest_label, text_width(r, it.label, mono));
-            if (!it.detail.empty()) widest_detail = std::max(widest_detail, std::min(260.0f, text_width(r, it.detail, muted)));
+            const std::string kind = show_kinds ? kind_name(it.kind) : std::string();
+            if (show_kinds) widest_kind = std::max(widest_kind, text_width(r, kind, muted));
+            if (!it.detail.empty() && it.detail != kind) widest_detail = std::max(widest_detail, std::min(260.0f, text_width(r, it.detail, muted)));
         }
-        const float badge = c.row_h - 6.0f;
+        const float kind_room = widest_kind > 0.0f ? widest_kind + 16.0f : 0.0f;
+        const float badge = show_icons ? c.row_h - 6.0f : 0.0f;
         const float max_w = static_cast<float>(std::max<std::int64_t>(240, parse_integer(c.node->attribute_or("complete-width", "")).value_or(560)));
-        const float panel_w = std::min(std::max(220.0f, 8.0f + badge + 8.0f + widest_label + (widest_detail > 0 ? 24.0f + widest_detail : 0.0f) + 14.0f), std::min(max_w, view_w - 8.0f));
+        const float panel_w = std::min(std::max(220.0f, 8.0f + badge + 8.0f + widest_label + kind_room + (widest_detail > 0 ? 24.0f + widest_detail : 0.0f) + 14.0f), std::min(max_w, view_w - 8.0f));
         const CompletionItem& active = c.items[c.shown[c.active].index];
         std::vector<std::string> doc_lines;
         if (!active.documentation.empty()) {
@@ -4109,15 +4165,19 @@ private:
             const KindLook look = kind_look(it.kind);
             const float bx = row.x + 5.0f;
             const float by = row.y + 3.0f;
-            push_rect(DrawOp::Kind::Fill, bx, by, badge, badge, with_alpha(look.color, 0.22), 1, 3);
-            fizmo::text::TextStyle bs = badge_style;
-            bs.set_fg_color(look.color);
-            const float bw = text_width(r, look.badge, bs);
-            push_text(bx + (badge - bw) / 2.0f, by + (badge - line_height(r, bs)) / 2.0f, bw + 4.0f, line_height(r, bs), look.badge, bs);
-            float tx = bx + badge + 8.0f;
+            if (show_icons) {
+                push_rect(DrawOp::Kind::Fill, bx, by, badge, badge, with_alpha(look.color, 0.22), 1, 3);
+                fizmo::text::TextStyle bs = badge_style;
+                bs.set_fg_color(look.color);
+                const float bw = text_width(r, look.badge, bs);
+                push_text(bx + (badge - bw) / 2.0f, by + (badge - line_height(r, bs)) / 2.0f, bw + 4.0f, line_height(r, bs), look.badge, bs);
+            }
+            float tx = show_icons ? bx + badge + 8.0f : bx + 3.0f;
             const float ty = row.y + (c.row_h - lh) / 2.0f;
-            const float detail_room = it.detail.empty() ? 0.0f : std::min(widest_detail, 260.0f) + 16.0f;
-            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room - tx);
+            const std::string kind_text = show_kinds ? kind_name(it.kind) : std::string();
+            const bool show_detail = !it.detail.empty() && it.detail != kind_text;
+            const float detail_room = show_detail ? std::min(widest_detail, 260.0f) + 16.0f : 0.0f;
+            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room - kind_room - tx);
             push_clip(Rect{ tx, row.y, label_room, row.h });
             std::size_t k = 0;
             std::size_t mi = 0;
@@ -4139,7 +4199,13 @@ private:
                 mi = mj;
             }
             pop_clip();
-            if (!it.detail.empty()) {
+            if (show_kinds) {
+                fizmo::text::TextStyle ks = muted;
+                ks.set_fg_color(with_alpha(show_icons ? look.color : fg, 0.75));
+                const float kx = row.x + row.w - 8.0f - (widest_detail > 0.0f ? std::min(widest_detail, 260.0f) + 16.0f : 0.0f) - widest_kind;
+                push_text(kx, ty, widest_kind + 4.0f, lh, kind_text, ks);
+            }
+            if (show_detail) {
                 const std::string shown = fit_text(r, it.detail, muted, std::min(widest_detail, 260.0f));
                 const float dw = text_width(r, shown, muted);
                 push_text(row.x + row.w - 8.0f - dw, ty, dw + 4.0f, lh, shown, muted);
@@ -7192,6 +7258,9 @@ private:
     float m_view_h = 0.0f;
     float m_scroll = 0.0f;
     float m_content_height = 0.0f;
+    double m_last_layout_ms = 0.0;
+    double m_last_draw_ms = 0.0;
+    std::size_t m_last_ops = 0;
     float m_mouse_x = 0.0f;
     float m_mouse_y = 0.0f;
     unsigned m_mods = 0;
@@ -7270,6 +7339,10 @@ struct WindowHost {
     int x = 0;
     int y = 0;
     bool placed = false;
+    double paint_ms = 0.0;
+    double present_ms = 0.0;
+    std::uint64_t frames = 0;
+    std::deque<std::chrono::steady_clock::time_point> frame_times;
 };
 
 class WindowManager {
@@ -7285,9 +7358,52 @@ public:
             WindowHost* h = host_containing(n);
             return h ? h->view->computed(n, property) : std::string();
         };
+        host.computed_number = [this](const Node& n, const std::string& property, std::size_t index, double& out) {
+            WindowHost* h = host_containing(n);
+            return h && h->view->computed_number(n, property, index, out);
+        };
+        host.computed_color = [this](const Node& n, const std::string& property) {
+            WindowHost* h = host_containing(n);
+            return h ? h->view->computed_color(n, property) : std::string();
+        };
         host.focus = [this](Node* n) {
             WindowHost* h = n ? host_containing(*n) : host_for(&m_main);
             return h && h->view->focus_from_script(n);
+        };
+        host.window_info = [this](const Node& n, WindowInfo& info) {
+            WindowHost* wh = host_for(&n);
+            if (!wh) wh = host_containing(n);
+            if (!wh || !wh->window || !wh->window->is_open()) return false;
+            info.width = wh->window->width();
+            info.height = wh->window->height();
+            wh->window->position(info.x, info.y);
+            info.dpi_scale = wh->window->dpi_scale();
+            const std::vector<fizmo::windows::MonitorInfo> all = fizmo::windows::monitors();
+            const int index = wh->window->monitor_index();
+            fizmo::windows::MonitorInfo monitor = index >= 0 && static_cast<std::size_t>(index) < all.size() ? all[static_cast<std::size_t>(index)] : fizmo::windows::primary_monitor();
+            info.monitor = monitor.name;
+            info.monitor_width = monitor.bounds.width;
+            info.monitor_height = monitor.bounds.height;
+            info.refresh_rate = monitor.current.refresh_rate;
+            info.layout_ms = wh->view->last_layout_ms();
+            info.draw_ms = wh->view->last_draw_ms();
+            info.present_ms = wh->present_ms;
+            info.frame_ms = wh->paint_ms + wh->present_ms;
+            info.draw_ops = wh->view->last_ops();
+            info.frames = wh->frames;
+            const auto now = std::chrono::steady_clock::now();
+            while (!wh->frame_times.empty() && now - wh->frame_times.front() > std::chrono::seconds(1)) wh->frame_times.pop_front();
+            info.frames_per_second = static_cast<double>(wh->frame_times.size());
+            info.renderer = wh->renderer ? wh->renderer->backend_name() : "";
+            return true;
+        };
+        host.native_window = [this](const Node& n, std::string_view what) -> void* {
+            WindowHost* wh = host_for(&n);
+            if (!wh) wh = host_containing(n);
+            if (!wh) return nullptr;
+            if (what == "window") return wh->window.get();
+            if (what == "renderer") return wh->renderer.get();
+            return nullptr;
         };
         host.window_size = [this](const Node& n, double& w, double& h) {
             WindowHost* wh = host_for(&n);
@@ -7357,8 +7473,12 @@ public:
         while (!m_hosts.empty()) destroy_host(m_hosts.back().get());
         DocumentHost& host = m_doc.host();
         host.computed_style = nullptr;
+        host.computed_number = nullptr;
+        host.computed_color = nullptr;
         host.focus = nullptr;
         host.window_size = nullptr;
+        host.window_info = nullptr;
+        host.native_window = nullptr;
         host.resize_window = nullptr;
         host.move_window = nullptr;
         host.focus_window = nullptr;
@@ -7394,7 +7514,7 @@ public:
             bool quiet = true;
             for (const auto& h : m_hosts) quiet = quiet && h->view->idle();
             const Clock::time_point before = Clock::now();
-            if (!quiet || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_hosts.size() != m_painted_hosts || before - m_painted_at >= std::chrono::milliseconds(500)) {
+            if (!quiet || m_force_render || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_hosts.size() != m_painted_hosts || before - m_painted_at >= std::chrono::milliseconds(500)) {
                 render();
                 frame_stats_log().report();
                 m_painted_revision = m_doc.revision();
@@ -7558,6 +7678,9 @@ private:
         host.window->add_event_listener(WindowEventType::WindowBlur, [this, raw](const fizmo::windows::WindowEvent&) {
             fire(*raw->element, "window_blur");
         });
+        for (const WindowEventType type : { WindowEventType::WindowResize, WindowEventType::WindowExpose, WindowEventType::WindowMaximize, WindowEventType::WindowRestore }) {
+            host.window->add_event_listener(type, [this, raw](const fizmo::windows::WindowEvent&) { render_now(raw); });
+        }
     }
 
     void focus_popup_of(WindowHost& owner) {
@@ -7661,9 +7784,31 @@ private:
         }
     }
 
+    void render_now(WindowHost* host) {
+        if (m_rendering || !host_alive(host) || !host->window || !host->window->is_open() || host->window->width() == 0 || host->window->height() == 0) return;
+        m_rendering = true;
+        fizmo::graphics::Renderer& r = *host->renderer;
+        const auto started = std::chrono::steady_clock::now();
+        r.begin_frame();
+        r.clear(host->background);
+        const std::uint64_t revision = m_doc.revision();
+        host->view->paint(r);
+        if (m_doc.revision() != revision) {
+            r.clear(host->background);
+            host->view->paint(r);
+        }
+        const auto painted = std::chrono::steady_clock::now();
+        r.present();
+        note_frame(*host, started, painted, std::chrono::steady_clock::now());
+        m_rendering = false;
+        m_force_render = true;
+    }
+
     void render() {
         std::vector<WindowHost*> snapshot;
         for (const auto& h : m_hosts) snapshot.push_back(h.get());
+        m_rendering = true;
+        m_force_render = false;
         for (WindowHost* h : snapshot) {
             if (!host_alive(h) || !h->window || !h->window->is_open()) continue;
             fizmo::graphics::Renderer& r = *h->renderer;
@@ -7673,6 +7818,7 @@ private:
             h->view->paint(r);
             const auto painted = std::chrono::steady_clock::now();
             r.present();
+            note_frame(*h, started, painted, std::chrono::steady_clock::now());
             FrameStatsLog& stats = frame_stats_log();
             if (stats.enabled) {
                 const auto presented = std::chrono::steady_clock::now();
@@ -7702,6 +7848,15 @@ private:
                 }
             }
         }
+        m_rendering = false;
+    }
+
+    static void note_frame(WindowHost& host, std::chrono::steady_clock::time_point started, std::chrono::steady_clock::time_point painted, std::chrono::steady_clock::time_point presented) {
+        host.paint_ms = std::chrono::duration<double, std::milli>(painted - started).count();
+        host.present_ms = std::chrono::duration<double, std::milli>(presented - painted).count();
+        ++host.frames;
+        host.frame_times.push_back(presented);
+        while (host.frame_times.size() > 1000) host.frame_times.pop_front();
     }
 
     bool host_alive(const WindowHost* host) const {
@@ -7714,6 +7869,8 @@ private:
     Project& m_project;
     Document& m_doc;
     const RunOptions& m_options;
+    bool m_rendering = false;
+    bool m_force_render = false;
     Node& m_main;
     std::vector<std::unique_ptr<WindowHost>> m_hosts;
     std::uint64_t m_painted_revision = static_cast<std::uint64_t>(-1);
