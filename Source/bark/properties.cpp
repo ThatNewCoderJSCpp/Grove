@@ -31,6 +31,8 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "code-error-line",
         "code-error-underline",
         "code-escape",
+        "code-find",
+        "code-find-current",
         "code-function",
         "code-hover",
         "code-keyword",

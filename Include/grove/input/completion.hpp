@@ -15,6 +15,7 @@ struct CompletionItem {
     std::string detail;
     std::string insert;
     std::string documentation;
+    std::string preview;
 };
 
 struct CompletionList {

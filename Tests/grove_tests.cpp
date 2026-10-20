@@ -2,6 +2,7 @@
 #include "grove/terminal.hpp"
 #include "grove/api/grove_api.h"
 #include "grove/bark/properties.hpp"
+#include "grove/input/code_find.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -1618,6 +1619,36 @@ void test_completion() {
     CHECK(has_class && has_int && grove::code_language_words(grove::CodeLanguage::Plain).empty());
 }
 
+void test_code_find() {
+    using grove::CodeFindOptions;
+    const std::vector<std::string> lines = { "int Count = count + 1;", "recount(count);", "", "COUNT" };
+    CodeFindOptions any;
+    auto m = grove::find_code_matches(lines, "count", any);
+    CHECK(m.size() == 5);
+    CHECK(m[0].begin.line == 0 && m[0].begin.column == 4 && m[0].end.column == 9);
+    CodeFindOptions exact;
+    exact.match_case = true;
+    CHECK(grove::find_code_matches(lines, "count", exact).size() == 3);
+    CodeFindOptions word;
+    word.whole_word = true;
+    m = grove::find_code_matches(lines, "count", word);
+    CHECK(m.size() == 4);
+    CodeFindOptions re;
+    re.regex = true;
+    m = grove::find_code_matches(lines, "c(o)unt\\b", re);
+    CHECK(m.size() == 5);
+    CHECK(grove::code_replacement_for(lines, m[1], "c(o)unt\\b", "[$1$&]", re) == "[ocount]");
+    bool bad = false;
+    CHECK(grove::find_code_matches(lines, "(", re, &bad).empty() && bad);
+    CHECK(grove::find_code_matches(lines, "", any).empty());
+    CHECK(grove::find_code_matches({ "aaaa" }, "aa", any).size() == 2);
+    m = grove::find_code_matches(lines, "count", any);
+    CHECK(grove::code_match_at_or_after(m, grove::CodePos{ 1, 0 }) == 2);
+    CHECK(grove::code_match_at_or_after(m, grove::CodePos{ 3, 3 }) == 0);
+    CHECK(grove::code_match_before(m, grove::CodePos{ 0, 4 }) == 4);
+    CHECK(grove::code_match_before(m, grove::CodePos{ 1, 0 }) == 1);
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -1672,6 +1703,7 @@ int main() {
     test_terminal_replies_and_modes();
     test_terminal_input_encoding();
     test_terminal_selection_and_resize();
+    test_code_find();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

@@ -130,7 +130,9 @@ std::vector<CompletionMatch> filter_completions(const std::vector<CompletionItem
 std::string completions_text(const CompletionList& list) {
     std::string out = std::to_string(list.line) + " " + std::to_string(list.column) + "\n";
     for (const CompletionItem& item : list.items) {
-        out += escape_field(item.label) + "\t" + escape_field(item.kind) + "\t" + escape_field(item.detail) + "\t" + escape_field(item.insert) + "\t" + escape_field(item.documentation) + "\n";
+        out += escape_field(item.label) + "\t" + escape_field(item.kind) + "\t" + escape_field(item.detail) + "\t" + escape_field(item.insert) + "\t" + escape_field(item.documentation);
+        if (!item.preview.empty()) out += "\t" + escape_field(item.preview);
+        out += "\n";
     }
     return out;
 }
@@ -163,6 +165,7 @@ std::optional<CompletionList> parse_completions(const std::string& text) {
         if (fields.size() > 2) item.detail = fields[2];
         if (fields.size() > 3) item.insert = fields[3];
         if (fields.size() > 4) item.documentation = fields[4];
+        if (fields.size() > 5) item.preview = fields[5];
         if (!item.label.empty()) list.items.push_back(std::move(item));
     }
     return list;

@@ -6,6 +6,7 @@
 #include "grove/api/grove_api.h"
 #include "grove/input/input.hpp"
 #include "grove/input/code_buffer.hpp"
+#include "grove/input/code_find.hpp"
 #include "grove/input/keymap.hpp"
 #include "grove/native.hpp"
 #include "grove/script/loader.hpp"
@@ -459,6 +460,20 @@ struct CodeEditor {
     std::string overlay_problems;
     CodeOverlay links;
     std::string links_attr;
+    std::string find_key;
+    std::string find_query;
+    std::string find_replace;
+    CodeFindOptions find_options;
+    std::size_t find_revision = static_cast<std::size_t>(-1);
+    std::vector<CodeMatch> matches;
+    std::size_t find_current = static_cast<std::size_t>(-1);
+    bool find_bad = false;
+    bool find_new_query = false;
+    std::string find_request;
+    std::string find_pending;
+    std::size_t reported_current = static_cast<std::size_t>(-2);
+    std::size_t reported_count = static_cast<std::size_t>(-2);
+    bool reported_bad = false;
 };
 
 struct Scroller {
@@ -989,6 +1004,7 @@ public:
             }
         }
         r.reset_clip_rect();
+        run_find_requests();
         report_cursors();
         {
             const auto finished = std::chrono::steady_clock::now();
@@ -4037,6 +4053,7 @@ private:
         if (kind == "attribute") return { "@", Color(209, 154, 102, 255) };
         if (kind == "snippet") return { "S", Color(171, 178, 191, 255) };
         if (kind == "file" || kind == "folder") return { "D", Color(171, 178, 191, 255) };
+        if (kind == "character" || kind == "symbol") return { "\xE2\x84\xA6", Color(198, 160, 246, 255) };
         return { "W", Color(140, 146, 160, 255) };
     }
 
@@ -4135,6 +4152,9 @@ private:
         fizmo::text::TextStyle muted = mono;
         muted.set_fg_color(with_alpha(fg, 0.55));
         fizmo::text::TextStyle prose(std::max(11.0, mono.size() * 0.92), with_alpha(fg, 0.85));
+        fizmo::text::TextStyle preview_style = mono;
+        preview_style.set_size(mono.size() * 1.3);
+        preview_style.set_fg_color(fg);
         fizmo::text::TextStyle badge_style = mono;
         badge_style.set_bold(true);
         badge_style.set_size(std::max(9.0, mono.size() * 0.8));
@@ -4151,9 +4171,11 @@ private:
         float widest_label = 0.0f;
         float widest_detail = 0.0f;
         float widest_kind = 0.0f;
+        float widest_preview = 0.0f;
         for (std::size_t i = 0; i < c.shown.size() && i < 200; ++i) {
             const CompletionItem& it = c.items[c.shown[i].index];
             widest_label = std::max(widest_label, text_width(r, it.label, mono));
+            if (!it.preview.empty()) widest_preview = std::max(widest_preview, std::min(120.0f, text_width(r, it.preview, preview_style)));
             const std::string kind = show_kinds ? kind_name(it.kind) : std::string();
             if (show_kinds) widest_kind = std::max(widest_kind, text_width(r, kind, muted));
             if (!it.detail.empty() && it.detail != kind) widest_detail = std::max(widest_detail, std::min(260.0f, text_width(r, it.detail, muted)));
@@ -4162,7 +4184,8 @@ private:
         const float badge = show_icons ? c.row_h - 6.0f : 0.0f;
         const float max_w = static_cast<float>(std::max<std::int64_t>(240, parse_integer(c.node->attribute_or("complete-width", "")).value_or(760)));
         const float limit_w = std::max(220.0f, std::min(max_w, view_w - 8.0f));
-        const float fixed_w = 8.0f + badge + 8.0f + kind_room + 14.0f;
+        const float preview_room = widest_preview > 0.0f ? widest_preview + 16.0f : 0.0f;
+        const float fixed_w = 8.0f + badge + 8.0f + kind_room + preview_room + 14.0f;
         float detail_col = std::min(widest_detail, 320.0f);
         float label_col = widest_label + 18.0f;
         if (fixed_w + label_col + (detail_col > 0.0f ? detail_col + 16.0f : 0.0f) > limit_w && detail_col > 0.0f) {
@@ -4233,7 +4256,12 @@ private:
             const float ty = row.y + (c.row_h - lh) / 2.0f;
             const std::string kind_text = show_kinds ? kind_name(it.kind) : std::string();
             const bool show_detail = !it.detail.empty() && it.detail != kind_text;
-            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room_all - kind_room - tx - 6.0f);
+            const float label_room = std::max(20.0f, row.x + row.w - 8.0f - detail_room_all - kind_room - preview_room - tx - 6.0f);
+            if (!it.preview.empty()) {
+                const float preview_x = tx + label_room + 6.0f;
+                const float ph = line_height(r, preview_style);
+                push_text(preview_x, row.y + (c.row_h - ph) / 2.0f, widest_preview + 4.0f, ph, fit_text(r, it.preview, preview_style, widest_preview), preview_style);
+            }
             push_clip(Rect{ tx, row.y, label_room, row.h });
             std::size_t k = 0;
             std::size_t mi = 0;
@@ -4491,6 +4519,8 @@ private:
             ed.buffer.set_caret(CodePos{ safe, code_byte_column(ed.buffer.line(safe), static_cast<std::size_t>(std::max<std::int64_t>(1, col) - 1), ed.tab_size) });
             ed.reveal = true;
         }
+        if (node_changed) read_find_attributes(element, ed);
+        refresh_find(ed);
         const Box pad = box_of(style, "padding");
         const float w = box_width(style, width);
         float h = forced_h >= 0.0f ? forced_h : resolve_length(style, "height", m_avail_h).value_or(300.0f);
@@ -4602,6 +4632,8 @@ private:
         const Color warning_color = to_color(style.color("code-warning-underline").value_or(bark::Rgba{ 204, 167, 0, 255 }));
         const std::vector<CodeTokenKind> marks = code_marks(element.attribute_or("mark", ""));
         const Color mark_color = to_color(style.color("code-mark").value_or(bark::Rgba{ 255, 166, 77, 110 }));
+        const Color find_color = to_color(style.color("code-find").value_or(bark::Rgba{ 255, 165, 60, 85 }));
+        const Color find_current_color = to_color(style.color("code-find-current").value_or(bark::Rgba{ 255, 165, 60, 170 }));
         fizmo::text::TextStyle number_style = ts;
         number_style.set_bold(false);
         number_style.set_italic(false);
@@ -4615,6 +4647,18 @@ private:
             bool caret_line = false;
             for (const CodeCursor& cur : cursors) caret_line = caret_line || (cur.caret.line == li && !cur.has_selection());
             if (focused && caret_line) push_rect(DrawOp::Kind::Fill, inner_x + gutter, ly, inner_w - gutter, lh, with_alpha(Color(255, 255, 255, 255), 0.04));
+            if (!ed.matches.empty()) {
+                const auto from = std::lower_bound(ed.matches.begin(), ed.matches.end(), CodePos{ li, 0 }, [](const CodeMatch& m, CodePos p) { return m.begin < p; });
+                for (auto it = from; it != ed.matches.end() && it->begin.line == li; ++it) {
+                    const std::size_t a = code_display_column(line, it->begin.column, ed.tab_size);
+                    const std::size_t b = code_display_column(line, it->end.column, ed.tab_size);
+                    const float mx = text_x + static_cast<float>(a) * cw - ed.scroll_x;
+                    const float mw = std::max(2.0f, static_cast<float>(b - std::min(a, b)) * cw);
+                    const bool current = static_cast<std::size_t>(it - ed.matches.begin()) == ed.find_current;
+                    push_rect(DrawOp::Kind::Fill, mx, ly + 1, mw, lh - 2, with_alpha(current ? find_current_color : find_color, fade), 1, 2);
+                    if (current) push_rect(DrawOp::Kind::Stroke, mx, ly + 1, mw, lh - 2, with_alpha(find_current_color, fade), 1, 2);
+                }
+            }
             for (const CodeCursor& cur : cursors) {
                 if (!cur.has_selection()) continue;
                 const CodePos sel_a = cur.start();
@@ -6127,6 +6171,10 @@ private:
     }
 
     void type_text(const std::string& text) {
+        if (m_swallow_text) {
+            m_swallow_text = false;
+            return;
+        }
         Event e;
         e.type = "text";
         e.text = text;
@@ -6208,6 +6256,7 @@ private:
             return;
         }
         Event ev = key_event("key_down", e);
+        m_swallow_text = false;
         const Node* editing = m_focus && input_kind_of(*m_focus) == InputKind::String ? m_focus : nullptr;
         std::string synced;
         if (editing) {
@@ -6225,7 +6274,10 @@ private:
                 m_invalid = false;
             }
         }
-        if (!allowed) return;
+        if (!allowed) {
+            m_swallow_text = true;
+            return;
+        }
         if (!m_focus && !m_code_focus && m_focused && m_focused->tag() == "terminal" && document().is_attached(*m_focused)) {
             terminal_key(*m_focused, e);
             return;
@@ -7046,6 +7098,160 @@ private:
         }
     }
 
+    void read_find_attributes(const Node& element, CodeEditor& ed) {
+        CodeFindOptions options;
+        options.match_case = element.attribute_or("find-case", "false") == "true";
+        options.whole_word = element.attribute_or("find-word", "false") == "true";
+        options.regex = element.attribute_or("find-regex", "false") == "true";
+        const std::string query = element.attribute_or("find", "");
+        const std::string key = query + '\x1f' + (options.match_case ? '1' : '0') + (options.whole_word ? '1' : '0') + (options.regex ? '1' : '0');
+        if (key != ed.find_key) {
+            ed.find_key = key;
+            ed.find_query = query;
+            ed.find_options = options;
+            ed.find_revision = static_cast<std::size_t>(-1);
+            ed.find_new_query = true;
+        }
+        ed.find_replace = element.attribute_or("replace", "");
+        const std::string command = element.attribute_or("find-command", "");
+        if (!command.empty() && command != ed.find_request) {
+            ed.find_request = command;
+            ed.find_pending = command.substr(0, command.find('#'));
+        }
+    }
+
+    void refresh_find(CodeEditor& ed) {
+        if (ed.find_revision == ed.buffer.revision()) return;
+        ed.find_revision = ed.buffer.revision();
+        ed.matches = find_code_matches(ed.buffer.lines(), ed.find_query, ed.find_options, &ed.find_bad);
+        const auto [sel_a, sel_b] = ed.buffer.selection();
+        ed.find_current = static_cast<std::size_t>(-1);
+        if (ed.matches.empty()) {
+            ed.find_new_query = false;
+            return;
+        }
+        if (ed.find_new_query) {
+            ed.find_new_query = false;
+            ed.find_current = code_match_at_or_after(ed.matches, sel_a);
+            const CodeMatch& m = ed.matches[ed.find_current];
+            ed.buffer.select(m.begin, m.end);
+            ed.reveal = true;
+            poke();
+            return;
+        }
+        for (std::size_t i = 0; i < ed.matches.size(); ++i) {
+            if (ed.matches[i].begin == sel_a && ed.matches[i].end == sel_b) ed.find_current = i;
+        }
+    }
+
+    bool selection_is_match(const CodeEditor& ed, std::size_t index) const {
+        if (index >= ed.matches.size()) return false;
+        const auto [a, b] = ed.buffer.selection();
+        return !ed.buffer.has_extra_cursors() && ed.matches[index].begin == a && ed.matches[index].end == b;
+    }
+
+    void go_to_match(CodeEditor& ed, std::size_t index) {
+        if (index >= ed.matches.size()) return;
+        ed.find_current = index;
+        ed.buffer.clear_extra_cursors();
+        ed.buffer.select(ed.matches[index].begin, ed.matches[index].end);
+        ed.reveal = true;
+    }
+
+    void run_find_requests() {
+        for (const Node* node : m_code_laid) {
+            if (!node || !document().is_attached(*node)) continue;
+            const auto found = m_code.find(node);
+            if (found == m_code.end()) continue;
+            CodeEditor& ed = found->second;
+            const std::string pending = std::move(ed.find_pending);
+            ed.find_pending.clear();
+            if (!pending.empty()) run_find_command(*node, ed, pending);
+            const std::size_t current = ed.find_current < ed.matches.size() ? ed.find_current : static_cast<std::size_t>(-1);
+            if (current == ed.reported_current && ed.matches.size() == ed.reported_count && ed.find_bad == ed.reported_bad) continue;
+            ed.reported_current = current;
+            ed.reported_count = ed.matches.size();
+            ed.reported_bad = ed.find_bad;
+            Event e;
+            e.type = "find";
+            e.bubbles = true;
+            e.x = current == static_cast<std::size_t>(-1) ? 0.0 : static_cast<double>(current + 1);
+            e.y = static_cast<double>(ed.matches.size());
+            e.key = ed.find_bad ? "bad-pattern" : "";
+            dispatch(node, e);
+        }
+    }
+
+    void run_find_command(const Node& node, CodeEditor& ed, const std::string& command) {
+        refresh_find(ed);
+        const bool read_only = code_read_only(node) || is_disabled(&node);
+        const std::size_t n = ed.matches.size();
+        const std::size_t none = static_cast<std::size_t>(-1);
+        if (command == "seed") {
+            const auto [a, b] = ed.buffer.selection();
+            Event seed;
+            seed.type = "find-seed";
+            seed.bubbles = true;
+            if (a.line == b.line && a != b && b.column - a.column <= 400) seed.text = ed.buffer.text_between(a, b);
+            dispatch(&node, seed);
+            return;
+        }
+        if (command == "next" || command == "prev") {
+            if (n == 0) return;
+            const auto [a, b] = ed.buffer.selection();
+            std::size_t index;
+            if (selection_is_match(ed, ed.find_current)) index = command == "next" ? (ed.find_current + 1) % n : (ed.find_current + n - 1) % n;
+            else index = command == "next" ? code_match_at_or_after(ed.matches, b) : code_match_before(ed.matches, a);
+            go_to_match(ed, index);
+        } else if (command == "select-all") {
+            if (n == 0) return;
+            go_to_match(ed, 0);
+            for (std::size_t i = 1; i < n; ++i) ed.buffer.add_cursor(ed.matches[i].begin, ed.matches[i].end);
+            ed.find_current = 0;
+        } else if (command == "replace") {
+            if (n == 0 || read_only) return;
+            if (!selection_is_match(ed, ed.find_current)) {
+                const auto [a, b] = ed.buffer.selection();
+                (void)b;
+                go_to_match(ed, code_match_at_or_after(ed.matches, a));
+                return;
+            }
+            const std::string text = code_replacement_for(ed.buffer.lines(), ed.matches[ed.find_current], ed.find_query, ed.find_replace, ed.find_options);
+            ed.buffer.insert(text);
+            const CodePos after = ed.buffer.caret();
+            ed.find_revision = none;
+            refresh_find(ed);
+            code_changed(&node);
+            if (!ed.matches.empty()) go_to_match(ed, code_match_at_or_after(ed.matches, after));
+        } else if (command == "replace-all") {
+            if (n == 0 || read_only) return;
+            const std::vector<std::string>& lines = ed.buffer.lines();
+            std::string joined;
+            CodePos at = ed.matches.front().begin;
+            for (const CodeMatch& m : ed.matches) {
+                joined += ed.buffer.text_between(at, m.begin);
+                joined += code_replacement_for(lines, m, ed.find_query, ed.find_replace, ed.find_options);
+                at = m.end;
+            }
+            const CodePos first = ed.matches.front().begin;
+            ed.buffer.clear_extra_cursors();
+            ed.buffer.select(first, ed.matches.back().end);
+            ed.buffer.insert(joined);
+            ed.buffer.set_caret(first);
+            ed.find_revision = none;
+            refresh_find(ed);
+            ed.find_current = none;
+            code_changed(&node);
+            Event done;
+            done.type = "replace";
+            done.bubbles = true;
+            done.x = static_cast<double>(n);
+            dispatch(&node, done);
+        }
+        ed.reveal = true;
+        poke();
+    }
+
     void report_cursors() {
         if (!m_code_focus || !document().is_attached(*m_code_focus)) return;
         CodeEditor& ed = m_code[m_code_focus];
@@ -7293,6 +7499,7 @@ private:
     int m_term_last_col = -1;
     int m_term_last_row = -1;
     bool m_term_swallow = false;
+    bool m_swallow_text = false;
     std::map<const Node*, std::array<std::uint8_t, 9>> m_term_colors;
     CodeHover m_code_hover;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
