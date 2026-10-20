@@ -158,6 +158,8 @@ private:
 std::size_t code_display_column(std::string_view line, std::size_t byte_column, std::size_t tab_size);
 std::size_t code_byte_column(std::string_view line, std::size_t display_column, std::size_t tab_size);
 std::string code_expand_tabs(std::string_view line, std::size_t tab_size);
+std::string code_block_closer(CodeLanguage language, std::string_view header);
+std::string code_open_tag(std::string_view line);
 
 struct CodeCursor {
     CodePos anchor;
@@ -205,7 +207,9 @@ public:
 
     void insert(std::string_view text);
     void new_line(std::size_t tab_size, bool spaces);
+    void new_line(std::size_t tab_size, bool spaces, CodeLanguage language, bool close_blocks);
     void backspace(bool word = false);
+    void backspace_to_tab_stop(std::size_t tab_size);
     void delete_forward(bool word = false);
     void delete_selection();
     void indent(std::size_t tab_size, bool spaces);
@@ -218,6 +222,7 @@ public:
     bool toggle_cursor(CodePos p);
     void add_cursor(CodePos anchor, CodePos caret);
     void column_select(CodePos from, std::size_t to_line);
+    void box_select(std::size_t from_line, std::size_t from_column, std::size_t to_line, std::size_t to_column, std::size_t tab_size);
     bool any_selection() const noexcept;
     std::string selected_texts() const;
     void insert_each(const std::vector<std::string>& pieces);

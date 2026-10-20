@@ -450,6 +450,9 @@ struct CodeEditor {
     bool column_mode = false;
     CodePos column_anchor;
     std::size_t column_head = 0;
+    bool box_mode = false;
+    std::size_t box_line = 0;
+    std::size_t box_column = 0;
     CodeOverlay overlay;
     std::string overlay_spans;
     std::string overlay_problems;
@@ -756,6 +759,11 @@ fizmo::windows::SystemCursor cursor_for(const std::string& name) {
     if (name == "not-allowed") return SystemCursor::NotAllowed;
     if (name == "move") return SystemCursor::Move;
     if (name == "help") return SystemCursor::Help;
+    if (name == "col-resize" || name == "ew-resize" || name == "e-resize" || name == "w-resize") return SystemCursor::ResizeHorizontal;
+    if (name == "row-resize" || name == "ns-resize" || name == "n-resize" || name == "s-resize") return SystemCursor::ResizeVertical;
+    if (name == "nwse-resize" || name == "nw-resize" || name == "se-resize") return SystemCursor::ResizeDiagonalNWSE;
+    if (name == "nesw-resize" || name == "ne-resize" || name == "sw-resize") return SystemCursor::ResizeDiagonalNESW;
+    if (name == "grab" || name == "grabbing" || name == "all-scroll") return SystemCursor::Move;
     return SystemCursor::Arrow;
 }
 
@@ -4218,10 +4226,12 @@ private:
         const float lh = line_height(r, ts);
         const float fs = static_cast<float>(font_size_of(element));
         const float row = std::max(lh, fs * 1.4f);
-        const float thumb = fs * 0.55f;
+        const bool hot = m_dragging == &element || (element.has_state(StateHover) && !element.has_attribute("disabled"));
+        const float base_thumb = fs * 0.55f;
+        const float thumb = hot ? base_thumb * 1.3f : base_thumb;
         const float w = box_width(style, width);
-        const float track_x = x + thumb;
-        const float track_w = std::max(1.0f, w - 2 * thumb);
+        const float track_x = x + base_thumb;
+        const float track_w = std::max(1.0f, w - 2 * base_thumb);
         const InputRange range = input_range(element);
         const double value = input_float(element).value_or(range.min);
         const double t = range.max > range.min ? (value - range.min) / (range.max - range.min) : 0.0;
@@ -4231,8 +4241,9 @@ private:
         const double fade = (disabled ? 0.45 : 1.0) * opacity_of(element);
         const Color accent = with_alpha(accent_color(element), fade);
 
-        push_rect(DrawOp::Kind::Fill, track_x, cy - 2, track_w, 4, with_alpha(raw_text_color(element), 0.2 * fade), 1, 2);
-        push_rect(DrawOp::Kind::Fill, track_x, cy - 2, vx - track_x, 4, accent, 1, 2);
+        const float track_h = hot ? 6.0f : 4.0f;
+        push_rect(DrawOp::Kind::Fill, track_x, cy - track_h / 2.0f, track_w, track_h, with_alpha(raw_text_color(element), 0.2 * fade), 1, 2);
+        push_rect(DrawOp::Kind::Fill, track_x, cy - track_h / 2.0f, vx - track_x, track_h, accent, 1, 2);
         push(DrawOp::Kind::Circle, vx, cy, 0, 0, accent).radius = thumb;
 
         const std::string shown = input_text(element);
@@ -4613,7 +4624,7 @@ private:
             const float track = inner_h;
             const float thumb = std::max(24.0f, track * inner_h / (content_h));
             const float ty = inner_y + (track - thumb) * (ed.scroll_y / max_y);
-            const bool held = m_bar_drag.node == &element;
+            const bool held = m_bar_drag.node == &element || (m_bar_hot.node == &element && !m_bar_hot.horizontal);
             push_rect(DrawOp::Kind::Fill, x + w - (held ? 8 : 7), ty, held ? 6 : 4, thumb, with_alpha(fg, held ? 0.45 : 0.25), 1, 2);
             code_bar.bar_x = x + w - 13;
             code_bar.track_y = inner_y;
@@ -5064,7 +5075,7 @@ private:
                     const float track = bw;
                     const float thumb = std::max(20.0f, track * track / (track + max_scroll_x));
                     const float tx = bx + (track - thumb) * (sx / max_scroll_x);
-                    const bool held = m_bar_drag.node == &element && m_bar_drag.horizontal;
+                    const bool held = (m_bar_drag.node == &element && m_bar_drag.horizontal) || (m_bar_hot.node == &element && m_bar_hot.horizontal);
                     push_rect(DrawOp::Kind::Fill, tx, bottom - (held ? 7 : 6), thumb, held ? 6 : 4, with_alpha(raw_text_color(element), held ? 0.45 : 0.25), 1, 2);
                     hbar = Rect{ bx, bottom - 10, track, thumb };
                 }
@@ -5078,7 +5089,7 @@ private:
                     const float track = bottom - top;
                     const float thumb = std::max(20.0f, track * track / (track + max_scroll));
                     const float ty = top + (track - thumb) * (s / max_scroll);
-                    const bool held = m_bar_drag.node == &element && !m_bar_drag.horizontal;
+                    const bool held = (m_bar_drag.node == &element && !m_bar_drag.horizontal) || (m_bar_hot.node == &element && !m_bar_hot.horizontal);
                     push_rect(DrawOp::Kind::Fill, bx + bw - (held ? 7 : 6), ty, held ? 6 : 4, thumb, with_alpha(raw_text_color(element), held ? 0.45 : 0.25), 1, 2);
                     vbar = Rect{ bx + bw - 12, top, track, thumb };
                 }
@@ -5176,6 +5187,7 @@ private:
     void hover_at(float px, float py) {
         const Node* target = hit_element(px, py);
         update_chain(m_hover, target, StateHover, "mouse_enter", "mouse_leave");
+        bar_hover(px, py);
         update_cursor(target);
     }
 
@@ -5206,7 +5218,9 @@ private:
                 if (const ColorSwatch* sw = swatch_at(m_mouse_x, m_mouse_y); sw && sw->node == target) name = "pointer";
             }
         }
+        if (const std::optional<InputKind> kind = input_kind_of(*target); kind && *kind == InputKind::Slider && (name.empty() || name == "auto" || name == "default")) name = "pointer";
         if (is_disabled(target)) name = "default";
+        if (m_bar_hot.node || m_bar_drag.node) name = "pointer";
         if (name == m_cursor) return;
         m_cursor = name;
         m_native->set_cursor(cursor_for(name));
@@ -5739,7 +5753,18 @@ private:
                             }
                         }
                         ed.column_mode = false;
+                        ed.box_mode = false;
                         ed.reveal = true;
+                        if (ctrl && alt && !shift) {
+                            const float cell = std::max(1.0f, ed.char_w);
+                            const float fx = (px - ed.text_x + ed.scroll_x) / cell;
+                            ed.box_mode = true;
+                            ed.box_line = at.line;
+                            ed.box_column = fx <= 0.0f ? 0 : static_cast<std::size_t>(std::lround(fx));
+                            ed.buffer.box_select(ed.box_line, ed.box_column, ed.box_line, ed.box_column, ed.tab_size);
+                            m_code_drag = hit.node;
+                            return;
+                        }
                         if (ctrl && !alt && !shift) {
                             const std::optional<CodePos> on = code_char_at(ed, px, py);
                             ed.buffer.set_caret(on.value_or(at));
@@ -5813,7 +5838,9 @@ private:
 
     void mouse_up(float px, float py, int button) {
         if (button == 1 && m_bar_drag.node) {
+            if (document().is_attached(*m_bar_drag.node)) mutable_node(*m_bar_drag.node).mark_changed(false);
             m_bar_drag = BarDrag{};
+            hover_at(px, py);
             poke();
             return;
         }
@@ -6114,10 +6141,10 @@ private:
         return d.horizontal ? m_elem_scroll_x[d.node] : m_elem_scroll[d.node];
     }
 
-    bool bar_press(float px, float py) {
+    bool bar_at(float px, float py, BarDrag& d) const {
         for (const Scroller& sc : m_scrollers) {
             if (!sc.rect.contains(px, py)) continue;
-            BarDrag d;
+            d = BarDrag{};
             d.node = sc.node;
             d.code = sc.code;
             if (sc.thumb_h > 0.0f && sc.max > 0.0f && px >= sc.bar_x && py >= sc.track_y && py <= sc.track_y + sc.track_h) {
@@ -6125,15 +6152,35 @@ private:
                 d.length = sc.track_h;
                 d.thumb = sc.thumb_h;
                 d.max = sc.max;
-            } else if (sc.thumb_w > 0.0f && sc.max_x > 0.0f && py >= sc.bar_y && px >= sc.track_x && px <= sc.track_x + sc.track_w) {
+                return true;
+            }
+            if (sc.thumb_w > 0.0f && sc.max_x > 0.0f && py >= sc.bar_y && px >= sc.track_x && px <= sc.track_x + sc.track_w) {
                 d.horizontal = true;
                 d.start = sc.track_x;
                 d.length = sc.track_w;
                 d.thumb = sc.thumb_w;
                 d.max = sc.max_x;
-            } else {
-                continue;
+                return true;
             }
+        }
+        return false;
+    }
+
+    void bar_hover(float px, float py) {
+        BarDrag d;
+        const bool on = !m_bar_drag.node && bar_at(px, py, d);
+        const Node* node = on ? d.node : nullptr;
+        if (node == m_bar_hot.node && (!on || d.horizontal == m_bar_hot.horizontal)) return;
+        if (m_bar_hot.node && document().is_attached(*m_bar_hot.node)) mutable_node(*m_bar_hot.node).mark_changed(false);
+        m_bar_hot = on ? d : BarDrag{};
+        if (node) mutable_node(*node).mark_changed(false);
+        poke();
+    }
+
+    bool bar_press(float px, float py) {
+        {
+            BarDrag d;
+            if (!bar_at(px, py, d)) return false;
             const float pos = d.horizontal ? px : py;
             const float span = std::max(1.0f, d.length - d.thumb);
             const float thumb_at = d.start + span * (bar_scroll(d) / d.max);
@@ -6143,11 +6190,15 @@ private:
                 d.grab = d.thumb / 2.0f;
             }
             m_bar_drag = d;
+            m_bar_hot = BarDrag{};
             m_sel_pending = false;
+            if (m_native && m_cursor != "pointer") {
+                m_cursor = "pointer";
+                m_native->set_cursor(cursor_for(m_cursor));
+            }
             bar_drag_to(px, py);
             return true;
         }
-        return false;
     }
 
     void bar_drag_to(float px, float py) {
@@ -6739,6 +6790,14 @@ private:
             return;
         }
         CodeEditor& ed = m_code[m_code_drag];
+        if (ed.box_mode) {
+            const CodePos at = code_pos_at(ed, px, py);
+            const float fx = (px - ed.text_x + ed.scroll_x) / std::max(1.0f, ed.char_w);
+            const std::size_t column = fx <= 0.0f ? 0 : static_cast<std::size_t>(std::lround(fx));
+            ed.buffer.box_select(ed.box_line, ed.box_column, at.line, column, ed.tab_size);
+            ed.reveal = true;
+            return;
+        }
         ed.buffer.set_caret(code_pos_at(ed, px, py), true);
         ed.reveal = true;
     }
@@ -6832,10 +6891,23 @@ private:
             case Key::End: ctrl ? buf.move_finish(shift) : buf.move_end(shift); break;
             case Key::PageUp: buf.move_up(shift, page); break;
             case Key::PageDown: buf.move_down(shift, page); break;
-            case Key::Backspace: if (!ro) { buf.backspace(ctrl); edited = true; } break;
+            case Key::Backspace:
+                if (!ro) {
+                    if (!ctrl && node && node->attribute_or("tab-backspace", "false") != "false") buf.backspace_to_tab_stop(ed.tab_size);
+                    else buf.backspace(ctrl);
+                    edited = true;
+                }
+                break;
             case Key::Delete: if (!ro) { buf.delete_forward(ctrl); edited = true; } break;
             case Key::Enter:
-            case Key::NumpadEnter: if (!ro) { buf.new_line(ed.tab_size, spaces); edited = true; } break;
+            case Key::NumpadEnter:
+                if (!ro) {
+                    const bool close = node && node->attribute_or("close-blocks", "false") != "false";
+                    const CodeLanguage lang = code_language_from_name(node ? node->attribute_or("language", "plain") : std::string("plain"));
+                    buf.new_line(ed.tab_size, spaces, lang, close);
+                    edited = true;
+                }
+                break;
             case Key::Tab:
                 if (!ro) {
                     if (shift) buf.outdent(ed.tab_size);
@@ -7033,6 +7105,7 @@ private:
     std::vector<Rect> m_clips;
     std::vector<Scroller> m_scrollers;
     BarDrag m_bar_drag;
+    BarDrag m_bar_hot;
     std::unordered_map<const Node*, float> m_elem_scroll;
     std::unordered_map<const Node*, float> m_elem_scroll_x;
     std::vector<const Node*> m_code_laid;

@@ -159,7 +159,7 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `backdrop` | `modal` | the color drawn over the window behind an open modal (default a see-through black) |
 | `code-mark` | `input_code` | the box drawn behind tokens named in the `mark` attribute (default a see-through orange) |
 | `opacity` | any | 0 to 1; fades the element and everything inside it |
-| `cursor` | any | `pointer`, `text`, `default`, `crosshair`, `move`, `not-allowed`, ... while the mouse is over it |
+| `cursor` | any | the mouse pointer while it's over the element: `default`, `pointer`, `text`, `crosshair`, `move` (also `grab`), `wait`, `progress`, `not-allowed`, `help`, and the resize arrows `col-resize` (or `ew-resize`), `row-resize` (or `ns-resize`), `nwse-resize` and `nesw-resize` for splitters and corners |
 | `text-align` | text, `math` | `left`, `center`, `right` (`start` and `end` mean left and right) |
 | `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content, `inline` puts it in the flow of the text around it |
 

@@ -206,6 +206,7 @@ const std::vector<KeyAction>& code_editor_actions() {
         { "go-to-definition", "Go to definition", "Jump to where the clicked name is defined", { chord("Click", true) }, true },
         { "add-caret", "Add or remove a caret", "Put another caret where you click, or take one away", { chord("Click", false, false, true) }, true },
         { "column-select", "Column of carets", "Click straight above or below the caret to put a caret on every line between", { chord("Click", false, true) }, true },
+        { "box-select", "Box selection", "Drag to select a rectangle: the same columns on every line from where you start to where you let go (a straight line up or down gives a caret on each line)", { chord("Click", true, false, true) }, true },
     };
     return actions;
 }
