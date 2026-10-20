@@ -159,6 +159,8 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `backdrop` | `modal` | the color drawn over the window behind an open modal (default a see-through black) |
 | `code-mark` | `input_code` | the box drawn behind tokens named in the `mark` attribute (default a see-through orange) |
 | `opacity` | any | 0 to 1; fades the element and everything inside it |
+| `position` | blocks | `static` (default) lays it out with everything else; `fixed` takes it out of the page and draws it on top of everything at `left`/`top` (or `right`/`bottom`) from the window's edges; `cursor` does the same but follows the mouse, `left` and `top` (default 14px and 18px) away from the pointer, flipping to the other side near the window's edge, and never catches clicks, so the element under the mouse still gets them. Without a `width` it's as wide as its content. Handy for drag previews and badges |
+| `left`, `top`, `right`, `bottom` | `position: fixed` or `cursor` | where it sits; see `position` |
 | `cursor` | any | the mouse pointer while it's over the element: `default`, `pointer`, `text`, `crosshair`, `move` (also `grab`), `wait`, `progress`, `not-allowed`, `help`, and the resize arrows `col-resize` (or `ew-resize`), `row-resize` (or `ns-resize`), `nwse-resize` and `nesw-resize` for splitters and corners |
 | `text-align` | text, `math` | `left`, `center`, `right` (`start` and `end` mean left and right) |
 | `display` | any | `none` hides it, `row` lays its children out side by side, `inline-block` makes it only as wide as its content, `inline` puts it in the flow of the text around it |

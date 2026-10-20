@@ -940,6 +940,7 @@ public:
         layout_picker(r, w, h);
         layout_menu(r, w, h);
         layout_context(r, w, h);
+        layout_floating(r, w, h);
         if (m_pending_select && m_force_full) {
             const Node* pending = m_pending_select;
             m_pending_select = nullptr;
@@ -1664,7 +1665,13 @@ private:
         if (node.is_text()) return false;
         if (!node.is_element()) return true;
         if (node.tag() == "window") return true;
-        return style_of(node).text_view("display") == "none";
+        const bark::ComputedStyle& style = style_of(node);
+        return style.text_view("display") == "none" || floating(style);
+    }
+
+    static bool floating(const bark::ComputedStyle& style) {
+        const std::string_view position = style.text_view("position");
+        return position == "fixed" || position == "cursor";
     }
 
     struct ChildRecord {
@@ -2000,7 +2007,7 @@ private:
         if (node.is_text()) return text_width(r, collapse_whitespace(node.text()), text_style(owner)) + 1.0f;
         if (!node.is_element()) return 0.0f;
         const bark::ComputedStyle& style = style_of(node);
-        if (style.text_view("display") == "none") return 0.0f;
+        if (style.text_view("display") == "none" || (floating(style) && &node != m_floating_node)) return 0.0f;
         const Box margin = box_of(style, "margin");
         const float margins = margin.left + margin.right;
         if (const std::optional<InputKind> kind = input_kind_of(node)) {
@@ -2070,7 +2077,7 @@ private:
         std::vector<const Node*> items;
         for (const auto& c : element.children()) {
             if (c->is_text() && collapse_whitespace(c->text()).empty()) continue;
-            if (c->is_element() && (c->tag() == "window" || style_of(*c).text_view("display") == "none")) continue;
+            if (c->is_element() && (c->tag() == "window" || style_of(*c).text_view("display") == "none" || floating(style_of(*c)))) continue;
             if (c->is_element() || c->is_text()) items.push_back(c.get());
         }
         if (items.empty()) return;
@@ -4959,6 +4966,7 @@ private:
         if (element.tag() == "window") return;
         const bark::ComputedStyle& style = style_of(element);
         if (style.text_view("display") == "none") return;
+        if (floating(style) && &element != m_floating_node) return;
 
         const Box margin = box_of(style, "margin");
         y += margin.top;
@@ -5305,6 +5313,91 @@ private:
         m_invalid = false;
         m_edit_all = false;
         if (m_native) m_native->stop_text_input();
+    }
+
+    void layout_floating(fizmo::graphics::Renderer& r, float view_w, float view_h) {
+        if (m_float_scan_stamp != m_window.tree_stamp() || m_float_scan_revision != document().revision()) {
+            m_floats.clear();
+            std::function<void(const Node&)> collect = [&](const Node& n) {
+                for (const auto& c : n.children()) {
+                    if (!c->is_element() || c->tag() == "window") continue;
+                    const bark::ComputedStyle& style = style_of(*c);
+                    if (style.text_view("display") == "none") continue;
+                    if (floating(style)) {
+                        if (is_page_shown(*c)) m_floats.push_back(c.get());
+                        continue;
+                    }
+                    collect(*c);
+                }
+            };
+            collect(m_window);
+            m_float_scan_stamp = m_window.tree_stamp();
+            m_float_scan_revision = document().revision();
+        }
+        const std::vector<const Node*> floats = m_floats;
+        for (const Node* node : floats) {
+            if (!document().is_attached(*node)) continue;
+            const bark::ComputedStyle& style = style_of(*node);
+            const bool cursor = style.text_view("position") == "cursor";
+            const Box pad = box_of(style, "padding");
+            m_floating_node = node;
+            float width = 0.0f;
+            if (const auto fixed = resolve_length(style, "width", view_w)) width = *fixed;
+            else {
+                const float natural = fit_width(r, *node, view_w);
+                width = natural > 0.0f ? std::ceil(natural) : 320.0f;
+            }
+            if (const auto mn = resolve_length(style, "min-width", view_w)) width = std::max(width, *mn);
+            if (const auto mx = resolve_length(style, "max-width", view_w)) width = std::min(width, *mx);
+            width = std::max(1.0f, std::min(width, view_w));
+            const float inner_w = std::max(1.0f, width - pad.left - pad.right);
+            float max_h = view_h;
+            if (const auto mx = resolve_length(style, "max-height", view_h)) max_h = std::min(max_h, *mx);
+            const float saved_avail = m_avail_h;
+            m_avail_h = std::max(0.0f, max_h - pad.top - pad.bottom);
+            const Mark before = mark();
+            float my = 0.0f;
+            lay_content(r, *node, style, pad.left, my, inner_w);
+            rewind(before);
+            float height = my + pad.top + pad.bottom;
+            if (const auto fixed = resolve_length(style, "height", view_h)) height = *fixed;
+            if (const auto mn = resolve_length(style, "min-height", view_h)) height = std::max(height, *mn);
+            height = std::min(height, max_h);
+            const auto left = resolve_length(style, "left", view_w);
+            const auto top = resolve_length(style, "top", view_h);
+            const auto right = resolve_length(style, "right", view_w);
+            const auto bottom = resolve_length(style, "bottom", view_h);
+            float x = 0.0f;
+            float y = 0.0f;
+            if (cursor) {
+                const float dx = left.value_or(14.0f);
+                const float dy = top.value_or(18.0f);
+                x = m_mouse_x + dx;
+                y = m_mouse_y + dy;
+                if (x + width > view_w) x = std::max(0.0f, m_mouse_x - width - 4.0f);
+                if (y + height > view_h) y = std::max(0.0f, m_mouse_y - height - 4.0f);
+            } else {
+                x = left ? *left : right ? view_w - *right - width : 0.0f;
+                y = top ? *top : bottom ? view_h - *bottom - height : 0.0f;
+            }
+            x = std::round(x);
+            y = std::round(y);
+            const Mark start = mark();
+            const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
+            if (auto bg = style.color("background")) push_rect(DrawOp::Kind::Fill, x, y, width, height, to_color(*bg), 1, radius);
+            if (auto border = style.color("border-color")) push_rect(DrawOp::Kind::Stroke, x, y, width, height, to_color(*border), static_cast<unsigned>(style.length("border-width").value_or(1.0)), radius);
+            add_box(ElementBox{ node, x, y, width, height });
+            push_clip(Rect{ x, y, width, height });
+            float cy = y + pad.top;
+            lay_content(r, *node, style, x + pad.left, cy, inner_w);
+            pop_clip();
+            m_avail_h = saved_avail;
+            m_floating_node = nullptr;
+            if (cursor) {
+                m_hits.resize(start.hits);
+                m_boxes.resize(start.boxes);
+            }
+        }
     }
 
     void layout_modals(fizmo::graphics::Renderer& r, float view_w, float view_h) {
@@ -7037,6 +7130,10 @@ private:
     std::vector<TextRun> m_runs;
     std::vector<RunRef> m_run_refs;
     std::vector<const Node*> m_open_modals;
+    std::vector<const Node*> m_floats;
+    std::uint64_t m_float_scan_stamp = 0;
+    std::uint64_t m_float_scan_revision = static_cast<std::uint64_t>(-1);
+    const Node* m_floating_node = nullptr;
     std::uint64_t m_modal_scan_stamp = 0;
     std::uint64_t m_modal_scan_revision = static_cast<std::uint64_t>(-1);
     CodeCompletion m_complete;
