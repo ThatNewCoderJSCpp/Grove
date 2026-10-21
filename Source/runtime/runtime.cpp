@@ -1,5 +1,6 @@
 #include "grove/input/completion.hpp"
 #include "grove/terminal.hpp"
+#include "grove/canvas.hpp"
 #include "grove/runtime/runtime.hpp"
 #include "grove/pages.hpp"
 #include "grove/markup/tags.hpp"
@@ -1017,6 +1018,7 @@ public:
         layout_menu(r, w, h);
         layout_context(r, w, h);
         layout_floating(r, w, h);
+        publish_canvases();
         if (m_pending_select && m_force_full) {
             const Node* pending = m_pending_select;
             m_pending_select = nullptr;
@@ -4999,6 +5001,95 @@ private:
         y += h;
     }
 
+    struct CanvasTexture {
+        std::uint64_t version = 0;
+        std::shared_ptr<fizmo::images::BitmapImage> image;
+        std::shared_ptr<fizmo::graphics::Texture> texture;
+    };
+
+    const fizmo::graphics::Texture* canvas_texture(const Node& element) {
+        const std::shared_ptr<CanvasPixels> c = canvas_of(document(), element);
+        if (c->width == 0 || c->height == 0 || c->rgba.size() < static_cast<std::size_t>(c->width) * c->height * 4u) return nullptr;
+        CanvasTexture& t = m_canvas_textures[&element];
+        if (t.version != c->version || !t.texture) {
+            if (!t.image || t.image->width() != c->width || t.image->height() != c->height) {
+                t.image = std::make_shared<fizmo::images::BitmapImage>(c->width, c->height);
+                t.texture = std::make_shared<fizmo::graphics::Texture>(std::shared_ptr<const fizmo::images::BitmapImage>(t.image), fizmo::graphics::SampleFilter::Bilinear);
+            }
+            std::vector<fizmo::colors::Color>& px = t.image->mutable_pixels();
+            const std::uint8_t* src = c->rgba.data();
+            const std::size_t n = static_cast<std::size_t>(c->width) * c->height;
+            for (std::size_t i = 0; i < n && i < px.size(); ++i, src += 4) px[i] = fizmo::colors::Color(src[0], src[1], src[2], src[3]);
+            t.version = c->version;
+        }
+        return t.texture && t.texture->valid() ? t.texture.get() : nullptr;
+    }
+
+    void layout_canvas(const Node& element, float x, float& y, float width, float height) {
+        float h = height;
+        if (h < 0.0f) {
+            const float zoom = static_cast<float>(m_styles.viewport().scale());
+            if (const auto a = parse_float(element.attribute_or("height", ""))) h = static_cast<float>(*a) * zoom;
+            else h = std::max(60.0f, std::round(width * 0.6f));
+        }
+        h = std::max(0.0f, h);
+        if (const fizmo::graphics::Texture* tex = canvas_texture(element)) {
+            DrawOp& op = push(DrawOp::Kind::Image, x, y, width, h, Color());
+            op.texture = tex;
+            op.alpha = static_cast<float>(opacity_of(element));
+        }
+        y += h;
+    }
+
+    bool in_this_window(const Node& node) const {
+        for (const Node* n = node.parent(); n; n = n->parent()) {
+            if (n == &m_window) return true;
+            if (n->is_element() && n->tag() == "window") return false;
+        }
+        return false;
+    }
+
+    void publish_canvases() {
+        auto& all = document().host().canvases;
+        if (all.empty()) return;
+        std::set<const Node*> seen;
+        for (const ElementBox& b : m_boxes) {
+            if (!b.node || b.node->tag() != "canvas") continue;
+            auto it = all.find(b.node);
+            if (it == all.end()) it = all.emplace(b.node, std::make_shared<CanvasPixels>()).first;
+            if (!seen.insert(b.node).second) continue;
+            const bark::ComputedStyle& cs = style_of(*b.node);
+            const Box pad = box_of(cs, "padding");
+            CanvasRect& rect = it->second->rect;
+            rect.x = b.x + pad.left;
+            rect.y = b.y + pad.top;
+            rect.width = std::max(0.0f, b.w - pad.left - pad.right);
+            rect.height = std::max(0.0f, b.h - pad.top - pad.bottom);
+            rect.shown = true;
+        }
+        for (auto& [node, c] : all) {
+            if (!seen.count(node)) {
+                if (c->rect.shown && document().is_attached(*node) && in_this_window(*node)) c->rect.shown = false;
+                continue;
+            }
+            const unsigned w = static_cast<unsigned>(std::max(0.0, std::round(c->rect.width)));
+            const unsigned h = static_cast<unsigned>(std::max(0.0, std::round(c->rect.height)));
+            if (w == c->reported_width && h == c->reported_height) continue;
+            c->reported_width = w;
+            c->reported_height = h;
+            const Node* target = node;
+            document().events().set_timeout(0.0, [this, target, w, h] {
+                if (!document().is_attached(*target)) return;
+                Event e;
+                e.type = "canvas_resize";
+                e.bubbles = false;
+                e.x = w;
+                e.y = h;
+                dispatch(target, e);
+            });
+        }
+    }
+
     const fizmo::graphics::Texture* texture_for(const Node& img) {
         const std::string path = image_path(m_project, img);
         if (path.empty()) return nullptr;
@@ -5406,6 +5497,7 @@ private:
         if (element.tag() == "math") layout_math(element, content_x, cy, content_w);
         else if (element.tag() == "img") layout_image(element, content_x, cy, content_w);
         else if (element.tag() == "terminal") layout_terminal(r, element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
+        else if (element.tag() == "canvas") layout_canvas(element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
         else if (element.tag() == "br") cy += static_cast<float>(font_size_of(element));
         else if (element.tag() == "hr") {
             push_rect(DrawOp::Kind::Fill, content_x, cy + 4, content_w, 1, to_color(style.color("color").value_or(bark::Rgba{ 120, 120, 120, 255 })));
@@ -7838,6 +7930,7 @@ private:
     bool m_term_swallow = false;
     bool m_swallow_text = false;
     std::map<const Node*, std::array<std::uint8_t, 9>> m_term_colors;
+    std::map<const Node*, CanvasTexture> m_canvas_textures;
     CodeHover m_code_hover;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
     std::shared_ptr<fizmo::images::BitmapImage> m_color_wheel_image;

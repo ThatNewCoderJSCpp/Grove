@@ -138,6 +138,7 @@ struct FileDialogRequest {
 };
 
 class Terminal;
+struct CanvasPixels;
 
 struct MenuItem {
     std::string value;
@@ -191,6 +192,7 @@ struct DocumentHost {
     std::function<bool(Node&)> select_text;
     std::function<void()> clear_selection;
     std::map<const Node*, std::shared_ptr<Terminal>> terminals;
+    std::map<const Node*, std::shared_ptr<CanvasPixels>> canvases;
 };
 
 class Document {

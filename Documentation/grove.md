@@ -49,6 +49,7 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 | `input_select`, `option` | a dropdown, see [Dropdowns](#dropdowns) |
 | `button`, `label` | controls |
 | `img`, `br`, `hr` | images and breaks |
+| `canvas` | pixels the app draws itself, see [Canvas](#canvas) |
 | `math` | MathText, see below |
 | `style` | Bark, inline or `src="file.bark"` |
 | `script` | Walnut, C++ or C, inline or `src="..."` |
@@ -401,6 +402,23 @@ A tab character in the output moves to the next tab stop, every 8 columns like o
 With the keyboard focused on it, keys go to the program. Ctrl+Shift+C copies the selection (so does Ctrl+C while something is selected, unless the element has `copy-on-ctrl-c="false"`, which sends Ctrl+C to the program like a plain terminal), Ctrl+Shift+V or Shift+Insert pastes, Shift+PageUp and Shift+PageDown scroll back, and Ctrl+Shift+Home and End go to the top and bottom of the scrollback. Drag to select (Alt+drag for a block), double-click for a word, Shift+click to extend; middle-click pastes. When the program asks for the mouse, clicks and the wheel go to it instead; hold Shift to select anyway. The wheel scrolls back through output, or moves through the alternate screen with arrow keys (as `less` and `man` expect).
 
 `key_down` still fires on the element first, so an app can take a key for itself with `prevent_default()`.
+
+## Canvas
+
+`<canvas>` shows pixels that the app hosting the document draws itself: a plot, a game view, an image being edited. It fills the space Bark gives it (`width`, `height`, `flex`); without a height it's `height` pixels tall from its attribute, or 60% of its width.
+
+The host sets its pixels from C++ with `#include <grove/canvas.hpp>`:
+
+```cpp
+grove::Node* plot = project.document.find_by_id("plot");
+std::vector<std::uint8_t> rgba(width * height * 4);
+grove::set_canvas_pixels(project.document, *plot, width, height, std::move(rgba));
+```
+
+- `set_canvas_pixels(document, canvas, width, height, rgba)` takes 8-bit RGBA rows, top to bottom, as a `std::vector` (moved in) or a pointer. Grove uploads them once and draws them stretched to the canvas's box, so draw at the size `canvas_size` reports for sharp pixels.
+- `canvas_rect(document, canvas)` is where the canvas is in its window after the last frame, in the same coordinates as mouse events (`x`, `y`, `width`, `height` and `shown`), so `e.x - rect.x` is the mouse's position inside it. `canvas_size(document, canvas, w, h)` gives the size rounded to whole pixels.
+- `canvas_resize` is sent to the canvas (it doesn't bubble) whenever its size changes, with the new size in `x` and `y`. Draw again then.
+- Mouse events (`mouse_down`, `mouse_move`, `mouse_up`, `wheel`, `double_click`, `click`) reach the canvas like any element, and `tabindex="0"` lets it take keys.
 
 ## Math
 
