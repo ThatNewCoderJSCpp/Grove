@@ -41,6 +41,7 @@ constexpr TagInfo k_tags[] = {
     { "input_integer", TagContent::Void,   TagRole::Control },
     { "input_float",   TagContent::Void,   TagRole::Control },
     { "input_string",  TagContent::Void,   TagRole::Control },
+    { "input_math",    TagContent::Void,   TagRole::Control },
     { "input_bool",    TagContent::Normal, TagRole::Control },
     { "input_radio",   TagContent::Normal, TagRole::Control },
     { "input_slider",  TagContent::Void,   TagRole::Control },

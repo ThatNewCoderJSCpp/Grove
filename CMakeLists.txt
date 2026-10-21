@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.40 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.41 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -84,7 +84,8 @@ add_library(grove_core STATIC
     Source/app.cpp
     Source/highlight.cpp
     Source/terminal.cpp
-    Source/canvas.cpp)
+    Source/canvas.cpp
+    Source/math_input.cpp)
 add_library(grove::core ALIAS grove_core)
 target_compile_features(grove_core PUBLIC cxx_std_17)
 target_include_directories(grove_core PUBLIC

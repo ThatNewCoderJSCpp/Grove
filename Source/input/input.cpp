@@ -24,6 +24,7 @@ constexpr KindName k_tags[] = {
     { "input_integer", InputKind::Integer },
     { "input_float",   InputKind::Float },
     { "input_string",  InputKind::String },
+    { "input_math",    InputKind::String },
     { "input_bool",    InputKind::Bool },
     { "input_radio",   InputKind::Radio },
     { "input_slider",  InputKind::Slider },

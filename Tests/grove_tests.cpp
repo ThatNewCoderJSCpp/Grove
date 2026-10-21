@@ -5,6 +5,7 @@
 #include "grove/bark/actions.hpp"
 #include "grove/bark_api.hpp"
 #include "grove/input/code_find.hpp"
+#include "grove/math_input.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,69 @@ void check(bool ok, const char* what, int line) {
 }
 
 #define CHECK(expr) check((expr), #expr, __LINE__)
+
+void test_math_input_layout() {
+    grove::MathInputMetrics m;
+    m.ascent = 12.0f;
+    m.descent = 4.0f;
+    m.width = [](const std::string& s, float scale, bool) {
+        float n = 0.0f;
+        for (unsigned char c : s) n += (c & 0xC0) != 0x80 ? 1.0f : 0.0f;
+        return n * 8.0f * scale;
+    };
+    auto glyph_at = [](const grove::MathInputLayout& l, std::size_t begin) -> const grove::MathInputGlyph* {
+        for (const auto& g : l.glyphs) {
+            if (g.source && g.begin == begin) return &g;
+        }
+        return nullptr;
+    };
+    const grove::MathInputLayout plain = grove::layout_math_input("x+1", m);
+    CHECK(plain.carets.size() == 4);
+    CHECK(plain.ascent == 12.0f && plain.descent == 4.0f);
+    const grove::MathInputLayout power = grove::layout_math_input("x^2", m);
+    const auto* x = glyph_at(power, 0);
+    const auto* hat = glyph_at(power, 1);
+    const auto* two = glyph_at(power, 2);
+    CHECK(x && hat && two);
+    CHECK(two->y < x->y && two->scale < x->scale);
+    CHECK(!hat->visible && hat->width == 0.0f);
+    CHECK(power.carets.back().y < 0.0f && power.carets.back().scale < 1.0f);
+    const grove::MathInputLayout sub = grove::layout_math_input("a_1", m);
+    CHECK(glyph_at(sub, 2)->y > 0.0f && !glyph_at(sub, 1)->visible);
+    const grove::MathInputLayout frac = grove::layout_math_input("(x+1)/2", m);
+    CHECK(frac.ascent + frac.descent > plain.ascent + plain.descent);
+    CHECK(!glyph_at(frac, 0)->visible && !glyph_at(frac, 4)->visible && !glyph_at(frac, 5)->visible);
+    CHECK(glyph_at(frac, 6)->y > 0.0f && glyph_at(frac, 1)->y < 0.0f);
+    CHECK(!frac.lines.empty());
+    const grove::MathInputLayout root = grove::layout_math_input("sqrt(x)", m);
+    CHECK(root.lines.size() >= 3);
+    for (std::size_t k = 0; k < 5; ++k) CHECK(!glyph_at(root, k)->visible);
+    CHECK(glyph_at(root, 5)->visible && glyph_at(root, 5)->x > 0.0f);
+    const grove::MathInputLayout greek = grove::layout_math_input("theta", m);
+    CHECK(glyph_at(greek, 0)->text == "\xCE\xB8" && !glyph_at(greek, 1)->visible);
+    const grove::MathInputLayout le = grove::layout_math_input("a<=b", m);
+    CHECK(glyph_at(le, 1)->text == "\xE2\x89\xA4" && !glyph_at(le, 2)->visible);
+    for (const std::string text : { std::string("y = x^2 + sqrt(x+1)/2 - a_1"), std::string("e^(-x^2/2)/sqrt(2pi)"), std::string("cbrt(x) <= theta^2"), std::string("x^"), std::string("sqrt("), std::string("((("), std::string("/x"), std::string("a/"), std::string("x_{"), std::string("nthroot(8, 3)"), std::string("\xCE\xB8^2") }) {
+        const grove::MathInputLayout l = grove::layout_math_input(text, m);
+        CHECK(l.carets.size() >= 1);
+        CHECK(l.carets.back().offset == text.size());
+        for (std::size_t k = 1; k < l.carets.size(); ++k) CHECK(l.carets[k].offset > l.carets[k - 1].offset);
+        std::size_t sources = 0;
+        for (const auto& g : l.glyphs) sources += g.source ? 1 : 0;
+        CHECK(sources + 1 == l.carets.size());
+    }
+    const grove::MathInputLayout lone = grove::layout_math_input("x^", m);
+    CHECK(glyph_at(lone, 1)->visible);
+    const grove::MathInputLayout line = grove::layout_math_input("abc+de", m);
+    float last = -1.0f;
+    for (const auto& c : line.carets) {
+        CHECK(c.x >= last);
+        last = c.x;
+    }
+    CHECK(grove::math_input_hit(line, 0.0f, 0.0f) == 0);
+    CHECK(grove::math_input_hit(line, 1000.0f, 0.0f) == 6);
+    CHECK(grove::math_input_hit(power, two->x + 1.0f, two->y - 2.0f) == 2);
+}
 
 void test_markup() {
     grove::Diagnostics d;
@@ -2036,6 +2100,7 @@ int main() {
     test_web_highlighting();
     test_more_languages();
     test_docs_languages();
+    test_math_input_layout();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

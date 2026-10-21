@@ -9,6 +9,7 @@
 #include "grove/input/code_buffer.hpp"
 #include "grove/input/code_find.hpp"
 #include "grove/input/keymap.hpp"
+#include "grove/math_input.hpp"
 #include "grove/native.hpp"
 #include "grove/script/loader.hpp"
 #include "grove/windowing.hpp"
@@ -575,7 +576,7 @@ std::shared_ptr<fizmo::images::BitmapImage> load_bitmap(const std::string& path)
 }
 
 struct DrawOp {
-    enum class Kind { Fill, Stroke, Circle, CircleStroke, Text, Math, ClipPush, ClipPop, Image } kind = Kind::Fill;
+    enum class Kind { Fill, Stroke, Circle, CircleStroke, Text, Math, ClipPush, ClipPop, Image, Line } kind = Kind::Fill;
     float x = 0;
     float y = 0;
     float w = 0;
@@ -1122,6 +1123,13 @@ public:
                 if (m_code_drag) code_drag_to(px, py);
                 if (m_picker.drag != PickerPart::None) picker_drag(px, py);
                 term_mouse_move(px, py);
+                if (m_edit_dragging && m_focus && document().is_attached(*m_focus)) {
+                    m_edit_click_x = px;
+                    m_edit_click_y = py;
+                    m_edit_click_extend = true;
+                    mutable_node(*m_focus).mark_changed(false);
+                    poke();
+                }
                 text_drag_to(px, py);
                 hover_at(px, py);
                 code_hover_move(px, py);
@@ -1387,6 +1395,12 @@ private:
     static Rect op_rect(const DrawOp& op) {
         if (op.kind == DrawOp::Kind::Circle || op.kind == DrawOp::Kind::CircleStroke) return Rect{ op.x - op.radius - 1.0f, op.y - op.radius - 1.0f, op.radius * 2.0f + 2.0f, op.radius * 2.0f + 2.0f };
         if (op.kind == DrawOp::Kind::Math) return Rect{ op.x - 4.0f, op.y - 4.0f, 1e6f, 1e6f };
+        if (op.kind == DrawOp::Kind::Line) {
+            const float pad = static_cast<float>(op.stroke) + 1.0f;
+            const float x0 = std::min(op.x, op.x + op.w);
+            const float y0 = std::min(op.y, op.y + op.h);
+            return Rect{ x0 - pad, y0 - pad, std::fabs(op.w) + pad * 2.0f, std::fabs(op.h) + pad * 2.0f };
+        }
         const float pad = static_cast<float>(op.stroke) + 1.0f;
         return Rect{ op.x - pad, op.y - pad, std::max(op.w, 1.0f) + pad * 2.0f, std::max(op.h, 1.0f) + pad * 2.0f };
     }
@@ -1554,6 +1568,7 @@ private:
         float h = std::max(op.h, 1.0f);
         switch (op.kind) {
             case DrawOp::Kind::Math: return true;
+            case DrawOp::Kind::Line: return true;
             case DrawOp::Kind::Circle:
             case DrawOp::Kind::CircleStroke:
                 x = op.x - op.radius;
@@ -1585,6 +1600,7 @@ private:
             case DrawOp::Kind::Text: r.draw_text(x, y, std::max(w, 1u), std::max(h, 1u), op.text, op.style); break;
             case DrawOp::Kind::Math: if (op.math) r.draw_fancy_text(*op.math, op.x, op.y); break;
             case DrawOp::Kind::Image: if (op.texture) r.draw_texture(*op.texture, x, y, w, h, op.alpha); break;
+            case DrawOp::Kind::Line: r.draw_line(x, y, static_cast<int>(std::lround(op.x + op.w)), static_cast<int>(std::lround(op.y + op.h)), fizmo::graphics::Paint::stroke(op.color, op.stroke)); break;
             case DrawOp::Kind::ClipPush:
             case DrawOp::Kind::ClipPop: break;
         }
@@ -2832,6 +2848,7 @@ private:
                     }
                 }
                 caret = best;
+                const std::size_t previous = m_edit_caret;
                 m_edit_caret = element.has_attribute("masked") ? [&] {
                     std::size_t n = best / 3;
                     std::size_t i = 0;
@@ -2841,8 +2858,7 @@ private:
                     }
                     return i;
                 }() : best;
-                m_edit_click_x = -1.0f;
-                m_edit_all = false;
+                edit_apply_click(previous);
             }
             const float caret_px = text_width(r, text.substr(0, caret), ts);
             if (full <= tw) {
@@ -2859,6 +2875,15 @@ private:
             const float rp = right_pad();
             const float view_w = std::max(1.0f, tw - lp - rp);
             push_clip(Rect{ tx + lp, y, view_w, h });
+            {
+                std::size_t a = 0;
+                std::size_t b = 0;
+                if (!m_edit_all && !element.has_attribute("masked") && edit_range(a, b)) {
+                    const float ax = text_width(r, text.substr(0, std::min(a, text.size())), ts);
+                    const float bx = text_width(r, text.substr(0, std::min(b, text.size())), ts);
+                    push_rect(DrawOp::Kind::Fill, tx + lp - scroll + ax, y + pad.top + 1, std::max(1.0f, bx - ax), lh - 2, with_alpha(accent_color(element), 0.35), 1, 2);
+                }
+            }
             push_text(tx + lp - scroll, y + pad.top, full + 4.0f, lh, text, shown);
             if (m_edit_all && !text.empty()) push_rect(DrawOp::Kind::Fill, tx + lp - scroll - 1, y + pad.top + 1, full + 2, lh - 2, with_alpha(accent_color(element), 0.35), 1, 2);
             pop_clip();
@@ -2868,6 +2893,128 @@ private:
             push_rect(DrawOp::Kind::Fill, cx, y + pad.top + 2, 2, lh - 4, accent_color(element));
         }
         if (!disabled) add_hit(Hit{ &element, kind, x, y, w, h, 0, 0 });
+        add_box(ElementBox{ &element, x, y, w, h });
+        y += h;
+    }
+
+    MathInputLayout math_field_layout(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& ts) {
+        const float lh = line_height(r, ts);
+        const double base_size = ts.has_size() ? ts.size() : 16.0;
+        MathInputMetrics m;
+        m.ascent = lh * 0.78f;
+        m.descent = lh * 0.22f;
+        m.width = [&](const std::string& s, float scale, bool italic) {
+            fizmo::text::TextStyle t = ts;
+            t.set_size(base_size * scale);
+            t.set_italic(italic);
+            return text_width(r, s, t);
+        };
+        return layout_math_input(text, m);
+    }
+
+    void layout_math_field(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width) {
+        const bark::ComputedStyle& style = style_of(element);
+        const Box pad = box_of(style, "padding");
+        const fizmo::text::TextStyle ts = text_style(element);
+        const float lh = line_height(r, ts);
+        const double base_size = ts.has_size() ? ts.size() : 16.0;
+        const float w = box_width(style, width);
+        const bool focused = m_focus == &element;
+        const bool disabled = element.has_attribute("disabled");
+        const double fade = (disabled ? 0.45 : 1.0) * opacity_of(element);
+        const std::string text = focused ? m_edit : input_text(element);
+        const std::size_t caret = focused ? std::min(m_edit_caret, text.size()) : text.size();
+        const MathInputLayout layout = math_field_layout(r, text, ts);
+        const float content_h = std::max(lh, layout.ascent + layout.descent);
+        const float h = content_h + pad.top + pad.bottom;
+        const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
+
+        if (auto bg = style.color("background")) push_rect(DrawOp::Kind::Fill, x, y, w, h, with_alpha(to_color(*bg), fade), 1, radius);
+        Color border = to_color(style.color("border-color").value_or(bark::Rgba{ 255, 255, 255, 60 }));
+        if (focused) border = m_invalid ? Color(243, 139, 168, 255) : accent_color(element);
+        push_rect(DrawOp::Kind::Stroke, x, y, w, h, with_alpha(border, fade), focused ? 2u : 1u, radius);
+
+        const float tx = x + pad.left;
+        const float tw = std::max(1.0f, x + w - pad.right - tx);
+        const float baseline = y + pad.top + 0.5f * (content_h - layout.ascent - layout.descent) + layout.ascent;
+        fizmo::text::TextStyle shown = ts;
+        if (disabled) shown.set_fg_color(with_alpha(raw_text_color(element), fade));
+        const Color ink = text_color(element);
+
+        if (text.empty()) {
+            if (element.has_attribute("placeholder")) {
+                fizmo::text::TextStyle muted = ts;
+                muted.set_fg_color(with_alpha(text_color(element), 0.45));
+                push_text(tx, baseline - layout.base_ascent, tw, lh, fit_text(r, element.attribute_or("placeholder", ""), muted, tw), muted);
+            }
+            if (focused) push_rect(DrawOp::Kind::Fill, tx, baseline - layout.base_ascent + 2, 2, lh - 4, accent_color(element));
+            if (!disabled) add_hit(Hit{ &element, InputKind::String, x, y, w, h, 0, 0 });
+            add_box(ElementBox{ &element, x, y, w, h });
+            y += h;
+            return;
+        }
+
+        if (m_edit_view != &element && focused) {
+            m_edit_view = &element;
+            m_edit_scroll = 0.0f;
+        }
+        float scroll = focused ? m_edit_scroll : 0.0f;
+        if (focused && m_edit_click_x >= 0.0f) {
+            const std::size_t previous = m_edit_caret;
+            m_edit_caret = math_input_hit(layout, m_edit_click_x - tx + scroll, m_edit_click_y - baseline);
+            edit_apply_click(previous);
+        }
+        const std::size_t shown_caret = focused ? std::min(m_edit_caret, text.size()) : caret;
+        const MathInputCaret& cpos = math_input_caret(layout, shown_caret);
+        if (focused) {
+            if (layout.width <= tw - 2.0f) {
+                scroll = 0.0f;
+            } else {
+                if (cpos.x < scroll) scroll = std::max(0.0f, cpos.x - tw * 0.33f);
+                else if (cpos.x > scroll + tw - 3.0f) scroll = cpos.x - tw + 3.0f;
+                scroll = std::clamp(scroll, 0.0f, std::max(0.0f, layout.width - tw + 3.0f));
+            }
+            m_edit_scroll = scroll;
+        }
+        const float ox = tx - scroll;
+        push_clip(Rect{ tx - 1.0f, y + 1.0f, tw + 2.0f, h - 2.0f });
+        {
+            std::size_t a = 0;
+            std::size_t b = 0;
+            if (focused && edit_range(a, b)) {
+                const Color sel = with_alpha(accent_color(element), 0.35);
+                for (const MathInputGlyph& g : layout.glyphs) {
+                    if (!g.source || g.begin < a || g.end > b) continue;
+                    const float gw = std::max(g.width, g.visible ? 1.0f : 0.0f);
+                    if (gw <= 0.0f) continue;
+                    push_rect(DrawOp::Kind::Fill, ox + g.x, baseline + g.y - layout.base_ascent * g.scale, gw, lh * g.scale, sel, 1, 0);
+                }
+            }
+        }
+        for (const MathInputGlyph& g : layout.glyphs) {
+            if (!g.visible || g.text.empty()) continue;
+            fizmo::text::TextStyle gs = shown;
+            gs.set_size(base_size * g.scale);
+            gs.set_italic(g.italic);
+            push_text(ox + g.x + g.pad, baseline + g.y - layout.base_ascent * g.scale, g.width + 4.0f, lh * g.scale + 2.0f, g.text, gs);
+        }
+        for (const MathInputLine& l : layout.lines) {
+            const float th = std::max(1.0f, l.thickness);
+            if (std::fabs(l.y1 - l.y2) < 0.01f) {
+                push_rect(DrawOp::Kind::Fill, ox + std::min(l.x1, l.x2), baseline + l.y1 - 0.5f * th, std::fabs(l.x2 - l.x1), th, with_alpha(ink, fade), 1, 0);
+            } else {
+                DrawOp& op = push(DrawOp::Kind::Line, ox + l.x1, baseline + l.y1, l.x2 - l.x1, l.y2 - l.y1, with_alpha(ink, fade));
+                op.stroke = static_cast<unsigned>(std::max(1.0f, std::round(th)));
+            }
+        }
+        pop_clip();
+        if (focused && !m_edit_all) {
+            const float ch = lh * cpos.scale;
+            const float cx = std::clamp(ox + cpos.x, tx, tx + tw - 1.0f);
+            push_rect(DrawOp::Kind::Fill, cx, baseline + cpos.y - layout.base_ascent * cpos.scale + 1.0f, 2, std::max(4.0f, ch - 2.0f), accent_color(element));
+        }
+        if (focused && m_edit_all) push_rect(DrawOp::Kind::Fill, ox - 1, baseline - layout.ascent, layout.width + 2, layout.ascent + layout.descent, with_alpha(accent_color(element), 0.3), 1, 2);
+        if (!disabled) add_hit(Hit{ &element, InputKind::String, x, y, w, h, 0, 0 });
         add_box(ElementBox{ &element, x, y, w, h });
         y += h;
     }
@@ -5421,6 +5568,7 @@ private:
                 layout_code(r, element, bx, y, bw, forced_h);
                 m_avail_h = saved;
             } else if (*kind == InputKind::Select) layout_select(r, element, bx, y, bw);
+            else if (is_text_input(*kind) && element.tag() == "input_math") layout_math_field(r, element, bx, y, bw);
             else if (is_text_input(*kind)) layout_text_input(r, element, *kind, bx, y, bw);
             else if (*kind == InputKind::Slider) layout_slider(r, element, bx, y, bw);
             else layout_check(r, element, *kind, bx, y, bw);
@@ -5764,6 +5912,10 @@ private:
         m_edit_view = node;
         m_focus_start = m_edit;
         m_invalid = false;
+        m_edit_anchor = std::string::npos;
+        m_edit_undo.clear();
+        m_edit_redo.clear();
+        m_edit_undo_kind = 0;
         m_edit_all = input_kind_of(*node) == InputKind::Color && !m_edit.empty();
         if (m_native) m_native->start_text_input();
         set_focused(node);
@@ -5796,6 +5948,10 @@ private:
         m_edit_view = nullptr;
         m_invalid = false;
         m_edit_all = false;
+        m_edit_anchor = std::string::npos;
+        m_edit_dragging = false;
+        m_edit_undo.clear();
+        m_edit_redo.clear();
         if (m_native) m_native->stop_text_input();
     }
 
@@ -6396,7 +6552,18 @@ private:
                         drag_to(px);
                         return;
                     default:
-                        if (is_text_input(hit.kind) && hit.kind != InputKind::Color) m_edit_click_x = px;
+                        if (is_text_input(hit.kind) && hit.kind != InputKind::Color) {
+                            const bool extend = (m_mods & ModifierShift) != 0 && m_focus == hit.node;
+                            focus(hit.node);
+                            m_edit_click_x = px;
+                            m_edit_click_y = py;
+                            m_edit_click_extend = extend;
+                            m_edit_dragging = true;
+                            m_edit_all = false;
+                            mutable_node(*hit.node).mark_changed(false);
+                            poke();
+                            return;
+                        }
                         focus(hit.node);
                         return;
                 }
@@ -6423,6 +6590,7 @@ private:
             return;
         }
         term_mouse_up(px, py, button);
+        if (button == 1) m_edit_dragging = false;
         const bool selected_by_drag = button == 1 && m_sel_pending && m_sel_dragged && has_text_selection();
         if (button == 1) m_sel_pending = false;
         if (button == 1 && m_picker.drag != PickerPart::None) {
@@ -6510,15 +6678,99 @@ private:
         edit_insert(text);
     }
 
+    bool edit_range(std::size_t& a, std::size_t& b) const {
+        if (m_edit_all && !m_edit.empty()) {
+            a = 0;
+            b = m_edit.size();
+            return true;
+        }
+        if (m_edit_anchor == std::string::npos) return false;
+        const std::size_t c = std::min(m_edit_caret, m_edit.size());
+        const std::size_t n = std::min(m_edit_anchor, m_edit.size());
+        if (c == n) return false;
+        a = std::min(c, n);
+        b = std::max(c, n);
+        return true;
+    }
+
+    void edit_apply_click(std::size_t previous) {
+        if (m_edit_click_extend) {
+            if (m_edit_anchor == std::string::npos) m_edit_anchor = previous;
+        } else {
+            m_edit_anchor = m_edit_caret;
+        }
+        if (m_edit_anchor == m_edit_caret && !m_edit_dragging) m_edit_anchor = std::string::npos;
+        m_edit_click_x = -1.0f;
+        m_edit_click_y = -1.0f;
+        m_edit_click_extend = false;
+        m_edit_all = false;
+    }
+
+    void edit_clear_selection() {
+        m_edit_all = false;
+        m_edit_anchor = std::string::npos;
+    }
+
+    void edit_remember(int kind) {
+        const auto now = std::chrono::steady_clock::now();
+        const bool merge = kind != 0 && kind == m_edit_undo_kind && now - m_edit_undo_time < std::chrono::milliseconds(900);
+        m_edit_undo_time = now;
+        m_edit_undo_kind = kind;
+        m_edit_redo.clear();
+        if (merge) return;
+        if (!m_edit_undo.empty() && m_edit_undo.back().first == m_edit) return;
+        m_edit_undo.emplace_back(m_edit, m_edit_caret);
+        if (m_edit_undo.size() > 200) m_edit_undo.erase(m_edit_undo.begin());
+    }
+
+    void edit_fire_input() {
+        if (!m_focus) return;
+        m_invalid = false;
+        Event input;
+        input.type = "input";
+        input.edit_text = m_edit;
+        input.has_edit_text = true;
+        dispatch(m_focus, input);
+    }
+
+    bool edit_undo(bool redo) {
+        if (!m_focus || m_focus->has_attribute("readonly")) return false;
+        auto& from = redo ? m_edit_redo : m_edit_undo;
+        auto& to = redo ? m_edit_undo : m_edit_redo;
+        while (!from.empty() && from.back().first == m_edit) from.pop_back();
+        if (from.empty()) return false;
+        to.emplace_back(m_edit, m_edit_caret);
+        m_edit = from.back().first;
+        m_edit_caret = std::min(from.back().second, m_edit.size());
+        from.pop_back();
+        m_edit_undo_kind = 0;
+        edit_clear_selection();
+        edit_fire_input();
+        return true;
+    }
+
+    bool edit_delete_selection() {
+        std::size_t a = 0;
+        std::size_t b = 0;
+        if (!edit_range(a, b)) return false;
+        m_edit.erase(a, b - a);
+        m_edit_caret = a;
+        edit_clear_selection();
+        return true;
+    }
+
     void edit_insert(const std::string& text) {
         if (!m_focus) return;
         bool changed = false;
+        edit_remember(1);
+        {
+            std::size_t a = 0;
+            std::size_t b = 0;
+            const std::vector<std::string> pieces = split_code_points(text);
+            if (edit_range(a, b) && !pieces.empty() && input_accepts(*m_focus, m_edit.substr(0, a), pieces.front())) changed = edit_delete_selection();
+            edit_clear_selection();
+        }
         for (const std::string& cp : split_code_points(text)) {
-            if (m_edit_all && input_accepts(*m_focus, "", cp)) {
-                m_edit.clear();
-                m_edit_caret = 0;
-                m_edit_all = false;
-            }
             m_edit_caret = std::min(m_edit_caret, m_edit.size());
             if (input_accepts(*m_focus, m_edit.substr(0, m_edit_caret), cp)) {
                 m_edit.insert(m_edit_caret, cp);
@@ -6551,8 +6803,19 @@ private:
     bool edit_copy(bool cut) {
         if (!m_focus || !m_native) return false;
         if (m_focus->has_attribute("masked") || m_edit.empty()) return false;
+        std::size_t a = 0;
+        std::size_t b = 0;
+        if (m_edit_anchor != std::string::npos && !m_edit_all && edit_range(a, b)) {
+            put_clipboard(m_native, m_edit.substr(a, b - a));
+            if (!cut || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return true;
+            edit_remember(0);
+            edit_delete_selection();
+            edit_fire_input();
+            return true;
+        }
         put_clipboard(m_native, m_edit);
         if (!cut || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return true;
+        edit_remember(0);
         m_edit.clear();
         m_edit_caret = 0;
         m_edit_all = false;
@@ -6764,6 +7027,41 @@ private:
                 m_swallow_text = true;
                 return;
             }
+            if (ctrl_key && (key == Key::Z || key == Key::Y)) {
+                edit_undo(key == Key::Y || shift_key);
+                m_swallow_text = true;
+                return;
+            }
+            if (shift_key && (key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End)) {
+                if (m_edit_all) {
+                    m_edit_anchor = key == Key::Left || key == Key::Home ? m_edit.size() : 0;
+                    m_edit_caret = key == Key::Left || key == Key::Home ? m_edit.size() : 0;
+                    m_edit_all = false;
+                }
+                if (m_edit_anchor == std::string::npos) m_edit_anchor = std::min(m_edit_caret, m_edit.size());
+                const bool word = ctrl_key || fizmo::input::has(e.mods, fizmo::input::Modifiers::Alt);
+                m_edit_caret = std::min(m_edit_caret, m_edit.size());
+                if (key == Key::Left) m_edit_caret = word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
+                else if (key == Key::Right) m_edit_caret = word ? word_right(m_edit, m_edit_caret) : next_code_point(m_edit, m_edit_caret);
+                else if (key == Key::Home) m_edit_caret = 0;
+                else m_edit_caret = m_edit.size();
+                return;
+            }
+        }
+        std::size_t sel_a = 0;
+        std::size_t sel_b = 0;
+        const bool had_range = m_edit_anchor != std::string::npos && edit_range(sel_a, sel_b);
+        if (key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End || key == Key::Up || key == Key::Down) m_edit_anchor = std::string::npos;
+        if (had_range && (key == Key::Backspace || key == Key::Delete)) {
+            edit_remember(0);
+            edit_delete_selection();
+            edit_fire_input();
+            return;
+        }
+        if (had_range && (key == Key::Left || key == Key::Right)) {
+            m_edit_caret = key == Key::Left ? sel_a : sel_b;
+            m_edit_all = false;
+            return;
         }
         const bool was_all = m_edit_all;
         if (key == Key::Backspace || key == Key::Delete || key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End) m_edit_all = false;
@@ -6787,6 +7085,7 @@ private:
             case Key::Delete:
             case Key::Backspace: {
                 const std::string before = m_edit;
+                edit_remember(2);
                 if (was_all) {
                     m_edit.clear();
                     m_edit_caret = 0;
@@ -7960,6 +8259,14 @@ private:
     std::size_t m_edit_caret = 0;
     float m_edit_scroll = 0.0f;
     float m_edit_click_x = -1.0f;
+    float m_edit_click_y = -1.0f;
+    bool m_edit_click_extend = false;
+    bool m_edit_dragging = false;
+    std::size_t m_edit_anchor = std::string::npos;
+    std::vector<std::pair<std::string, std::size_t>> m_edit_undo;
+    std::vector<std::pair<std::string, std::size_t>> m_edit_redo;
+    int m_edit_undo_kind = 0;
+    std::chrono::steady_clock::time_point m_edit_undo_time;
     const Node* m_edit_view = nullptr;
     const Node* m_dragging = nullptr;
     std::string m_drag_start;

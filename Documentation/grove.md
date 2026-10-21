@@ -43,7 +43,7 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 | `modal` | a dialog drawn on top of the window. See [Pages, tabs and modals](#pages-tabs-and-modals) |
 | `h1`–`h4`, `p` | headings and paragraphs |
 | `text`, `span`, `b`, `i`, `u`, `code`, `link` | inline text |
-| `input_integer`, `input_float`, `input_string`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
+| `input_integer`, `input_float`, `input_string`, `input_math`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
 | `input_code` | a code editor, see [Code editor](#code-editor) |
 | `input_file` | a button that opens the system's file or folder picker, see [File picker](#file-picker) |
 | `input_select`, `option` | a dropdown, see [Dropdowns](#dropdowns) |
@@ -132,6 +132,7 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `<input_integer>` | `std::int64_t` / `int64_t` / `long int` | `0`–`9`, and a leading `-` only if `min` allows negatives |
 | `<input_float>` | `double` / `double` / `short float` | digits, one `.`, a leading `-` if allowed |
 | `<input_string>` | `std::string` / `const char*` / `string` | any printable text, up to `maxlength` characters |
+| `<input_math>` | `std::string` / `const char*` / `string` | the same as `input_string`, drawn as math while you type; see [Math input](#math-input) |
 | `<input_bool>Label</input_bool>` | `bool` | click to toggle; drawn as a checkbox or a switch |
 | `<input_radio name="g" value="v">Label</input_radio>` | `bool` per option, `string` per group | click to pick; one per `name` group |
 | `<input_slider>` | `double` | click or drag |
@@ -206,6 +207,29 @@ Type safety holds at every layer:
 `<input type="integer">` (and `float`, `string`, `bool`, `radio`, `slider`, `color`) still works and means the same as the matching `input_*` element; `checkbox`, `slider` and `color` are kept as short names for `input_bool`, `input_slider` and `input_color`.
 
 `grove inputs doc.grove` lists every input with its type and current value.
+
+
+### Math input
+
+`<input_math>` is a text box whose text is drawn as math as you type, the way a graphing calculator shows it. The value is still the plain text that was typed (`x^2/3`, not a picture), so `value_string()`, `set_value_string()`, the `input` and `change` events and every `input_string` attribute work the same, and the caret, selection and clicks follow the characters:
+
+| Typed | Drawn |
+|---|---|
+| `x^2`, `x^(n+1)`, `x^{n+1}` | a superscript, smaller and raised; the `^` and the brackets around a group aren't drawn. Powers nest: `e^x^2` |
+| `a_1`, `x_{12}` | a subscript |
+| `a/b`, `(x+1)/(x-1)` | a stacked fraction: the term before `/` over the term after it, without the brackets around either; fractions nest |
+| `sqrt(x)`, `cbrt(x)`, `nthroot(x, 5)` | a radical sign over the argument, with a small 3 or the index for the other roots |
+| `*`, `<=`, `>=`, `!=`, `-` | `·`, `≤`, `≥`, `≠`, `−` |
+| `alpha` … `omega`, `Gamma` … `Omega`, `varepsilon`, `vartheta`, `varphi`, `pi`, `tau`, `inf` | the Greek letter or symbol |
+| `sin`, `cos`, `ln`, `exp`, … and any longer name followed by `(` | upright, like a function name; single letters are italic |
+
+Brackets around something taller than a line (a fraction, say) grow to fit, and the box grows taller to fit fractions and powers. Text that isn't finished yet (`x^` at the end, an unclosed `sqrt(`) is drawn as typed. It's styled like `input_string`: `font-size`, `color`, `padding`, `background`, `border-*`, `width` and `flex` all apply.
+
+```html
+<input_math id="f" value="y = x^2 + sqrt(x+1)/2" placeholder="f(x)" />
+```
+
+Every one-line text input (`input_string`, `input_math`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus.
 
 ### Code editor
 
