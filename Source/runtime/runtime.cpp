@@ -2223,8 +2223,17 @@ private:
         return display == "inline-block" || (display.empty() && (node.tag() == "button" || node.tag() == "input_file"));
     }
 
+    float wrap_width(fizmo::graphics::Renderer& r, const Node& row, const Node& item, float width) {
+        float w = natural_width(r, row, item, width);
+        if (!item.is_element()) return std::max(0.0f, w);
+        const bark::ComputedStyle& cs = style_of(item);
+        const Box m = box_of(cs, "margin");
+        if (const auto v = resolve_length(cs, "min-width", width)) w = std::max(w, *v + m.left + m.right);
+        if (w < 0.0f) w = 80.0f + m.left + m.right;
+        return w;
+    }
+
     void layout_row(fizmo::graphics::Renderer& r, const Node& element, const bark::ComputedStyle& style, float x, float& y, float width) {
-        const float gap = static_cast<float>(style.length("gap").value_or(8.0));
         std::vector<const Node*> items;
         for (const auto& c : element.children()) {
             if (c->is_text() && collapse_whitespace(c->text()).empty()) continue;
@@ -2232,6 +2241,38 @@ private:
             if (c->is_element() || c->is_text()) items.push_back(c.get());
         }
         if (items.empty()) return;
+        if (items.size() > 1 && style.text_view("flex-wrap") == "wrap") {
+            const float gap = static_cast<float>(style.length("gap").value_or(8.0));
+            const float row_gap = static_cast<float>(style.length("row-gap").value_or(gap));
+            std::vector<std::vector<const Node*>> lines(1);
+            float used = 0.0f;
+            for (const Node* n : items) {
+                const float w = wrap_width(r, element, *n, width);
+                const float need = lines.back().empty() ? w : used + gap + w;
+                if (!lines.back().empty() && need > width + 0.5f) {
+                    lines.emplace_back();
+                    used = w;
+                } else {
+                    used = need;
+                }
+                lines.back().push_back(n);
+            }
+            if (lines.size() > 1) {
+                const float saved_h = m_avail_h;
+                for (std::size_t i = 0; i < lines.size(); ++i) {
+                    if (i > 0) y += row_gap;
+                    m_avail_h = -1.0f;
+                    layout_row_items(r, element, style, lines[i], x, y, width);
+                }
+                m_avail_h = saved_h;
+                return;
+            }
+        }
+        layout_row_items(r, element, style, items, x, y, width);
+    }
+
+    void layout_row_items(fizmo::graphics::Renderer& r, const Node& element, const bark::ComputedStyle& style, const std::vector<const Node*>& items, float x, float& y, float width) {
+        const float gap = static_cast<float>(style.length("gap").value_or(8.0));
         const float spacing = gap * static_cast<float>(items.size() - 1);
         std::vector<float> widths;
         std::vector<float> weights;
@@ -7917,6 +7958,8 @@ struct WindowHost {
     Color background;
     unsigned width = 0;
     unsigned height = 0;
+    unsigned min_width = 0;
+    unsigned min_height = 0;
     bool auto_height = false;
     bool fitted = false;
     bool close_requested = false;
@@ -8187,8 +8230,12 @@ private:
                 has_height = true;
             }
         }
-        host->width = std::max(width, 60u);
-        host->height = std::max(height, 40u);
+        const double min_w = std::max(0.0, style.length("min-size", 0).value_or(0.0));
+        const double min_h = std::max(0.0, style.length("min-size", 1).value_or(min_w));
+        host->min_width = static_cast<unsigned>(std::lround(min_w));
+        host->min_height = static_cast<unsigned>(std::lround(min_h));
+        host->width = std::max({ width, 60u, host->min_width });
+        host->height = std::max({ height, 40u, host->min_height });
         host->auto_height = !main && !has_height;
         if (host->auto_height) host->height = host->popup ? 160u : 240u;
         host->background = to_color(style.color("background").value_or(bark::Rgba{ 30, 30, 36, 255 }));
@@ -8214,6 +8261,7 @@ private:
             return nullptr;
         }
         if (host->popup) host->window->set_resizable(false);
+        else if (host->min_width > 0 || host->min_height > 0) host->window->set_min_size(host->min_width, host->min_height);
         if (!main) place(*host);
 
         host->view = std::make_unique<DocumentView>(m_project, *styles, element, main);

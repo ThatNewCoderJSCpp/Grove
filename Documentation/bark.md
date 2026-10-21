@@ -262,6 +262,7 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | Property | On | |
 |---|---|---|
 | `size` | `body`, `window` | `width height`; a `<window>` with no height fits its content |
+| `min-size` | `body`, `window` | `width height` (one value sets both): the window can't be resized smaller than this, and never opens smaller |
 | `title` | `body`, `window` | window title (the `title` attribute wins) |
 | `background` | any | fill color |
 | `color`, `font-size`, `font-weight` | text | |
@@ -285,6 +286,8 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `appearance` | `input_bool` | `checkbox` (default) or `switch` |
 | `accent-color` | inputs | checked boxes and radios, slider fill and thumb, focused border, the caret and selection of `input_code` |
 | `gap` | blocks, `row` | extra space after a block; space between the items of a row |
+| `flex-wrap` | `row` | `nowrap` (default) keeps every item on one line; `wrap` moves items that don't fit onto the next line, like CSS. An item without a fixed width wraps once it can't keep its `min-width` (80px when it has none) |
+| `row-gap` | `row` | space between the lines of a wrapping row (default: the `gap`) |
 | `align` | blocks, `row` | the easy way to place everything inside: `center`, or a side and/or a corner like `top`, `bottom right`, `center left`. See [Centering and alignment](#centering-and-alignment) |
 | `justify-content` | blocks, `row` | along the direction things are laid out (down a column, across a row): `start` (default), `center`, `end`, `space-between`, `space-around`, `space-evenly` |
 | `align-items` | blocks, `row` | across it: `stretch` (default), `start`, `center`, `end` |
