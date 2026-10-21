@@ -20,6 +20,7 @@ struct ScriptTools {
     bool rebuild = false;
     bool verbose = false;
     bool portable = false;
+    bool compiler_from_walnut = false;
 };
 
 struct BuiltScript {
@@ -41,6 +42,7 @@ std::string executable_path();
 std::string module_extension();
 ScriptTools default_script_tools(const std::string& document_path);
 std::string describe(const ScriptTools& tools);
+std::string walnut_compiler(const std::string& walnut);
 
 ScriptBuild build_scripts(Project& project, const ScriptTools& tools, std::ostream* log = nullptr);
 

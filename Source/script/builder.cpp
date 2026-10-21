@@ -3,9 +3,11 @@
 #include "grove/api/grove_host.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <regex>
 #include <sstream>
 
@@ -91,6 +93,57 @@ int run(const std::vector<std::string>& args, const std::string& log_path, const
     if (status == -1) return -1;
     return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 #endif
+}
+
+#if defined(__linux__)
+bool static_runtime_available(const ScriptTools& tools) {
+    static std::map<std::string, bool> known;
+    const auto found = known.find(tools.cxx);
+    if (found != known.end()) return found->second;
+    bool ok = false;
+    const std::string command = quote_arg(tools.cxx) + " -print-file-name=libstdc++.a 2>/dev/null";
+    if (FILE* pipe = popen(command.c_str(), "r")) {
+        std::string out;
+        char buffer[512];
+        while (std::fgets(buffer, sizeof buffer, pipe)) out += buffer;
+        pclose(pipe);
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) out.pop_back();
+        ok = !out.empty() && fs::path(out).is_absolute() && file_exists(out);
+    }
+    known[tools.cxx] = ok;
+    return ok;
+}
+#endif
+
+std::string capture_stdout(const std::string& command) {
+#if defined(_WIN32)
+    FILE* pipe = _popen(("\"" + command + " 2>NUL\"").c_str(), "r");
+#else
+    FILE* pipe = popen((command + " 2>/dev/null").c_str(), "r");
+#endif
+    if (!pipe) return {};
+    std::string out;
+    char buffer[512];
+    while (std::fgets(buffer, sizeof buffer, pipe)) out += buffer;
+#if defined(_WIN32)
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ')) out.pop_back();
+    return out;
+}
+
+std::string c_compiler_beside(const std::string& cxx) {
+    const fs::path p(cxx);
+    std::string stem = p.stem().string();
+    std::string c;
+    if (stem.size() >= 7 && stem.compare(stem.size() - 7, 7, "clang++") == 0) c = stem.substr(0, stem.size() - 2);
+    else if (stem.size() >= 3 && stem.compare(stem.size() - 3, 3, "g++") == 0) c = stem.substr(0, stem.size() - 3) + "gcc";
+    else if (stem.size() >= 3 && stem.compare(stem.size() - 3, 3, "c++") == 0) c = stem.substr(0, stem.size() - 3) + "cc";
+    if (c.empty()) return {};
+    const fs::path candidate = p.parent_path() / (c + p.extension().string());
+    return file_exists(candidate.string()) ? candidate.string() : std::string();
 }
 
 std::string append_log(const std::string& into, const std::string& from) {
@@ -209,6 +262,7 @@ ScriptTools default_script_tools(const std::string& document_path) {
 
     t.cxx = env("CXX");
     t.cc = env("CC");
+    t.compiler_from_walnut = t.cxx.empty();
 #if defined(_WIN32)
     if (t.cxx.empty()) t.cxx = "g++";
     if (t.cc.empty()) t.cc = "gcc";
@@ -224,11 +278,42 @@ ScriptTools default_script_tools(const std::string& document_path) {
     return t;
 }
 
-std::string describe(const ScriptTools& tools) {
-    return "walnut: " + tools.walnut + "\nc++: " + tools.cxx + "\nc: " + tools.cc + "\nheaders: " + tools.include_dir + "\ncache: " + tools.cache_dir + "\n";
+std::string walnut_compiler(const std::string& walnut) {
+    if (walnut.empty()) return {};
+    const std::string path = capture_stdout(quote_arg(walnut) + " init --print-compiler");
+    if (path.empty() || path.find('\n') != std::string::npos || !file_exists(path)) return {};
+    return path;
 }
 
-ScriptBuild build_scripts(Project& project, const ScriptTools& tools, std::ostream* log) {
+std::string describe(const ScriptTools& tools) {
+    std::string cxx = tools.cxx;
+    std::string cc = tools.cc;
+    if (tools.compiler_from_walnut) {
+        const std::string found = walnut_compiler(tools.walnut);
+        if (!found.empty()) {
+            cxx = found + " (the compiler walnut uses)";
+            const std::string beside = env("CC").empty() ? c_compiler_beside(found) : std::string();
+            if (!beside.empty()) cc = beside;
+        }
+    }
+    return "walnut: " + tools.walnut + "\nc++: " + cxx + "\nc: " + cc + "\nheaders: " + tools.include_dir + "\ncache: " + tools.cache_dir + "\n";
+}
+
+ScriptBuild build_scripts(Project& project, const ScriptTools& requested, std::ostream* log) {
+    ScriptTools tools = requested;
+    bool compiler_resolved = !tools.compiler_from_walnut;
+    auto resolve_compiler = [&] {
+        if (compiler_resolved) return;
+        compiler_resolved = true;
+        const std::string cxx = walnut_compiler(tools.walnut);
+        if (cxx.empty()) return;
+        tools.cxx = cxx;
+        if (env("CC").empty()) {
+            const std::string cc = c_compiler_beside(cxx);
+            if (!cc.empty()) tools.cc = cc;
+        }
+        if (tools.verbose && log) *log << "grove: using walnut's compiler " << cxx << '\n';
+    };
     ScriptBuild out;
     std::error_code ec;
     fs::create_directories(tools.cache_dir, ec);
@@ -314,6 +399,7 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& tools, std::ostre
             out.scripts.push_back(std::move(built));
             continue;
         }
+        resolve_compiler();
 
         for (const auto& entry : fs::directory_iterator(tools.cache_dir, ec)) {
             const std::string name = entry.path().filename().string();
@@ -341,7 +427,7 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& tools, std::ostre
 #else
         std::vector<std::string> shared = { "-shared" };
 #if defined(__linux__)
-        if (tools.portable) shared.insert(shared.end(), { "-static-libstdc++", "-static-libgcc" });
+        if (tools.portable && static_runtime_available(tools)) shared.insert(shared.end(), { "-static-libstdc++", "-static-libgcc" });
 #endif
 #endif
         if (!s.entry.empty() && !is_walnut(s.language)) common.push_back("-DGROVE_MODULE_ENTRY=" + s.entry);

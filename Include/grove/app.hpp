@@ -15,6 +15,7 @@ struct AppBuildOptions {
     std::string window_id;
     std::string stub;
     ScriptTools tools;
+    bool portable = true;
 };
 
 struct AppBuildResult {

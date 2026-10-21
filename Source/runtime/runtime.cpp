@@ -8648,7 +8648,10 @@ int run(Project& project, const RunOptions& options) {
             if (tools.include_dir.empty()) tools.include_dir = defaults.include_dir;
             if (tools.cache_dir.empty()) tools.cache_dir = defaults.cache_dir;
             if (tools.walnut.empty()) tools.walnut = defaults.walnut;
-            if (tools.cxx.empty()) tools.cxx = defaults.cxx;
+            if (tools.cxx.empty()) {
+                tools.cxx = defaults.cxx;
+                tools.compiler_from_walnut = defaults.compiler_from_walnut;
+            }
             if (tools.cc.empty()) tools.cc = defaults.cc;
         }
         const std::size_t errors_before = project.diagnostics.error_count();

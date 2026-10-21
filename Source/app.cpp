@@ -102,7 +102,7 @@ AppBuildResult build_app(const std::string& document_path, const AppBuildOptions
     }
 
     ScriptTools tools = options.tools;
-    tools.portable = true;
+    tools.portable = options.portable;
     const ScriptBuild scripts = build_scripts(project, tools, log);
     diagnostics.append(project.diagnostics);
     if (!scripts.ok() || !project.diagnostics.ok()) return result;

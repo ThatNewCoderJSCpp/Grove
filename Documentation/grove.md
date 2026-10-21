@@ -448,7 +448,7 @@ The default `syntax="infix"` is the human-readable form; `syntax="brace"` is the
 - Built modules are cached in `.grove-cache/` next to the document, so only changed scripts are compiled again. `--rebuild` ignores the cache, `-v` prints every compiler command, and `--tools` shows where Grove found `walnut`, the compilers and its headers.
 - A compile error points at the real line in the `.grove` (or `.wal`, `.cpp`, `.c`) file.
 
-Grove looks for Walnut in `$GROVE_WALNUT`, next to `grove`, then on `PATH`, and for compilers in `$CXX` and `$CC` (default `c++` and `cc`). Set `GROVE_INCLUDE_DIR` if Grove can't find its own headers and `GROVE_CACHE_DIR` to keep the cache somewhere else.
+Grove looks for Walnut in `$GROVE_WALNUT`, next to `grove`, then on `PATH`, and for compilers in `$CXX` and `$CC`. Without `$CXX`, Grove uses the compiler Walnut uses (`walnut init --print-compiler`, so a compiler set up with `walnut init` works for every script), and `c++` and `cc` when Walnut doesn't name one. Grove only asks Walnut when a script actually needs compiling, so starting from the cache costs nothing. Set `GROVE_INCLUDE_DIR` if Grove can't find its own headers and `GROVE_CACHE_DIR` to keep the cache somewhere else.
 
 ### The document, like JavaScript
 
@@ -702,4 +702,4 @@ grove build todo.grove -o todo
 ./todo
 ```
 
-`grove build` compiles the scripts and writes a single program holding the document, its Bark files and its compiled scripts. It runs without Grove, Walnut, a compiler or the source files. Scripts are unpacked into a per-user cache (`~/.cache/grove/apps` or `%LOCALAPPDATA%\Grove\apps`) the first time it runs. On Linux the scripts are linked with `-static-libstdc++` so they don't depend on the compiler's C++ library.
+`grove build` compiles the scripts and writes a single program holding the document, its Bark files and its compiled scripts. It runs without Grove, Walnut, a compiler or the source files. Scripts are unpacked into a per-user cache (`~/.cache/grove/apps` or `%LOCALAPPDATA%\Grove\apps`) the first time it runs. On Linux the scripts are linked with `-static-libstdc++` so they don't depend on the compiler's C++ library, when the compiler has a static C++ library to link (Fedora and others need `libstdc++-static` installed); without one they're linked normally. From C++, `AppBuildOptions::portable = false` asks for a normal link.
