@@ -2197,8 +2197,8 @@ private:
                 return n + margins;
             }
             if (is_text_input(*kind)) {
-                if (const auto w = resolve_length(style, "width", row_width)) return *w + margins;
                 if (style.get("flex")) return -1.0f;
+                if (const auto w = resolve_length(style, "width", row_width)) return *w + margins;
                 return 220.0f + margins;
             }
             if (*kind == InputKind::Slider) return resolve_length(style, "width", row_width).value_or(220.0f) + 70.0f + margins;
@@ -2773,7 +2773,7 @@ private:
         const Box pad = box_of(style, "padding");
         const fizmo::text::TextStyle ts = text_style(element);
         const float lh = line_height(r, ts);
-        const float w = box_width(style, width);
+        const float w = style.get("flex") ? width : box_width(style, width);
         const float h = lh + pad.top + pad.bottom;
         const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
         const bool focused = m_focus == &element;
@@ -2922,7 +2922,7 @@ private:
         const fizmo::text::TextStyle ts = text_style(element);
         const float lh = line_height(r, ts);
         const double base_size = ts.has_size() ? ts.size() : 16.0;
-        const float w = box_width(style, width);
+        const float w = style.get("flex") ? width : box_width(style, width);
         const bool focused = m_focus == &element;
         const bool disabled = element.has_attribute("disabled");
         const double fade = (disabled ? 0.45 : 1.0) * opacity_of(element);

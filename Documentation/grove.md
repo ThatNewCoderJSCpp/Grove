@@ -223,7 +223,7 @@ Type safety holds at every layer:
 | `alpha` … `omega`, `Gamma` … `Omega`, `varepsilon`, `vartheta`, `varphi`, `pi`, `tau`, `inf` | the Greek letter or symbol |
 | `sin`, `cos`, `ln`, `exp`, … and any longer name followed by `(` | upright, like a function name; single letters are italic |
 
-Brackets around something taller than a line (a fraction, say) grow to fit, and the box grows taller to fit fractions and powers. Text that isn't finished yet (`x^` at the end, an unclosed `sqrt(`) is drawn as typed. It's styled like `input_string`: `font-size`, `color`, `padding`, `background`, `border-*`, `width` and `flex` all apply. In a row, a text input with `flex` and no `width` takes the room that's left, like any other flexible child.
+Brackets around something taller than a line (a fraction, say) grow to fit, and the box grows taller to fit fractions and powers. Text that isn't finished yet (`x^` at the end, an unclosed `sqrt(`) is drawn as typed. It's styled like `input_string`: `font-size`, `color`, `padding`, `background`, `border-*`, `width` and `flex` all apply. In a row, a text input with `flex` takes the room that's left (its default 220px width no longer applies), like any other flexible child.
 
 ```html
 <input_math id="f" value="y = x^2 + sqrt(x+1)/2" placeholder="f(x)" />
