@@ -229,6 +229,8 @@ Brackets around something taller than a line (a fraction, say) grow to fit, and 
 <input_math id="f" value="y = x^2 + sqrt(x+1)/2" placeholder="f(x)" />
 ```
 
+Roots don't need their brackets typed. Typing `sqrt` or `cbrt` adds the hidden `()` and puts the caret under the radical sign, so `sqrtx+1` gives √(x+1). Typing `(` right after anyway is ignored. Typing `)` steps over a closing bracket that's already there, as does the right arrow. Backspace just after a root's opening bracket removes the root sign and keeps what's under it, or removes the whole root when it's empty.
+
 Every one-line text input (`input_string`, `input_math`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus.
 
 ### Code editor

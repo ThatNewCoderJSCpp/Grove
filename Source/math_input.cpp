@@ -734,6 +734,7 @@ const MathInputCaret& math_input_caret(const MathInputLayout& layout, std::size_
 std::size_t math_input_hit(const MathInputLayout& layout, float x, float y) {
     std::size_t best = 0;
     float best_d = std::numeric_limits<float>::max();
+    const MathInputCaret* best_spot = nullptr;
     const float asc = layout.base_ascent;
     const float desc = layout.base_descent;
     for (const MathInputCaret& c : layout.carets) {
@@ -741,9 +742,11 @@ std::size_t math_input_hit(const MathInputLayout& layout, float x, float y) {
         const float bottom = c.y + desc * c.scale;
         const float dy = y < top ? top - y : (y > bottom ? y - bottom : 0.0f);
         const float d = std::fabs(x - c.x) + 3.0f * dy;
-        if (d < best_d) {
+        const bool same_spot = best_spot && c.x == best_spot->x && c.y == best_spot->y && c.scale == best_spot->scale;
+        if (d < best_d || (d == best_d && same_spot)) {
             best_d = d;
             best = c.offset;
+            best_spot = &c;
         }
     }
     return best;

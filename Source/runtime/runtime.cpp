@@ -6675,7 +6675,90 @@ private:
             return;
         }
         if (!m_focus) return;
+        if (m_focus->tag() == "input_math" && math_type(text)) return;
+        m_math_opened = false;
         edit_insert(text);
+        if (m_focus && m_focus->tag() == "input_math") math_after_type(text);
+    }
+
+    static bool math_word_char(char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+    }
+
+    static std::size_t math_radical_before(const std::string& text, std::size_t end) {
+        for (const char* name : { "sqrt", "cbrt" }) {
+            const std::size_t n = std::char_traits<char>::length(name);
+            if (end < n || text.compare(end - n, n, name) != 0) continue;
+            const std::size_t start = end - n;
+            if (start > 0 && math_word_char(text[start - 1])) continue;
+            return start;
+        }
+        return std::string::npos;
+    }
+
+    static std::size_t math_matching_close(const std::string& text, std::size_t open) {
+        int depth = 0;
+        for (std::size_t i = open; i < text.size(); ++i) {
+            if (text[i] == '(') ++depth;
+            else if (text[i] == ')' && --depth == 0) return i;
+        }
+        return std::string::npos;
+    }
+
+    static bool math_balanced(const std::string& text) {
+        int depth = 0;
+        for (char c : text) {
+            if (c == '(') ++depth;
+            else if (c == ')') --depth;
+        }
+        return depth == 0;
+    }
+
+    bool math_type(const std::string& text) {
+        std::size_t a = 0;
+        std::size_t b = 0;
+        if (edit_range(a, b)) return false;
+        const std::size_t caret = std::min(m_edit_caret, m_edit.size());
+        const bool next_close = caret < m_edit.size() && m_edit[caret] == ')';
+        if (text == "(" && m_math_opened && next_close && caret > 0 && m_edit[caret - 1] == '(') {
+            m_math_opened = false;
+            return true;
+        }
+        if (text == ")" && next_close && math_balanced(m_edit)) {
+            m_math_opened = false;
+            m_edit_caret = caret + 1;
+            return true;
+        }
+        return false;
+    }
+
+    void math_after_type(const std::string& text) {
+        if (text.empty() || !math_word_char(text.back())) return;
+        const std::size_t caret = std::min(m_edit_caret, m_edit.size());
+        if (math_radical_before(m_edit, caret) == std::string::npos) return;
+        if (caret < m_edit.size() && (m_edit[caret] == '(' || math_word_char(m_edit[caret]))) return;
+        if (!input_accepts(*m_focus, m_edit.substr(0, caret), "(")) return;
+        m_edit.insert(caret, "()");
+        m_edit_caret = caret + 1;
+        m_math_opened = true;
+        Event input;
+        input.type = "input";
+        input.text = "()";
+        input.edit_text = m_edit;
+        input.has_edit_text = true;
+        dispatch(m_focus, input);
+    }
+
+    bool math_backspace() {
+        const std::size_t caret = std::min(m_edit_caret, m_edit.size());
+        if (caret == 0 || m_edit[caret - 1] != '(') return false;
+        const std::size_t start = math_radical_before(m_edit, caret - 1);
+        if (start == std::string::npos) return false;
+        const std::size_t close = math_matching_close(m_edit, caret - 1);
+        if (close != std::string::npos) m_edit.erase(close, 1);
+        m_edit.erase(start, caret - start);
+        m_edit_caret = start;
+        return true;
     }
 
     bool edit_range(std::size_t& a, std::size_t& b) const {
@@ -7089,6 +7172,7 @@ private:
                 if (was_all) {
                     m_edit.clear();
                     m_edit_caret = 0;
+                } else if (key == Key::Backspace && !by_word && m_focus->tag() == "input_math" && math_backspace()) {
                 } else if (key == Key::Backspace && m_edit_caret > 0) {
                     const std::size_t from = by_word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
                     m_edit.erase(from, m_edit_caret - from);
@@ -8228,6 +8312,7 @@ private:
     int m_term_last_row = -1;
     bool m_term_swallow = false;
     bool m_swallow_text = false;
+    bool m_math_opened = false;
     std::map<const Node*, std::array<std::uint8_t, 9>> m_term_colors;
     std::map<const Node*, CanvasTexture> m_canvas_textures;
     CodeHover m_code_hover;
