@@ -46,6 +46,24 @@ using fizmo::colors::Color;
 
 Color to_color(const bark::Rgba& c) { return Color(c.r, c.g, c.b, c.a); }
 
+fizmo::windows::Window* g_clipboard_window = nullptr;
+
+bool put_clipboard(fizmo::windows::Window* window, const std::string& text) {
+    if (!window) return false;
+    const bool ok = window->set_clipboard_text(text);
+    if (ok) g_clipboard_window = window;
+    return ok;
+}
+
+std::string read_clipboard(fizmo::windows::Window* window) {
+    fizmo::windows::Window* from = g_clipboard_window && g_clipboard_window->is_open() ? g_clipboard_window : window;
+    return from ? from->clipboard_text() : std::string();
+}
+
+void forget_clipboard_window(const fizmo::windows::Window* window) {
+    if (window && g_clipboard_window == window) g_clipboard_window = nullptr;
+}
+
 struct Box {
     float top = 0;
     float right = 0;
@@ -1066,7 +1084,7 @@ public:
         m_last_activity = std::chrono::steady_clock::now();
         if (m_blocked && m_blocked()) {
             if (e.type == WindowEventType::MouseClick && m_on_blocked) m_on_blocked();
-            if (e.type == WindowEventType::MouseClick || e.type == WindowEventType::MouseRelease || e.type == WindowEventType::MouseDoubleClick || e.type == WindowEventType::KeyPress || e.type == WindowEventType::KeyRelease || e.type == WindowEventType::TextInput || e.type == WindowEventType::MouseScroll) return;
+            if (e.type == WindowEventType::MouseClick || e.type == WindowEventType::MouseRelease || e.type == WindowEventType::MouseDoubleClick || e.type == WindowEventType::KeyPress || e.type == WindowEventType::KeyRelease || e.type == WindowEventType::TextInput || e.type == WindowEventType::MouseScroll || e.type == WindowEventType::FilesDropped) return;
             if (e.type == WindowEventType::MouseMove) {
                 m_mouse_x = static_cast<float>(e.x);
                 m_mouse_y = static_cast<float>(e.y);
@@ -1077,6 +1095,20 @@ public:
         const float px = static_cast<float>(e.x);
         const float py = static_cast<float>(e.y);
         switch (e.type) {
+            case WindowEventType::FilesDropped: {
+                if (e.paths.empty() || m_context.owner) break;
+                Event ev = pointer_event("drop", px, py, 0);
+                ev.paths = e.paths;
+                for (const std::string& p : e.paths) {
+                    if (!ev.text.empty()) ev.text += '\n';
+                    ev.text += p;
+                }
+                m_mouse_x = px;
+                m_mouse_y = py;
+                dispatch(hit_element(px, py), ev);
+                poke();
+                break;
+            }
             case WindowEventType::MouseMove:
                 m_mouse_x = px;
                 m_mouse_y = py;
@@ -1116,7 +1148,8 @@ public:
                 if (e.button == 1) mouse_down(px, py);
                 else {
                     Event ev = pointer_event("mouse_down", px, py, static_cast<int>(e.button));
-                    dispatch(hit_element(px, py), ev);
+                    const Node* under = hit_element(px, py);
+                    if (dispatch(under, ev) && e.button == 2) field_menu(under, static_cast<float>(px), static_cast<float>(py));
                 }
                 break;
             case WindowEventType::MouseRelease:
@@ -2967,6 +3000,13 @@ private:
         m_context = ContextMenu{};
         poke();
         if (!document().is_attached(*owner)) return;
+        if (value.rfind("grove:", 0) == 0 && m_focus == owner) {
+            if (value == "grove:cut") edit_copy(true);
+            else if (value == "grove:copy") edit_copy(false);
+            else if (value == "grove:paste") edit_paste();
+            else if (value == "grove:select-all") m_edit_all = !m_edit.empty();
+            return;
+        }
         Event e;
         e.type = "menu";
         e.key = value;
@@ -3362,12 +3402,12 @@ private:
 
     void term_copy(const Node& node) {
         const std::shared_ptr<Terminal> term = terminal_of(document(), node);
-        if (term->has_selection() && m_native) m_native->set_clipboard_text(term->selected_text());
+        if (term->has_selection() && m_native) put_clipboard(m_native, term->selected_text());
     }
 
     void term_paste(const Node& node) {
         if (!m_native) return;
-        const std::string text = m_native->clipboard_text();
+        const std::string text = read_clipboard(m_native);
         if (!text.empty()) term_send(node, terminal_of(document(), node)->encode_paste(text));
     }
 
@@ -3823,7 +3863,7 @@ private:
         if (!has_text_selection() || !m_native) return false;
         const std::string text = selection_text();
         if (text.empty()) return false;
-        return m_native->set_clipboard_text(text);
+        return put_clipboard(m_native, text);
     }
 
     bool select_contents(const Node& node) {
@@ -6334,6 +6374,11 @@ private:
             return;
         }
         if (!m_focus) return;
+        edit_insert(text);
+    }
+
+    void edit_insert(const std::string& text) {
+        if (!m_focus) return;
         bool changed = false;
         for (const std::string& cp : split_code_points(text)) {
             if (m_edit_all && input_accepts(*m_focus, "", cp)) {
@@ -6357,6 +6402,62 @@ private:
             input.has_edit_text = true;
             dispatch(m_focus, input);
         }
+    }
+
+    static std::string one_line_paste(std::string text) {
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+        std::string out;
+        out.reserve(text.size());
+        for (char c : text) {
+            if (c == '\r') continue;
+            out += (c == '\n' || c == '\t') ? ' ' : c;
+        }
+        return out;
+    }
+
+    bool edit_copy(bool cut) {
+        if (!m_focus || !m_native) return false;
+        if (m_focus->has_attribute("masked") || m_edit.empty()) return false;
+        put_clipboard(m_native, m_edit);
+        if (!cut || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return true;
+        m_edit.clear();
+        m_edit_caret = 0;
+        m_edit_all = false;
+        m_invalid = false;
+        Event input;
+        input.type = "input";
+        input.edit_text = m_edit;
+        input.has_edit_text = true;
+        dispatch(m_focus, input);
+        return true;
+    }
+
+    bool edit_paste() {
+        if (!m_focus || !m_native || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return false;
+        const std::string text = one_line_paste(read_clipboard(m_native));
+        if (text.empty()) return false;
+        edit_insert(text);
+        return true;
+    }
+
+    bool field_menu(const Node* under, float px, float py) {
+        const Node* field = under;
+        while (field && !(input_kind_of(*field) && is_text_input(*input_kind_of(*field)))) field = field->parent();
+        if (!field || is_disabled(field) || m_context.owner) return false;
+        if (m_focus != field) {
+            focus(field);
+            m_edit_all = !m_edit.empty();
+        }
+        const bool hidden = field->has_attribute("masked");
+        const bool locked = field->has_attribute("readonly");
+        const bool has_text = !m_edit.empty();
+        std::vector<MenuItem> items;
+        items.push_back(MenuItem{ "grove:cut", "Cut", "Ctrl+X", hidden || locked || !has_text, false });
+        items.push_back(MenuItem{ "grove:copy", "Copy", "Ctrl+C", hidden || !has_text, false });
+        items.push_back(MenuItem{ "grove:paste", "Paste", "Ctrl+V", locked || !m_native, false });
+        items.push_back(MenuItem{ "", "", "", false, true });
+        items.push_back(MenuItem{ "grove:select-all", "Select All", "Ctrl+A", !has_text, false });
+        return open_context_menu(mutable_node(*field), items, px, py);
     }
 
     void focus_next(int direction) {
@@ -6509,7 +6610,27 @@ private:
         const bool select_all = key == Key::A && (fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Meta));
         if (select_all) {
             m_edit_all = !m_edit.empty();
+            m_swallow_text = true;
             return;
+        }
+        {
+            const bool ctrl_key = fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Meta);
+            const bool shift_key = fizmo::input::has(e.mods, fizmo::input::Modifiers::Shift);
+            if ((ctrl_key && key == Key::V) || (shift_key && !ctrl_key && key == Key::Insert)) {
+                edit_paste();
+                m_swallow_text = true;
+                return;
+            }
+            if (ctrl_key && (key == Key::C || key == Key::Insert)) {
+                edit_copy(false);
+                m_swallow_text = true;
+                return;
+            }
+            if ((ctrl_key && key == Key::X) || (shift_key && !ctrl_key && key == Key::Delete)) {
+                edit_copy(true);
+                m_swallow_text = true;
+                return;
+            }
         }
         const bool was_all = m_edit_all;
         if (key == Key::Backspace || key == Key::Delete || key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End) m_edit_all = false;
@@ -7525,9 +7646,9 @@ private:
             case Key::C:
                 if (ctrl && m_native) {
                     if (buf.has_extra_cursors()) {
-                        if (buf.any_selection()) m_native->set_clipboard_text(buf.selected_texts());
+                        if (buf.any_selection()) put_clipboard(m_native, buf.selected_texts());
                     } else {
-                        m_native->set_clipboard_text(buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
+                        put_clipboard(m_native, buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
                     }
                 }
                 break;
@@ -7535,21 +7656,21 @@ private:
                 if (ctrl && m_native && !ro) {
                     if (buf.has_extra_cursors()) {
                         if (buf.any_selection()) {
-                            m_native->set_clipboard_text(buf.selected_texts());
+                            put_clipboard(m_native, buf.selected_texts());
                             buf.delete_selection();
                             edited = true;
                         }
                         break;
                     }
                     if (!buf.has_selection()) buf.select_line(buf.caret().line);
-                    m_native->set_clipboard_text(buf.selected_text());
+                    put_clipboard(m_native, buf.selected_text());
                     buf.delete_selection();
                     edited = true;
                 }
                 break;
             case Key::V:
                 if (ctrl && m_native && !ro) {
-                    const std::string text = m_native->clipboard_text();
+                    const std::string text = read_clipboard(m_native);
                     if (!text.empty()) {
                         if (buf.has_extra_cursors()) {
                             std::vector<std::string> pieces(1);
@@ -7808,6 +7929,7 @@ struct WindowHost {
     double present_ms = 0.0;
     std::uint64_t frames = 0;
     std::deque<std::chrono::steady_clock::time_point> frame_times;
+    ~WindowHost() { forget_clipboard_window(window.get()); }
 };
 
 class WindowManager {
@@ -7902,12 +8024,12 @@ public:
         host.set_clipboard = [this](const std::string& text) {
             WindowHost* wh = host_for(&m_main);
             if (!wh || !wh->window || !wh->window->is_open()) return false;
-            return wh->window->set_clipboard_text(text);
+            return put_clipboard(wh->window.get(), text);
         };
         host.clipboard = [this]() {
             WindowHost* wh = host_for(&m_main);
             if (!wh || !wh->window || !wh->window->is_open()) return std::string();
-            return wh->window->clipboard_text();
+            return read_clipboard(wh->window.get());
         };
         host.open_menu = [this](Node& owner, const std::vector<MenuItem>& items, double x, double y) {
             WindowHost* wh = host_containing(owner);
@@ -8129,9 +8251,10 @@ private:
     void install_listeners(WindowHost& host) {
         using fizmo::windows::WindowEventType;
         WindowHost* raw = &host;
-        for (const WindowEventType type : { WindowEventType::MouseClick, WindowEventType::MouseRelease, WindowEventType::MouseMove, WindowEventType::MouseDoubleClick, WindowEventType::MouseScroll, WindowEventType::KeyPress, WindowEventType::KeyRelease, WindowEventType::TextInput }) {
+        for (const WindowEventType type : { WindowEventType::MouseClick, WindowEventType::MouseRelease, WindowEventType::MouseMove, WindowEventType::MouseDoubleClick, WindowEventType::MouseScroll, WindowEventType::KeyPress, WindowEventType::KeyRelease, WindowEventType::TextInput, WindowEventType::FilesDropped }) {
             host.window->add_event_listener(type, [raw](const fizmo::windows::WindowEvent& e) { raw->view->on_event(e); });
         }
+        host.window->set_drop_enabled(true);
         host.window->add_event_listener(WindowEventType::WindowClose, [raw](const fizmo::windows::WindowEvent&) {
             raw->close_requested = true;
             if (raw->window) raw->placed = raw->window->position(raw->x, raw->y);
@@ -8163,6 +8286,7 @@ private:
         if (host->view) host->view->release_states();
         host->renderer.reset();
         if (host->window && host->window->is_open()) host->window->close();
+        forget_clipboard_window(host->window.get());
         host->window.reset();
         for (auto it = m_hosts.begin(); it != m_hosts.end(); ++it) {
             if (it->get() == host) {

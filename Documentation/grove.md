@@ -526,6 +526,7 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `mouse_down`, `mouse_up`, `mouse_move` | the mouse is pressed, released or moved | `x`, `y`, `button` |
 | `mouse_enter`, `mouse_leave` | the mouse moves onto or off an element (doesn't bubble) | |
 | `wheel` | scrolling | `delta_x`, `delta_y` |
+| `drop` | files or folders are dragged in from outside the program (a file manager, the desktop) and dropped; it goes to the element they were dropped on | `x`, `y`, `paths` in C++; `text()` is the paths, one per line |
 | `key_down`, `key_up` | a key is pressed or released; `key` is a name like `A`, `Enter`, `Delete`, `F2` or `UpArrow`, never a control character. While an `input_string` is being typed in, its value is the text typed so far during `key_down`, and a handler that sets the value replaces what's in the field | `key`, `shift()`, `ctrl()`, `alt()`, `meta()` |
 | `text` | text is typed | `text` |
 | `focus`, `blur` | an element gains or loses focus (doesn't bubble) | |

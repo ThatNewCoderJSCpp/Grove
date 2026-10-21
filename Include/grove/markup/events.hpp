@@ -33,6 +33,7 @@ struct Event {
     std::string text;
     std::string edit_text;
     bool has_edit_text = false;
+    std::vector<std::string> paths;
     unsigned modifiers = 0;
     bool bubbles = true;
     bool propagation_stopped = false;
