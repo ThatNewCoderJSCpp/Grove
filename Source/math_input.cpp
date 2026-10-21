@@ -274,7 +274,7 @@ private:
         const std::string& c = at(i);
         if (c == "(" || c == "{") {
             ItemPtr g = make(Kind::Group);
-            g->hide = true;
+            g->hide = c == "{";
             g->open = i++;
             std::vector<ItemPtr> inner = parse_seq(i, c == "(" ? ")" : "}");
             g->inner = seq_of(std::move(inner));
@@ -419,7 +419,10 @@ private:
             const std::string* next = glyph_text(*items[k + 1]);
             if (next && (fraction_boundary(*next) || *next == "/" || *next == ")")) continue;
             std::size_t start = k;
-            while (start > 0) {
+            const Item& before = *items[k - 1];
+            const bool braced = before.kind == Kind::Group && before.hide && before.open != k_none && m_cps[before.open].text == "{";
+            if (braced) start = k - 1;
+            while (!braced && start > 0) {
                 const std::string* t = glyph_text(*items[start - 1]);
                 if (t && (fraction_boundary(*t) || *t == "\xC2\xB7" || *t == ", ")) break;
                 --start;
@@ -429,11 +432,8 @@ private:
             f->slash = it.cp;
             std::vector<ItemPtr> num;
             for (std::size_t q = start; q < k; ++q) num.push_back(std::move(items[q]));
-            if (num.size() == 1 && num[0]->kind == Kind::Group && !num[0]->hide && m_cps[num[0]->open].text == "(" && num[0]->close != k_none) num[0]->hide = true;
             f->num = seq_of(std::move(num));
-            ItemPtr den = std::move(items[k + 1]);
-            if (den->kind == Kind::Group && !den->hide && m_cps[den->open].text == "(" && den->close != k_none) den->hide = true;
-            f->den = std::move(den);
+            f->den = std::move(items[k + 1]);
             items.erase(items.begin() + static_cast<std::ptrdiff_t>(start), items.begin() + static_cast<std::ptrdiff_t>(k + 2));
             items.insert(items.begin() + static_cast<std::ptrdiff_t>(start), std::move(f));
             k = start;
@@ -499,7 +499,7 @@ private:
                         if (it.close != k_none) b.w += width(at(it.close), s, false);
                     }
                 }
-                if (it.inner->items.empty() && it.hide) b.w = std::max(b.w, 0.35f * em(s));
+                if (it.inner->items.empty() && it.hide) b.w = std::max(b.w, width("\xE2\x96\xA1", 0.8f * s, false) + 0.1f * em(s));
                 break;
             }
             case Kind::Script: {
@@ -635,7 +635,12 @@ private:
                 }
                 place(*it.inner, cx, y, s);
                 cx += it.inner->box.w;
-                if (it.inner->items.empty() && it.hide) cx = x + it.box.w;
+                if (it.inner->items.empty() && it.hide) {
+                    const float ps = 0.8f * s;
+                    const float pw = width("\xE2\x96\xA1", ps, false);
+                    decoration("\xE2\x96\xA1", x + 0.5f * (it.box.w - pw), y, ps);
+                    cx = x + it.box.w;
+                }
                 if (it.close != k_none) {
                     if (it.hide) {
                         put(it.close, at(it.close), false, false, cx, y, s, 0.0f, 0.0f);

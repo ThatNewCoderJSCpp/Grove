@@ -2196,7 +2196,11 @@ private:
                 if (const auto mx = resolve_length(style, "max-width", row_width)) n = std::min(n, *mx);
                 return n + margins;
             }
-            if (is_text_input(*kind)) return resolve_length(style, "width", row_width).value_or(220.0f) + margins;
+            if (is_text_input(*kind)) {
+                if (const auto w = resolve_length(style, "width", row_width)) return *w + margins;
+                if (style.get("flex")) return -1.0f;
+                return 220.0f + margins;
+            }
             if (*kind == InputKind::Slider) return resolve_length(style, "width", row_width).value_or(220.0f) + 70.0f + margins;
             const float size = std::round(static_cast<float>(font_size_of(node)) * 1.05f);
             const bool toggle = *kind == InputKind::Bool && is_switch(node, style.text("appearance"));
@@ -6676,7 +6680,6 @@ private:
         }
         if (!m_focus) return;
         if (m_focus->tag() == "input_math" && math_type(text)) return;
-        m_math_opened = false;
         edit_insert(text);
         if (m_focus && m_focus->tag() == "input_math") math_after_type(text);
     }
@@ -6705,13 +6708,51 @@ private:
         return std::string::npos;
     }
 
-    static bool math_balanced(const std::string& text) {
+    static std::size_t math_matching_open(const std::string& text, std::size_t close) {
         int depth = 0;
-        for (char c : text) {
-            if (c == '(') ++depth;
-            else if (c == ')') --depth;
+        for (std::size_t i = close + 1; i > 0; --i) {
+            const char c = text[i - 1];
+            if (c == ')' || c == '}' || c == ']') ++depth;
+            else if ((c == '(' || c == '{' || c == '[') && --depth == 0) return i - 1;
         }
-        return depth == 0;
+        return std::string::npos;
+    }
+
+    static std::size_t math_matching_brace(const std::string& text, std::size_t open) {
+        int depth = 0;
+        for (std::size_t i = open; i < text.size(); ++i) {
+            if (text[i] == '{') ++depth;
+            else if (text[i] == '}' && --depth == 0) return i;
+        }
+        return std::string::npos;
+    }
+
+    std::size_t math_numerator_start(std::size_t caret) const {
+        std::size_t j = caret;
+        int depth = 0;
+        while (j > 0) {
+            const char c = m_edit[j - 1];
+            if (c == ')' || c == '}' || c == ']') {
+                ++depth;
+            } else if (c == '(' || c == '{' || c == '[') {
+                if (depth == 0) break;
+                --depth;
+            } else if (depth == 0 && (std::strchr("+-=<>,;:| ", c) != nullptr)) {
+                break;
+            }
+            --j;
+        }
+        return j;
+    }
+
+    void math_changed(const std::string& typed) {
+        m_invalid = false;
+        Event input;
+        input.type = "input";
+        input.text = typed;
+        input.edit_text = m_edit;
+        input.has_edit_text = true;
+        dispatch(m_focus, input);
     }
 
     bool math_type(const std::string& text) {
@@ -6719,14 +6760,30 @@ private:
         std::size_t b = 0;
         if (edit_range(a, b)) return false;
         const std::size_t caret = std::min(m_edit_caret, m_edit.size());
-        const bool next_close = caret < m_edit.size() && m_edit[caret] == ')';
-        if (text == "(" && m_math_opened && next_close && caret > 0 && m_edit[caret - 1] == '(') {
-            m_math_opened = false;
+        if (text == ")" && caret < m_edit.size() && m_edit[caret] == ')') {
+            const std::size_t open = math_matching_open(m_edit, caret);
+            if (open != std::string::npos && math_radical_before(m_edit, open) != std::string::npos) {
+                m_edit_caret = caret + 1;
+                return true;
+            }
+            return false;
+        }
+        if (text == "^" || text == "_") {
+            if (!input_accepts(*m_focus, m_edit.substr(0, caret), text)) return false;
+            edit_remember(0);
+            m_edit.insert(caret, text + "{}");
+            m_edit_caret = caret + 2;
+            math_changed(text);
             return true;
         }
-        if (text == ")" && next_close && math_balanced(m_edit)) {
-            m_math_opened = false;
-            m_edit_caret = caret + 1;
+        if (text == "/") {
+            if (!input_accepts(*m_focus, m_edit.substr(0, caret), text)) return false;
+            edit_remember(0);
+            const std::size_t start = math_numerator_start(caret);
+            const std::string num = m_edit.substr(start, caret - start);
+            m_edit.replace(start, caret - start, "{" + num + "}/{}");
+            m_edit_caret = num.empty() ? start + 1 : start + num.size() + 4;
+            math_changed(text);
             return true;
         }
         return false;
@@ -6740,18 +6797,57 @@ private:
         if (!input_accepts(*m_focus, m_edit.substr(0, caret), "(")) return;
         m_edit.insert(caret, "()");
         m_edit_caret = caret + 1;
-        m_math_opened = true;
-        Event input;
-        input.type = "input";
-        input.text = "()";
-        input.edit_text = m_edit;
-        input.has_edit_text = true;
-        dispatch(m_focus, input);
+        math_changed("()");
+    }
+
+    bool math_unwrap_fraction(std::size_t num_open, std::size_t& caret) {
+        const std::size_t num_close = math_matching_brace(m_edit, num_open);
+        if (num_close == std::string::npos || num_close + 2 >= m_edit.size() || m_edit[num_close + 1] != '/' || m_edit[num_close + 2] != '{') return false;
+        const std::size_t den_close = math_matching_brace(m_edit, num_close + 2);
+        if (den_close != std::string::npos) m_edit.erase(den_close, 1);
+        m_edit.erase(num_close, 3);
+        m_edit.erase(num_open, 1);
+        caret = num_close - 1;
+        return true;
     }
 
     bool math_backspace() {
         const std::size_t caret = std::min(m_edit_caret, m_edit.size());
-        if (caret == 0 || m_edit[caret - 1] != '(') return false;
+        if (caret == 0) return false;
+        const char before = m_edit[caret - 1];
+        if (before == '}') {
+            m_edit_caret = caret - 1;
+            return true;
+        }
+        if (before == '{') {
+            const std::size_t open = caret - 1;
+            if (open > 0 && (m_edit[open - 1] == '^' || m_edit[open - 1] == '_')) {
+                const std::size_t close = math_matching_brace(m_edit, open);
+                if (close != std::string::npos) m_edit.erase(close, 1);
+                m_edit.erase(open - 1, 2);
+                m_edit_caret = open - 1;
+                return true;
+            }
+            if (open >= 2 && m_edit[open - 1] == '/' && m_edit[open - 2] == '}') {
+                const std::size_t num_open = math_matching_open(m_edit, open - 2);
+                std::size_t at = caret;
+                if (num_open != std::string::npos && math_unwrap_fraction(num_open, at)) {
+                    m_edit_caret = at;
+                    return true;
+                }
+            }
+            std::size_t at = caret;
+            if (math_unwrap_fraction(open, at)) {
+                m_edit_caret = open;
+                return true;
+            }
+            const std::size_t close = math_matching_brace(m_edit, open);
+            if (close != std::string::npos) m_edit.erase(close, 1);
+            m_edit.erase(open, 1);
+            m_edit_caret = open;
+            return true;
+        }
+        if (before != '(') return false;
         const std::size_t start = math_radical_before(m_edit, caret - 1);
         if (start == std::string::npos) return false;
         const std::size_t close = math_matching_close(m_edit, caret - 1);
@@ -8312,7 +8408,6 @@ private:
     int m_term_last_row = -1;
     bool m_term_swallow = false;
     bool m_swallow_text = false;
-    bool m_math_opened = false;
     std::map<const Node*, std::array<std::uint8_t, 9>> m_term_colors;
     std::map<const Node*, CanvasTexture> m_canvas_textures;
     CodeHover m_code_hover;

@@ -215,21 +215,30 @@ Type safety holds at every layer:
 
 | Typed | Drawn |
 |---|---|
-| `x^2`, `x^(n+1)`, `x^{n+1}` | a superscript, smaller and raised; the `^` and the brackets around a group aren't drawn. Powers nest: `e^x^2` |
+| `x^2`, `x^(n+1)`, `x^{n+1}` | a superscript, smaller and raised; the `^` isn't drawn. Round brackets you type are drawn (`y^(4)` shows as y⁽⁴⁾); curly braces group without being drawn (`x^{n+1}`). Powers nest: `e^x^2` |
 | `a_1`, `x_{12}` | a subscript |
-| `a/b`, `(x+1)/(x-1)` | a stacked fraction: the term before `/` over the term after it, without the brackets around either; fractions nest |
+| `a/b`, `{x+1}/{x-1}`, `(x+1)/(x-1)` | a stacked fraction: the term before `/` over the term after it. Curly braces around either aren't drawn; round brackets you type are. Fractions nest |
 | `sqrt(x)`, `cbrt(x)`, `nthroot(x, 5)` | a radical sign over the argument, with a small 3 or the index for the other roots |
 | `*`, `<=`, `>=`, `!=`, `-` | `·`, `≤`, `≥`, `≠`, `−` |
 | `alpha` … `omega`, `Gamma` … `Omega`, `varepsilon`, `vartheta`, `varphi`, `pi`, `tau`, `inf` | the Greek letter or symbol |
 | `sin`, `cos`, `ln`, `exp`, … and any longer name followed by `(` | upright, like a function name; single letters are italic |
 
-Brackets around something taller than a line (a fraction, say) grow to fit, and the box grows taller to fit fractions and powers. Text that isn't finished yet (`x^` at the end, an unclosed `sqrt(`) is drawn as typed. It's styled like `input_string`: `font-size`, `color`, `padding`, `background`, `border-*`, `width` and `flex` all apply.
+Brackets around something taller than a line (a fraction, say) grow to fit, and the box grows taller to fit fractions and powers. Text that isn't finished yet (`x^` at the end, an unclosed `sqrt(`) is drawn as typed. It's styled like `input_string`: `font-size`, `color`, `padding`, `background`, `border-*`, `width` and `flex` all apply. In a row, a text input with `flex` and no `width` takes the room that's left, like any other flexible child.
 
 ```html
 <input_math id="f" value="y = x^2 + sqrt(x+1)/2" placeholder="f(x)" />
 ```
 
-Roots don't need their brackets typed. Typing `sqrt` or `cbrt` adds the hidden `()` and puts the caret under the radical sign, so `sqrtx+1` gives √(x+1). Typing `(` right after anyway is ignored. Typing `)` steps over a closing bracket that's already there, as does the right arrow. Backspace just after a root's opening bracket removes the root sign and keeps what's under it, or removes the whole root when it's empty.
+Typing builds the structure for you, the way a graphing calculator does, by adding hidden curly braces to the text:
+
+| Typed | Text | Caret |
+|---|---|---|
+| `^`, `_` | `^{}`, `_{}` | inside the braces: everything typed stays in the power or subscript until → (or the mouse) takes the caret out |
+| `/` | `{numerator}/{}` | in the denominator. The numerator is the term before the caret, back to the nearest `+ - = < > , ; : \|`, space or opening bracket; with nothing before it, the caret goes to an empty numerator |
+| `sqrt`, `cbrt` | `sqrt()`, `cbrt()` | under the radical sign; `)` or → steps out |
+| `(` | `(` | brackets you type are always kept and drawn |
+
+An empty pair of braces is drawn as a small box so you can see where the caret goes. Backspace knows the structure too: right after a hidden `}` it moves the caret inside instead of deleting it; at the start of a power or subscript it removes the `^{` `}` and keeps what was in it (or removes it all when empty); at the start of a numerator or denominator it takes the fraction apart, leaving the numerator followed by the denominator; and at the start of a root it removes the root sign and keeps what's under it.
 
 Every one-line text input (`input_string`, `input_math`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus.
 
