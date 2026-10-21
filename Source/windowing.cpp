@@ -2,6 +2,7 @@
 #include "grove/dom_tools.hpp"
 #include "grove/input/input.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace grove {
@@ -200,6 +201,22 @@ Node* create_popup(Document& document, Node* owner, const PopupOptions& options)
             if (options.options.size() >= 3 && !options.options[2].empty()) field->set_attribute("step", options.options[2]);
         }
         field->set_attribute("autofocus", "");
+        if (input == "string") {
+            auto fit = [&document, popup, field](const std::string& text) {
+                std::size_t points = 0;
+                for (const unsigned char c : text) points += (c & 0xC0) != 0x80 ? 1 : 0;
+                const long wanted = 160 + static_cast<long>(points) * 8;
+                const long width = std::clamp<long>(wanted, 420, 760);
+                const std::string value = std::to_string(width);
+                if (popup->attribute_or("width", "") != value) {
+                    popup->set_attribute("width", value);
+                    field->set_attribute("style", "width: " + std::to_string(std::max<long>(300, width - 120)) + "px");
+                    document.touch();
+                }
+            };
+            fit(options.value);
+            document.events().add_listener(field, "input", [fit](Event& e) { fit(e.edit_text); });
+        }
     } else if (input == "bool" || input == "switch") {
         field = add(document, *text, "input_bool", "popup-input", options.options.empty() ? std::string() : options.options[0]);
         if (input == "switch") field->set_attribute("switch", "");

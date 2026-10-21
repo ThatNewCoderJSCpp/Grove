@@ -173,7 +173,7 @@ Each input is its own element, named after the type of value it holds, so the ty
 
 Clicking the swatch at the left of an `input_color` opens a picker under it: a wheel for hue and saturation, a brightness slider, an alpha slider, the new color next to the one it started as, and the color written as hex, RGB, RGBA, HSL and HSLA. Clicking one of those rows sets the box's `format`. Dragging fires `input`, letting go fires `change`. Clicking outside the picker or pressing Enter keeps the color, and Escape puts the old one back.
 
-While one of these has focus, typing adds to the end and Backspace takes the last character away. Ctrl+A selects the whole value so the next key replaces it (or Backspace clears it); a color input starts out selected, so clicking it and typing a new hex code replaces the old one.
+While one of these has focus, typing goes in at the caret: Left and Right move it (by a word with Ctrl or Alt), Home and End jump to the ends, Backspace and Delete remove the character before or after it, and clicking puts the caret where you click. Text longer than the box scrolls to keep the caret in view, with … at whichever end is cut off. Ctrl+A selects the whole value so the next key replaces it (or Backspace clears it); a color input starts out selected, so clicking it and typing a new hex code replaces the old one.
 
 A bool input looks like a checkbox by default. To draw it as a switch (a pill with a circle that slides left for off and right for on), either add the `switch` attribute or set `appearance: switch` in Bark; `appearance: checkbox` goes back. The attribute wins over Bark. `<input type="toggle">` is a switch too. Only the look changes: the value is the same `bool` either way.
 
@@ -208,6 +208,8 @@ Type safety holds at every layer:
 
 ### Code editor
 
+Any element with a `reveal` attribute is scrolled to the top of the block it scrolls in, once, the next time it's laid out. Change the attribute's value (`reveal="1"`, then `"2"`) to scroll there again; leaving it as it is doesn't fight the user's scrolling.
+
 `<input_code>` is a multi-line editor with line numbers, syntax highlighting, a caret and selection, and its own scrolling. Its text is the element's content (indentation shared by every line is removed, so it can be indented with the markup) until `value` is set; after that, `value_string()` and `set_value_string()` read and replace it like any string input.
 
 ```html
@@ -220,7 +222,7 @@ Type safety holds at every layer:
 
 | Attribute | |
 |---|---|
-| `language` | `c`, `cpp`, `walnut`, `grove`, `bark`, `cmake`, `html`, `css`, `javascript`, `json`, `rust`, `zig`, `python`, `lua`, `java`, `csharp`, `asm` or `plain` (default); file extensions like `hpp`, `wal`, `htm`, `js`, `mjs`, `rs`, `py`, `cs`, `s` or `nasm` work too. `asm` covers NASM, GAS (AT&T and Intel), MASM and FASM, and x86, ARM, RISC-V and MIPS registers and instructions. In `html`, `<script>` and `<style>` are highlighted as JavaScript and CSS, and typing `>` after an opening tag adds its closing tag except for void elements like `<br>` and `<img>` |
+| `language` | `c`, `cpp`, `walnut`, `grove`, `bark`, `cmake`, `html`, `css`, `javascript`, `json`, `rust`, `zig`, `python`, `lua`, `java`, `csharp`, `asm`, `mathtext`, `markdown`, `text` or `plain` (default); file extensions like `hpp`, `wal`, `htm`, `js`, `mjs`, `rs`, `py`, `cs`, `s`, `nasm`, `math`, `mtb`, `md` or `txt` work too. `mathtext` colors Walnut and Fizmo math text (commands, environments, `$` and brace groups), `markdown` colors headings, emphasis, links, lists, quotes and fenced code, and `text` only picks out links, quoted text and numbers. `asm` covers NASM, GAS (AT&T and Intel), MASM and FASM, and x86, ARM, RISC-V and MIPS registers and instructions. In `html`, `<script>` and `<style>` are highlighted as JavaScript and CSS, and typing `>` after an opening tag adds its closing tag except for void elements like `<br>` and `<img>` |
 | `tab-size` | columns per tab (default 4) |
 | `indent` | `spaces` (default) or `tabs`: what Tab and Enter insert |
 | `tab-backspace` | `true` makes Backspace at a tab stop with a whole level of spaces before it delete that level at once (so with 4-column tabs, 8 spaces take two presses); between tab stops it deletes one space at a time; Ctrl+Backspace still deletes a word |
@@ -511,6 +513,8 @@ if (grove::has_native("app.save")) then {
 The host can also use the clipboard: `grove::set_clipboard_text(document, text)` and `grove::clipboard_text(document)` (both from `grove/native.hpp`) work while the document is running in a window.
 
 C++ scripts call `grove::document.call("app.save", "notes.txt")` with any number of string arguments (or `call_with(name, vector)`), and C scripts call `grove_call_native(doc, "app.save", args, count)`, which returns `NULL` when there's no such function. A function that throws reports a script error and returns `""`. `grove::has_native` and `grove::native_names` list what's there.
+
+Scripts can also read Bark files of their own and run them as steps, with their own properties, prompts and `{placeholders}`: see [Bark beyond styles](bark.md#bark-beyond-styles-values-and-actions).
 
 ### Events
 

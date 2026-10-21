@@ -61,6 +61,10 @@ bool|grove_toggle_class|grove_document* document, grove_element* element, const 
 const char*|grove_get_style|const grove_element* element, const char* property
 void|grove_set_style|grove_document* document, grove_element* element, const char* property, const char* value
 const char*|grove_computed_style|grove_document* document, grove_element* element, const char* property
+bool|grove_has_computed_style|grove_document* document, grove_element* element, const char* property
+double|grove_computed_number|grove_document* document, grove_element* element, const char* property, double fallback
+double|grove_computed_number_at|grove_document* document, grove_element* element, const char* property, size_t index, double fallback
+const char*|grove_computed_color|grove_document* document, grove_element* element, const char* property
 bool|grove_focus|grove_document* document, grove_element* element
 bool|grove_has_state|const grove_element* element, const char* state
 uint64_t|grove_add_event_listener|grove_document* document, grove_element* element, const char* type, grove_listener_fn fn, void* user_data, grove_release_fn release
@@ -111,3 +115,66 @@ bool|grove_open_modal|grove_document* document, grove_element* modal
 bool|grove_close_modal|grove_document* document, grove_element* modal
 bool|grove_navigate|grove_document* document, const char* target
 bool|grove_is_current|const grove_element* element
+grove_bark_values*|grove_bark_values_new|void
+void|grove_bark_values_free|grove_bark_values* values
+void|grove_bark_values_set|grove_bark_values* values, const char* name, const char* value
+void|grove_bark_values_set_default|grove_bark_values* values, const char* name, const char* value
+bool|grove_bark_values_has|const grove_bark_values* values, const char* name
+const char*|grove_bark_values_get|const grove_bark_values* values, const char* name
+void|grove_bark_values_erase|grove_bark_values* values, const char* name
+void|grove_bark_values_provide|grove_bark_values* values, const char* name, grove_bark_provider_fn fn, void* user_data, grove_release_fn release
+void|grove_bark_values_set_parent|grove_bark_values* values, const grove_bark_values* parent
+size_t|grove_bark_values_count|const grove_bark_values* values
+const char*|grove_bark_values_name|const grove_bark_values* values, size_t index
+const char*|grove_bark_interpolate|const char* text, const grove_bark_values* values
+size_t|grove_bark_unknown_count|const char* text, const grove_bark_values* values
+const char*|grove_bark_unknown|const char* text, const grove_bark_values* values, size_t index
+const char*|grove_bark_escape_braces|const char* text
+grove_bark_file*|grove_bark_parse|const char* text, const char* path
+grove_bark_file*|grove_bark_load|const char* path
+void|grove_bark_file_free|grove_bark_file* file
+size_t|grove_bark_error_count|const grove_bark_file* file
+const char*|grove_bark_error|const grove_bark_file* file, size_t index
+size_t|grove_bark_rule_count|const grove_bark_file* file
+const char*|grove_bark_rule_name|const grove_bark_file* file, size_t rule
+int64_t|grove_bark_find_rule|const grove_bark_file* file, const char* name
+size_t|grove_bark_property_count|const grove_bark_file* file, size_t rule
+const char*|grove_bark_property_name|const grove_bark_file* file, size_t rule, size_t property
+size_t|grove_bark_property_line|const grove_bark_file* file, size_t rule, size_t property
+const char*|grove_bark_property_text|const grove_bark_file* file, size_t rule, size_t property
+size_t|grove_bark_value_count|const grove_bark_file* file, size_t rule, size_t property
+const char*|grove_bark_value|const grove_bark_file* file, size_t rule, size_t property, size_t index
+const char*|grove_bark_setting|const grove_bark_file* file, size_t rule, const char* name, const grove_bark_values* values
+size_t|grove_bark_variable_count|const grove_bark_file* file
+const char*|grove_bark_variable_name|const grove_bark_file* file, size_t index
+const char*|grove_bark_variable_value|const grove_bark_file* file, size_t index
+void|grove_bark_add_variables|const grove_bark_file* file, grove_bark_values* values
+grove_bark_actions*|grove_bark_actions_new|void
+void|grove_bark_actions_free|grove_bark_actions* actions
+void|grove_bark_actions_add|grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values, unsigned flags, grove_bark_action_fn fn, void* user_data, grove_release_fn release
+void|grove_bark_actions_setting|grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values
+void|grove_bark_actions_add_standard|grove_bark_actions* actions
+bool|grove_bark_actions_has|const grove_bark_actions* actions, const char* name
+bool|grove_bark_actions_remove|grove_bark_actions* actions, const char* name
+size_t|grove_bark_check_count|const grove_bark_actions* actions, const grove_bark_file* file, size_t rule
+const char*|grove_bark_check|const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, size_t index
+const char*|grove_bark_call_name|const grove_bark_call* call
+size_t|grove_bark_call_arg_count|const grove_bark_call* call
+const char*|grove_bark_call_arg|const grove_bark_call* call, size_t index
+const char*|grove_bark_call_rest|const grove_bark_call* call, size_t from
+size_t|grove_bark_call_line|const grove_bark_call* call
+grove_bark_values*|grove_bark_call_values|grove_bark_call* call
+grove_bark_runner*|grove_bark_call_runner|grove_bark_call* call
+int|grove_bark_call_fail|grove_bark_call* call, const char* message
+grove_bark_runner*|grove_bark_runner_new|const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const grove_bark_values* parent
+void|grove_bark_runner_free|grove_bark_runner* runner
+int|grove_bark_runner_run|grove_bark_runner* runner
+int|grove_bark_runner_step|grove_bark_runner* runner
+int|grove_bark_runner_resume|grove_bark_runner* runner
+int|grove_bark_runner_answer|grove_bark_runner* runner, const char* name, const char* value
+void|grove_bark_runner_stop|grove_bark_runner* runner
+int|grove_bark_runner_state|const grove_bark_runner* runner
+const char*|grove_bark_runner_error|const grove_bark_runner* runner
+grove_bark_values*|grove_bark_runner_values|grove_bark_runner* runner
+size_t|grove_bark_runner_position|const grove_bark_runner* runner
+size_t|grove_bark_runner_size|const grove_bark_runner* runner

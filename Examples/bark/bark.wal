@@ -1,0 +1,62 @@
+import module.grove
+
+grove::BarkFile: file = grove::BarkFile::parse("$who = \"Walnut\";\n\ngreet {\n    label: \"Greeting\";\n    ask: mood \"How are you?\" \"fine\";\n    say: \"hello {who}, feeling {mood}\";\n    set: count 2;\n    say: \"{count} lines from {app}\";\n}\n\ncheck {\n    label: \"Check\";\n    say: \"checking {thing:everything}\";\n    fail: \"{thing:everything} is broken\";\n    say: \"never shown\";\n}\n", "steps.bark");
+
+grove::BarkValues: program;
+program.set("app", "Grove");
+file.add_variables_to(program);
+
+string: out = "";
+string: asking = "";
+string: question = "";
+string: suggested = "";
+
+grove::BarkActions: actions;
+actions.add_standard();
+actions.setting("label");
+actions.add_counted("say", 1, 1, [&](grove::BarkCall&: call) -> void {
+    out = out + call.arg(0) + "; ";
+});
+actions.add_counted("ask", 1, 3, [&](grove::BarkCall&: call) -> void {
+    asking = call.arg(0);
+    question = call.arg_or(1, asking);
+    suggested = call.arg_or(2, "");
+    call.wait();
+});
+
+grove::BarkRunner: runner = grove::BarkRunner(actions, file, "greet", program);
+
+function show() -> void {
+    if (runner.failed()) then {
+        out = out + "failed: " + runner.error();
+    }
+    grove::get_by_id("out").set_inner_text(out);
+} end function show
+
+function carry_on() -> void {
+    if (runner.waiting()) then {
+        grove::prompt_string(file.setting(file.find_rule("greet"), "label"), question, suggested, [&](string: answer) -> void {
+            runner.answer(asking, answer);
+            carry_on();
+        });
+        return;
+    }
+    show();
+} end function carry_on
+
+function start(const string&: rule) -> void {
+    out = "";
+    runner = grove::BarkRunner(actions, file, rule, program);
+    runner.run();
+    carry_on();
+} end function start
+
+grove::get_by_id("rules").set_inner_text(file.rule_count().to_string() + " rules: " + file.setting(0, "label") + ", " + file.setting(1, "label"));
+
+grove::get_by_id("greet").on("click", [&](grove::Event&: e) -> void {
+    start("greet");
+});
+
+grove::get_by_id("check").on("click", [&](grove::Event&: e) -> void {
+    start("check");
+});

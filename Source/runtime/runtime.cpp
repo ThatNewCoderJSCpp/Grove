@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <chrono>
 #include <deque>
+#include <cctype>
 #include <cmath>
 #include <functional>
 #include <future>
@@ -164,12 +165,50 @@ Color with_alpha(Color c, double factor) {
     return Color(c.red(), c.green(), c.blue(), static_cast<std::uint8_t>(std::lround(c.alpha() * factor)));
 }
 
-void pop_code_point(std::string& s) {
+[[maybe_unused]] void pop_code_point(std::string& s) {
     while (!s.empty()) {
         const unsigned char c = static_cast<unsigned char>(s.back());
         s.pop_back();
         if ((c & 0xC0) != 0x80) return;
     }
+}
+
+std::size_t next_code_point(const std::string& s, std::size_t at) {
+    if (at >= s.size()) return s.size();
+    ++at;
+    while (at < s.size() && (static_cast<unsigned char>(s[at]) & 0xC0) == 0x80) ++at;
+    return at;
+}
+
+std::size_t previous_code_point(const std::string& s, std::size_t at) {
+    if (at == 0) return 0;
+    at = std::min(at, s.size()) - 1;
+    while (at > 0 && (static_cast<unsigned char>(s[at]) & 0xC0) == 0x80) --at;
+    return at;
+}
+
+bool word_byte(unsigned char c) {
+    return c >= 0x80 || std::isalnum(c) || c == '_';
+}
+
+std::size_t word_left(const std::string& s, std::size_t at) {
+    at = std::min(at, s.size());
+    while (at > 0 && !word_byte(static_cast<unsigned char>(s[at - 1]))) --at;
+    while (at > 0 && word_byte(static_cast<unsigned char>(s[at - 1]))) --at;
+    return at;
+}
+
+std::size_t word_right(const std::string& s, std::size_t at) {
+    at = std::min(at, s.size());
+    while (at < s.size() && !word_byte(static_cast<unsigned char>(s[at]))) ++at;
+    while (at < s.size() && word_byte(static_cast<unsigned char>(s[at]))) ++at;
+    return at;
+}
+
+std::size_t code_points_before(const std::string& s, std::size_t at) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < std::min(at, s.size()); ++i) n += (static_cast<unsigned char>(s[i]) & 0xC0) != 0x80 ? 1 : 0;
+    return n;
 }
 
 std::vector<std::string> split_code_points(const std::string& s) {
@@ -2673,24 +2712,83 @@ private:
         }
         const float tw = std::max(1.0f, x + w - pad.right - tx);
         std::string text = focused ? m_edit : input_text(element);
+        std::size_t caret = focused ? std::min(m_edit_caret, text.size()) : text.size();
         if (element.has_attribute("masked") && !text.empty()) {
             std::size_t points = 0;
             for (unsigned char c : text) points += (c & 0xC0) != 0x80 ? 1 : 0;
+            const std::size_t before = code_points_before(text, caret);
             text.clear();
             for (std::size_t i = 0; i < points; ++i) text += "\xE2\x80\xA2";
+            caret = before * 3;
         }
+        fizmo::text::TextStyle shown = ts;
+        if (disabled) shown.set_fg_color(with_alpha(raw_text_color(element), fade));
+        const std::string dots = "\xE2\x80\xA6";
+        fizmo::text::TextStyle faint = shown;
+        faint.set_fg_color(with_alpha(text_color(element), 0.55));
         if (text.empty() && element.has_attribute("placeholder")) {
             fizmo::text::TextStyle muted = ts;
             muted.set_fg_color(with_alpha(text_color(element), 0.45));
-            push_text(tx, y + pad.top, tw, lh, element.attribute_or("placeholder", ""), muted);
+            push_text(tx, y + pad.top, tw, lh, fit_text(r, element.attribute_or("placeholder", ""), muted, tw), muted);
+            if (focused) push_rect(DrawOp::Kind::Fill, tx, y + pad.top + 2, 2, lh - 4, accent_color(element));
+        } else if (!focused) {
+            push_text(tx, y + pad.top, tw, lh, fit_text(r, text, shown, tw), shown);
         } else {
-            fizmo::text::TextStyle shown = ts;
-            if (disabled) shown.set_fg_color(with_alpha(raw_text_color(element), fade));
-            push_text(tx, y + pad.top, tw, lh, text, shown);
-        }
-        if (focused && m_edit_all && !text.empty()) push_rect(DrawOp::Kind::Fill, tx - 1, y + pad.top + 1, std::min(text_width(r, text, ts) + 2, tw), lh - 2, with_alpha(accent_color(element), 0.35), 1, 2);
-        if (focused) {
-            const float cx = std::min(tx + text_width(r, text, ts) + 1, x + w - pad.right);
+            const float full = text_width(r, text, ts);
+            const float dots_w = text_width(r, dots, ts);
+            if (m_edit_view != &element) {
+                m_edit_view = &element;
+                m_edit_scroll = 0.0f;
+            }
+            float& scroll = m_edit_scroll;
+            auto left_pad = [&] { return scroll > 0.5f ? dots_w + 2.0f : 0.0f; };
+            auto right_pad = [&] { return full - scroll > tw - left_pad() + 0.5f ? dots_w + 2.0f : 0.0f; };
+            if (m_edit_click_x >= 0.0f) {
+                const float local = m_edit_click_x - (tx + left_pad()) + scroll;
+                std::size_t best = 0;
+                float best_d = std::abs(local);
+                for (std::size_t at = 0; at < text.size();) {
+                    at = next_code_point(text, at);
+                    const float d = std::abs(text_width(r, text.substr(0, at), ts) - local);
+                    if (d < best_d) {
+                        best_d = d;
+                        best = at;
+                    }
+                }
+                caret = best;
+                m_edit_caret = element.has_attribute("masked") ? [&] {
+                    std::size_t n = best / 3;
+                    std::size_t i = 0;
+                    while (n > 0 && i < m_edit.size()) {
+                        i = next_code_point(m_edit, i);
+                        --n;
+                    }
+                    return i;
+                }() : best;
+                m_edit_click_x = -1.0f;
+                m_edit_all = false;
+            }
+            const float caret_px = text_width(r, text.substr(0, caret), ts);
+            if (full <= tw) {
+                scroll = 0.0f;
+            } else {
+                for (int pass = 0; pass < 3; ++pass) {
+                    const float view = std::max(8.0f, tw - left_pad() - right_pad() - 2.0f);
+                    if (caret_px < scroll) scroll = std::max(0.0f, caret_px - view * 0.33f);
+                    else if (caret_px > scroll + view) scroll = caret_px - view;
+                    scroll = std::clamp(scroll, 0.0f, std::max(0.0f, full - (tw - dots_w - 4.0f)));
+                }
+            }
+            const float lp = left_pad();
+            const float rp = right_pad();
+            const float view_w = std::max(1.0f, tw - lp - rp);
+            push_clip(Rect{ tx + lp, y, view_w, h });
+            push_text(tx + lp - scroll, y + pad.top, full + 4.0f, lh, text, shown);
+            if (m_edit_all && !text.empty()) push_rect(DrawOp::Kind::Fill, tx + lp - scroll - 1, y + pad.top + 1, full + 2, lh - 2, with_alpha(accent_color(element), 0.35), 1, 2);
+            pop_clip();
+            if (lp > 0.0f) push_text(tx, y + pad.top, dots_w + 2.0f, lh, dots, faint);
+            if (rp > 0.0f) push_text(tx + tw - dots_w, y + pad.top, dots_w + 2.0f, lh, dots, faint);
+            const float cx = std::clamp(tx + lp + caret_px - scroll, tx + lp, tx + lp + view_w - 1.0f);
             push_rect(DrawOp::Kind::Fill, cx, y + pad.top + 2, 2, lh - 4, accent_color(element));
         }
         if (!disabled) add_hit(Hit{ &element, kind, x, y, w, h, 0, 0 });
@@ -5181,6 +5279,15 @@ private:
         const float top = y;
         const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
         const std::size_t box_index = add_box(ElementBox{ &element, bx, top, bw, 0 });
+        if (element.has_attribute("reveal")) {
+            const std::string want = element.attribute_or("reveal", "");
+            const auto done = m_revealed.find(&element);
+            if (done == m_revealed.end() || done->second != want) {
+                m_reveal_node = &element;
+                m_reveal_y = top - margin.top;
+                m_reveal_value = want;
+            }
+        }
 
         std::optional<float> fixed_h;
         if (forced_h >= 0.0f && element.tag() != "img") fixed_h = forced_h;
@@ -5269,6 +5376,21 @@ private:
                     m_elem_scroll_end[&element] = max_scroll;
                     if (pinned && s != max_scroll) {
                         s = max_scroll;
+                        poke();
+                    }
+                }
+                if (m_reveal_node) {
+                    bool inside = false;
+                    for (const Node* n = m_reveal_node->parent(); n; n = n->parent()) {
+                        if (n == &element) {
+                            inside = true;
+                            break;
+                        }
+                    }
+                    if (inside) {
+                        s += m_reveal_y - (top + pad.top);
+                        m_revealed[m_reveal_node] = m_reveal_value;
+                        m_reveal_node = nullptr;
                         poke();
                     }
                 }
@@ -5464,6 +5586,9 @@ private:
         blur(true);
         m_focus = node;
         m_edit = input_text(*node);
+        m_edit_caret = m_edit.size();
+        m_edit_scroll = 0.0f;
+        m_edit_view = node;
         m_focus_start = m_edit;
         m_invalid = false;
         m_edit_all = input_kind_of(*node) == InputKind::Color && !m_edit.empty();
@@ -5475,7 +5600,9 @@ private:
         if (!m_focus) return true;
         Node& node = mutable_node(*m_focus);
         if (!commit_input_text(document(), node, m_edit)) return false;
-        m_edit = input_text(node);
+        const std::string committed = input_text(node);
+        if (committed != m_edit) m_edit_caret = committed.size();
+        m_edit = committed;
         if (m_edit != m_focus_start) {
             m_focus_start = m_edit;
             Event change;
@@ -5490,6 +5617,10 @@ private:
         if (commit) commit_focus();
         m_focus = nullptr;
         m_edit.clear();
+        m_edit_caret = 0;
+        m_edit_scroll = 0.0f;
+        m_edit_click_x = -1.0f;
+        m_edit_view = nullptr;
         m_invalid = false;
         m_edit_all = false;
         if (m_native) m_native->stop_text_input();
@@ -6092,6 +6223,7 @@ private:
                         drag_to(px);
                         return;
                     default:
+                        if (is_text_input(hit.kind) && hit.kind != InputKind::Color) m_edit_click_x = px;
                         focus(hit.node);
                         return;
                 }
@@ -6206,10 +6338,13 @@ private:
         for (const std::string& cp : split_code_points(text)) {
             if (m_edit_all && input_accepts(*m_focus, "", cp)) {
                 m_edit.clear();
+                m_edit_caret = 0;
                 m_edit_all = false;
             }
-            if (input_accepts(*m_focus, m_edit, cp)) {
-                m_edit += cp;
+            m_edit_caret = std::min(m_edit_caret, m_edit.size());
+            if (input_accepts(*m_focus, m_edit.substr(0, m_edit_caret), cp)) {
+                m_edit.insert(m_edit_caret, cp);
+                m_edit_caret += cp.size();
                 m_invalid = false;
                 changed = true;
             }
@@ -6269,6 +6404,7 @@ private:
             const std::string now = input_text(*editing);
             if (now != synced) {
                 m_edit = now;
+                m_edit_caret = now.size();
                 m_focus_start = now;
                 m_edit_all = false;
                 m_invalid = false;
@@ -6377,13 +6513,38 @@ private:
         }
         const bool was_all = m_edit_all;
         if (key == Key::Backspace || key == Key::Delete || key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End) m_edit_all = false;
+        const bool by_word = fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Alt);
+        m_edit_caret = std::min(m_edit_caret, m_edit.size());
         switch (key) {
+            case Key::Left:
+                if (was_all) m_edit_caret = 0;
+                else m_edit_caret = by_word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
+                break;
+            case Key::Right:
+                if (was_all) m_edit_caret = m_edit.size();
+                else m_edit_caret = by_word ? word_right(m_edit, m_edit_caret) : next_code_point(m_edit, m_edit_caret);
+                break;
+            case Key::Home:
+                m_edit_caret = 0;
+                break;
+            case Key::End:
+                m_edit_caret = m_edit.size();
+                break;
             case Key::Delete:
-            case Key::Backspace:
-                if (key == Key::Delete && !was_all) break;
-                if (was_all) m_edit.clear();
-                if (!m_edit.empty() || was_all) {
-                    if (!was_all) pop_code_point(m_edit);
+            case Key::Backspace: {
+                const std::string before = m_edit;
+                if (was_all) {
+                    m_edit.clear();
+                    m_edit_caret = 0;
+                } else if (key == Key::Backspace && m_edit_caret > 0) {
+                    const std::size_t from = by_word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
+                    m_edit.erase(from, m_edit_caret - from);
+                    m_edit_caret = from;
+                } else if (key == Key::Delete && m_edit_caret < m_edit.size()) {
+                    const std::size_t to = by_word ? word_right(m_edit, m_edit_caret) : next_code_point(m_edit, m_edit_caret);
+                    m_edit.erase(m_edit_caret, to - m_edit_caret);
+                }
+                if (m_edit != before) {
                     m_invalid = false;
                     Event input;
                     input.type = "input";
@@ -6392,6 +6553,7 @@ private:
                     dispatch(m_focus, input);
                 }
                 break;
+            }
             case Key::Enter:
                 if (commit_focus()) blur(false);
                 else m_invalid = true;
@@ -6407,6 +6569,7 @@ private:
                 if (commit_focus() || input_kind_of(node) != InputKind::String) {
                     if (step_input(document(), node, key == Key::Up ? 1 : -1)) {
                         m_edit = input_text(node);
+                        m_edit_caret = m_edit.size();
                         m_invalid = false;
                         fire_value(node, false);
                         commit_focus();
@@ -7539,6 +7702,10 @@ private:
     std::string m_focus_start;
     bool m_invalid = false;
     bool m_edit_all = false;
+    std::size_t m_edit_caret = 0;
+    float m_edit_scroll = 0.0f;
+    float m_edit_click_x = -1.0f;
+    const Node* m_edit_view = nullptr;
     const Node* m_dragging = nullptr;
     std::string m_drag_start;
     float m_drag_track_x = 0;
@@ -7567,6 +7734,10 @@ private:
     BarDrag m_bar_hot;
     std::unordered_map<const Node*, float> m_elem_scroll;
     std::unordered_map<const Node*, float> m_elem_scroll_x;
+    std::unordered_map<const Node*, std::string> m_revealed;
+    const Node* m_reveal_node = nullptr;
+    float m_reveal_y = 0.0f;
+    std::string m_reveal_value;
     std::unordered_map<const Node*, float> m_elem_scroll_end;
     std::vector<const Node*> m_code_laid;
     int m_wide = 0;

@@ -49,6 +49,33 @@ typedef enum grove_modifier {
     GROVE_MOD_META = 8
 } grove_modifier;
 
+typedef struct grove_bark_values grove_bark_values;
+typedef struct grove_bark_file grove_bark_file;
+typedef struct grove_bark_actions grove_bark_actions;
+typedef struct grove_bark_call grove_bark_call;
+typedef struct grove_bark_runner grove_bark_runner;
+
+typedef int (*grove_bark_action_fn)(grove_bark_call* call, void* user_data);
+typedef const char* (*grove_bark_provider_fn)(void* user_data);
+
+typedef enum grove_bark_flow {
+    GROVE_BARK_NEXT = 0,
+    GROVE_BARK_WAIT = 1,
+    GROVE_BARK_STOP = 2,
+    GROVE_BARK_FAIL = 3
+} grove_bark_flow;
+
+typedef enum grove_bark_state {
+    GROVE_BARK_READY = 0,
+    GROVE_BARK_WAITING = 1,
+    GROVE_BARK_DONE = 2,
+    GROVE_BARK_STOPPED = 3,
+    GROVE_BARK_FAILED = 4
+} grove_bark_state;
+
+#define GROVE_BARK_ANY ((size_t)-1)
+#define GROVE_BARK_RAW 1u
+
 GROVE_API grove_element* grove_root(grove_document* document);
 GROVE_API grove_element* grove_find_by_id(grove_document* document, const char* id);
 GROVE_API grove_element* grove_first_by_tag(grove_document* document, const char* tag);
@@ -166,6 +193,69 @@ GROVE_API bool grove_open_modal(grove_document* document, grove_element* modal);
 GROVE_API bool grove_close_modal(grove_document* document, grove_element* modal);
 GROVE_API bool grove_navigate(grove_document* document, const char* target);
 GROVE_API bool grove_is_current(const grove_element* element);
+GROVE_API grove_bark_values* grove_bark_values_new(void);
+GROVE_API void grove_bark_values_free(grove_bark_values* values);
+GROVE_API void grove_bark_values_set(grove_bark_values* values, const char* name, const char* value);
+GROVE_API void grove_bark_values_set_default(grove_bark_values* values, const char* name, const char* value);
+GROVE_API bool grove_bark_values_has(const grove_bark_values* values, const char* name);
+GROVE_API const char* grove_bark_values_get(const grove_bark_values* values, const char* name);
+GROVE_API void grove_bark_values_erase(grove_bark_values* values, const char* name);
+GROVE_API void grove_bark_values_provide(grove_bark_values* values, const char* name, grove_bark_provider_fn fn, void* user_data, grove_release_fn release);
+GROVE_API void grove_bark_values_set_parent(grove_bark_values* values, const grove_bark_values* parent);
+GROVE_API size_t grove_bark_values_count(const grove_bark_values* values);
+GROVE_API const char* grove_bark_values_name(const grove_bark_values* values, size_t index);
+GROVE_API const char* grove_bark_interpolate(const char* text, const grove_bark_values* values);
+GROVE_API size_t grove_bark_unknown_count(const char* text, const grove_bark_values* values);
+GROVE_API const char* grove_bark_unknown(const char* text, const grove_bark_values* values, size_t index);
+GROVE_API const char* grove_bark_escape_braces(const char* text);
+GROVE_API grove_bark_file* grove_bark_parse(const char* text, const char* path);
+GROVE_API grove_bark_file* grove_bark_load(const char* path);
+GROVE_API void grove_bark_file_free(grove_bark_file* file);
+GROVE_API size_t grove_bark_error_count(const grove_bark_file* file);
+GROVE_API const char* grove_bark_error(const grove_bark_file* file, size_t index);
+GROVE_API size_t grove_bark_rule_count(const grove_bark_file* file);
+GROVE_API const char* grove_bark_rule_name(const grove_bark_file* file, size_t rule);
+GROVE_API int64_t grove_bark_find_rule(const grove_bark_file* file, const char* name);
+GROVE_API size_t grove_bark_property_count(const grove_bark_file* file, size_t rule);
+GROVE_API const char* grove_bark_property_name(const grove_bark_file* file, size_t rule, size_t property);
+GROVE_API size_t grove_bark_property_line(const grove_bark_file* file, size_t rule, size_t property);
+GROVE_API const char* grove_bark_property_text(const grove_bark_file* file, size_t rule, size_t property);
+GROVE_API size_t grove_bark_value_count(const grove_bark_file* file, size_t rule, size_t property);
+GROVE_API const char* grove_bark_value(const grove_bark_file* file, size_t rule, size_t property, size_t index);
+GROVE_API const char* grove_bark_setting(const grove_bark_file* file, size_t rule, const char* name, const grove_bark_values* values);
+GROVE_API size_t grove_bark_variable_count(const grove_bark_file* file);
+GROVE_API const char* grove_bark_variable_name(const grove_bark_file* file, size_t index);
+GROVE_API const char* grove_bark_variable_value(const grove_bark_file* file, size_t index);
+GROVE_API void grove_bark_add_variables(const grove_bark_file* file, grove_bark_values* values);
+GROVE_API grove_bark_actions* grove_bark_actions_new(void);
+GROVE_API void grove_bark_actions_free(grove_bark_actions* actions);
+GROVE_API void grove_bark_actions_add(grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values, unsigned flags, grove_bark_action_fn fn, void* user_data, grove_release_fn release);
+GROVE_API void grove_bark_actions_setting(grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values);
+GROVE_API void grove_bark_actions_add_standard(grove_bark_actions* actions);
+GROVE_API bool grove_bark_actions_has(const grove_bark_actions* actions, const char* name);
+GROVE_API bool grove_bark_actions_remove(grove_bark_actions* actions, const char* name);
+GROVE_API size_t grove_bark_check_count(const grove_bark_actions* actions, const grove_bark_file* file, size_t rule);
+GROVE_API const char* grove_bark_check(const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, size_t index);
+GROVE_API const char* grove_bark_call_name(const grove_bark_call* call);
+GROVE_API size_t grove_bark_call_arg_count(const grove_bark_call* call);
+GROVE_API const char* grove_bark_call_arg(const grove_bark_call* call, size_t index);
+GROVE_API const char* grove_bark_call_rest(const grove_bark_call* call, size_t from);
+GROVE_API size_t grove_bark_call_line(const grove_bark_call* call);
+GROVE_API grove_bark_values* grove_bark_call_values(grove_bark_call* call);
+GROVE_API grove_bark_runner* grove_bark_call_runner(grove_bark_call* call);
+GROVE_API int grove_bark_call_fail(grove_bark_call* call, const char* message);
+GROVE_API grove_bark_runner* grove_bark_runner_new(const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const grove_bark_values* parent);
+GROVE_API void grove_bark_runner_free(grove_bark_runner* runner);
+GROVE_API int grove_bark_runner_run(grove_bark_runner* runner);
+GROVE_API int grove_bark_runner_step(grove_bark_runner* runner);
+GROVE_API int grove_bark_runner_resume(grove_bark_runner* runner);
+GROVE_API int grove_bark_runner_answer(grove_bark_runner* runner, const char* name, const char* value);
+GROVE_API void grove_bark_runner_stop(grove_bark_runner* runner);
+GROVE_API int grove_bark_runner_state(const grove_bark_runner* runner);
+GROVE_API const char* grove_bark_runner_error(const grove_bark_runner* runner);
+GROVE_API grove_bark_values* grove_bark_runner_values(grove_bark_runner* runner);
+GROVE_API size_t grove_bark_runner_position(const grove_bark_runner* runner);
+GROVE_API size_t grove_bark_runner_size(const grove_bark_runner* runner);
 
 #ifdef __cplusplus
 }

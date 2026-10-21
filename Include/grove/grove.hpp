@@ -8,6 +8,7 @@
 #include "bark/value.hpp"
 #include "bark/stylesheet.hpp"
 #include "bark/parser.hpp"
+#include "bark/actions.hpp"
 #include "bark/cascade.hpp"
 #include "script/script.hpp"
 #include "math/math_block.hpp"

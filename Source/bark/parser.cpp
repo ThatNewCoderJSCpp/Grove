@@ -492,6 +492,10 @@ private:
             mark(MarkKind::UnknownProperty, name.span);
             m_diag.warning(m_file, name.span, "unknown property '" + name.text + "'");
         }
+        if ((at(Tok::Semicolon) || at(Tok::RBrace)) && !is_known_property(name.text)) {
+            accept(Tok::Semicolon);
+            return true;
+        }
         if (!accept(Tok::Colon)) {
             m_diag.error(m_file, peek().span, "expected ':' after '" + name.text + "'");
             sync_statement();

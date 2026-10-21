@@ -39,7 +39,10 @@ enum class CodeLanguage {
     Lua,
     Java,
     CSharp,
-    Assembly
+    Assembly,
+    MathText,
+    Markdown,
+    Text
 };
 
 enum class CodeTokenKind {

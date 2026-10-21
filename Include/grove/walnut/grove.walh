@@ -155,6 +155,130 @@ extern "C++" from "<grove/dom.hpp>" {
     } end class NativeDocument
 } end extern
 
+extern "C++" from "<grove/bark_api.hpp>" {
+    class BarkValues as "grove::BarkValues" {
+    public:
+        constructor();
+        function set(const string&: name, const string&: value) -> void;
+        function set_default(const string&: name, const string&: value) -> void;
+        function has(const string&: name) const -> bool;
+        function get(const string&: name) const -> string;
+        function get_or(const string&: name, const string&: fallback) const -> string;
+        function erase(const string&: name) -> void;
+        function provide(const string&: name, function() -> string: fn) -> void;
+        function set_parent(const BarkValues&: parent) -> void;
+        function count() const -> long int;
+        function name_at(long int: index) const -> string;
+        function interpolate(const string&: source) const -> string;
+        function unknown_count(const string&: source) const -> long int;
+        function unknown_at(const string&: source, long int: index) const -> string;
+        static function escape_braces(const string&: source) -> string;
+    } end class BarkValues
+
+    class BarkFile as "grove::BarkFile" {
+    public:
+        constructor();
+        static function parse(const string&: source, const string&: path) -> BarkFile;
+        static function load(const string&: path) -> BarkFile;
+        function loaded() const -> bool;
+        function ok() const -> bool;
+        function error_count() const -> long int;
+        function error_at(long int: index) const -> string;
+        function rule_count() const -> long int;
+        function rule_name(long int: rule) const -> string;
+        function find_rule(const string&: name) const -> long int;
+        function has_rule(const string&: name) const -> bool;
+        function property_count(long int: rule) const -> long int;
+        function property_name(long int: rule, long int: property) const -> string;
+        function property_line(long int: rule, long int: property) const -> long int;
+        function property_text(long int: rule, long int: property) const -> string;
+        function value_count(long int: rule, long int: property) const -> long int;
+        function value_at(long int: rule, long int: property, long int: index) const -> string;
+        function has_setting(long int: rule, const string&: name) const -> bool;
+        function setting(long int: rule, const string&: name) const -> string;
+        function setting_with(long int: rule, const string&: name, const BarkValues&: values) const -> string;
+        function variable_count() const -> long int;
+        function variable_name(long int: index) const -> string;
+        function variable_value(long int: index) const -> string;
+        function add_variables_to(BarkValues&: values) const -> void;
+    } end class BarkFile
+
+    class BarkCall as "grove::BarkCall" {
+    public:
+        static function current() -> BarkCall;
+        function exists() const -> bool;
+        function name() const -> string;
+        function arg_count() const -> long int;
+        function arg(long int: index) const -> string;
+        function arg_or(long int: index, const string&: fallback) const -> string;
+        function rest(long int: first) const -> string;
+        function line() const -> long int;
+        function values() const -> BarkValues;
+        function next() const -> void;
+        function wait() const -> void;
+        function stop() const -> void;
+        function fail(const string&: message) const -> void;
+    } end class BarkCall
+
+    class BarkActions as "grove::BarkActions" {
+    public:
+        constructor();
+        function add_simple(const string&: name, long int: min_values, long int: max_values, bool: raw, function() -> void: fn) -> void;
+
+        function add(const string&: name, function(BarkCall&) -> void: fn) -> void {
+            add_simple(name, 0, -1, false, [fn]() -> void {
+                BarkCall: call = BarkCall::current();
+                fn(call);
+            });
+        } end function add
+
+        function add_counted(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> void: fn) -> void {
+            add_simple(name, min_values, max_values, false, [fn]() -> void {
+                BarkCall: call = BarkCall::current();
+                fn(call);
+            });
+        } end function add_counted
+
+        function add_raw(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> void: fn) -> void {
+            add_simple(name, min_values, max_values, true, [fn]() -> void {
+                BarkCall: call = BarkCall::current();
+                fn(call);
+            });
+        } end function add_raw
+
+        function setting(const string&: name) -> void;
+        function setting_counted(const string&: name, long int: min_values, long int: max_values) -> void as "setting";
+        function add_standard() -> void;
+        function has(const string&: name) const -> bool;
+        function remove(const string&: name) -> bool;
+        function check_count(const BarkFile&: file, long int: rule) const -> long int;
+        function check_at(const BarkFile&: file, long int: rule, long int: index) const -> string;
+    } end class BarkActions
+
+    class BarkRunner as "grove::BarkRunner" {
+    public:
+        constructor(const BarkActions&: actions, const BarkFile&: file, const string&: rule);
+        constructor(const BarkActions&: actions, const BarkFile&: file, const string&: rule, const BarkValues&: parent);
+        function exists() const -> bool;
+        function run() -> long int;
+        function step() -> long int;
+        function resume() -> long int;
+        function answer(const string&: name, const string&: value) -> long int;
+        function stop() -> void;
+        function state() const -> long int;
+        function waiting() const -> bool;
+        function done() const -> bool;
+        function stopped() const -> bool;
+        function failed() const -> bool;
+        function finished() const -> bool;
+        function error() const -> string;
+        function position() const -> long int;
+        function size() const -> long int;
+        function values() const -> BarkValues;
+    } end class BarkRunner
+
+} end extern
+
 class Element;
 class ElementList;
 class Event;

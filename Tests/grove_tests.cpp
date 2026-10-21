@@ -2,6 +2,8 @@
 #include "grove/terminal.hpp"
 #include "grove/api/grove_api.h"
 #include "grove/bark/properties.hpp"
+#include "grove/bark/actions.hpp"
+#include "grove/bark_api.hpp"
 #include "grove/input/code_find.hpp"
 
 #include <filesystem>
@@ -1077,7 +1079,7 @@ void test_code_highlight_languages() {
     CHECK(grove::code_language_from_name("cmake") == grove::CodeLanguage::CMake);
     CHECK(grove::code_token_kind_from_name("namespace") == grove::CodeTokenKind::Namespace);
     CHECK(!grove::code_token_kind_from_name("nope"));
-    CHECK(grove::code_token_kinds().size() == 27 && grove::code_languages().size() == 17);
+    CHECK(grove::code_token_kinds().size() == 27 && grove::code_languages().size() == 20);
     CHECK(grove::bark::is_known_property("code-keyword") && grove::bark::is_known_property("code-mark"));
 }
 
@@ -1649,6 +1651,37 @@ void test_code_find() {
     CHECK(grove::code_match_before(m, grove::CodePos{ 1, 0 }) == 1);
 }
 
+void test_docs_languages() {
+    using grove::CodeLanguage;
+    using grove::CodeTokenKind;
+    auto kinds = [](CodeLanguage lang, std::string_view line, grove::CodeLineState& st) {
+        std::string out;
+        for (const grove::CodeToken& t : grove::highlight_code_line(lang, line, st)) {
+            if (t.kind == CodeTokenKind::Plain) continue;
+            out += std::string(line.substr(t.begin, t.end - t.begin)) + "=" + grove::to_string(t.kind) + " ";
+        }
+        return out;
+    };
+    grove::CodeLineState st;
+    CHECK(grove::code_language_from_name("math") == CodeLanguage::MathText && grove::code_language_for_path("x.mtb") == CodeLanguage::MathText);
+    CHECK(grove::code_language_for_path("notes.md") == CodeLanguage::Markdown && grove::code_language_for_path("a.txt") == CodeLanguage::Text);
+    CHECK(grove::code_language_for_path("CMakeLists.txt") == CodeLanguage::CMake);
+    const std::string m = kinds(CodeLanguage::MathText, "sqrt(x^2 + 1) \\approx\\ 2.5 \"y\"", st);
+    CHECK(m.find("sqrt=function") != std::string::npos && m.find("x=variable") != std::string::npos && m.find("^=operator") != std::string::npos);
+    CHECK(m.find("\\approx\\=keyword") != std::string::npos && m.find("2.5=number") != std::string::npos && m.find("\"y\"=string") != std::string::npos);
+    CHECK(kinds(CodeLanguage::MathText, "fraction{add{\"x\", 2}, pi}", st).find("fraction=function") != std::string::npos);
+    grove::CodeLineState md;
+    CHECK(kinds(CodeLanguage::Markdown, "## Title", md) == "## Title=keyword ");
+    const std::string inline_md = kinds(CodeLanguage::Markdown, "- **bold** and *it* with `code` and [link](http://x)", md);
+    CHECK(inline_md.find("-=operator") != std::string::npos && inline_md.find("**bold**=control-keyword") != std::string::npos && inline_md.find("*it*=type") != std::string::npos);
+    CHECK(inline_md.find("`code`=string") != std::string::npos && inline_md.find("[link]=function") != std::string::npos && inline_md.find("(http://x)=attribute") != std::string::npos);
+    CHECK(kinds(CodeLanguage::Markdown, "```cpp", md) == "```cpp=preprocessor ");
+    CHECK(kinds(CodeLanguage::Markdown, "# not a heading in code", md) == "# not a heading in code=string ");
+    CHECK(kinds(CodeLanguage::Markdown, "```", md) == "```=preprocessor ");
+    const std::string text = kinds(CodeLanguage::Text, "See https://example.com, or call 555 at 10:30.", st);
+    CHECK(text.find("https://example.com=function") != std::string::npos && text.find("555=number") != std::string::npos && text.find("10:30=number") != std::string::npos);
+}
+
 void test_more_languages() {
     using grove::CodeTokenKind;
     using grove::CodeLanguage;
@@ -1763,11 +1796,193 @@ void test_web_highlighting() {
     CHECK(has(json[0], "\"name\"", CodeTokenKind::Property) && has(json[0], "\"x\"", CodeTokenKind::String) && has(json[0], "true", CodeTokenKind::Constant));
 }
 
+void test_bark_actions() {
+    using namespace grove::bark;
+    Values base;
+    base.set("name", "Grove");
+    int computed = 0;
+    base.provide("lazy", [&computed] { ++computed; return std::string("later"); });
+    Values values(&base);
+    values.set("version", "1.2.3");
+    CHECK(interpolate("{name} v{version}", values) == "Grove v1.2.3");
+    CHECK(computed == 0);
+    CHECK(interpolate("{lazy} {lazy}", values) == "later later");
+    CHECK(computed == 1);
+    CHECK(interpolate("{{literal}} and }}", values) == "{literal} and }");
+    CHECK(interpolate("${HOME} {} { name } awk '{print $1}'", values) == "${HOME} {} { name } awk '{print $1}'");
+    CHECK(interpolate("-j {jobs:8}", values) == "-j 8");
+    values.set("jobs", "32");
+    CHECK(interpolate("-j {jobs:8}", values) == "-j 32");
+    const Interpolation missing = interpolate_with("{typo} {name} {typo} {other}", [&values](const std::string& n) { return values.get(n); });
+    CHECK(missing.text == "{typo} Grove {typo} {other}");
+    CHECK(missing.unknown.size() == 2 && missing.unknown[0] == "typo" && missing.unknown[1] == "other");
+    CHECK(interpolate("say {name}", values, [](const std::string& v) { return "'" + v + "'"; }) == "say 'Grove'");
+    CHECK(placeholders("a {x} b {y:1} {{z}} ${w}") == std::vector<std::string>({ "x", "y" }));
+    CHECK(escape_braces("{a}") == "{{a}}");
+    CHECK(interpolate(escape_braces("{name}"), values) == "{name}");
+    CHECK(values.names().size() == 4);
+
+    grove::Diagnostics d;
+    const Stylesheet sheet = parse_stylesheet(
+        "$greeting = \"hello\";\n"
+        "build {\n"
+        "    label: \"Build {target}\";\n"
+        "    ask: target \"Which target?\" \"all\";\n"
+        "    set: flags \"-j\" 8;\n"
+        "    log: $greeting \"{target} {flags}\";\n"
+        "    default: target \"ignored\";\n"
+        "    log: \"done\";\n"
+        "}\n"
+        "broken {\n"
+        "    label: \"a\";\n"
+        "    label: \"b\";\n"
+        "    nope: 1;\n"
+        "    ask;\n"
+        "}\n", "actions.bark", d);
+    CHECK(d.ok());
+    std::vector<std::string> log;
+    std::string asked;
+    Actions actions;
+    actions.add_standard();
+    actions.setting("label");
+    actions.add("ask", 1, 3, [&asked](ActionCall& call) {
+        asked = call.arg(0);
+        return Flow::Wait;
+    });
+    actions.add("log", [&log](ActionCall& call) {
+        log.push_back(call.rest(0));
+        return Flow::Next;
+    });
+    const Rule* build = find_rule(sheet, "build");
+    CHECK(build != nullptr);
+    if (build) {
+        CHECK(actions.check(*build).empty());
+        Values file;
+        file.add_variables(sheet.variables());
+        CHECK(file.get_or("greeting") == "hello");
+        Runner runner(actions, *build, &file);
+        CHECK(runner.run() == Runner::State::Waiting);
+        CHECK(asked == "target");
+        CHECK(runner.answer("target", "tests") == Runner::State::Done);
+        CHECK(log.size() == 2 && log[0] == "hello tests -j 8" && log[1] == "done");
+        CHECK(runner.values().get_or("target") == "tests");
+        CHECK(setting_of(*build, "label", runner.values()) == std::optional<std::string>("Build tests"));
+    }
+    const Rule* broken = find_rule(sheet, "broken");
+    CHECK(broken != nullptr);
+    if (broken) {
+        const std::vector<ActionProblem> problems = actions.check(*broken);
+        CHECK(problems.size() == 3);
+        Runner runner(actions, *broken);
+        CHECK(runner.run() == Runner::State::Failed);
+        CHECK(runner.error() == "unknown action 'nope'");
+    }
+    Actions stops;
+    stops.add_standard();
+    std::vector<Declaration> steps = parse_declarations("set: a 1; stop; set: a 2;", "inline", d);
+    Runner stopped(stops, steps);
+    CHECK(stopped.run() == Runner::State::Stopped);
+    CHECK(stopped.values().get_or("a") == "1");
+    Runner failing(stops, parse_declarations("fail: \"no {thing:luck}\";", "inline", d));
+    CHECK(failing.run() == Runner::State::Failed && failing.error() == "no luck");
+}
+
+void test_bark_c_api() {
+    grove_bark_values* base = grove_bark_values_new();
+    grove_bark_values_set(base, "name", "Grove");
+    grove_bark_values_provide(base, "lazy", [](void*) -> const char* { return "later"; }, nullptr, nullptr);
+    CHECK(std::string(grove_bark_interpolate("{name} {lazy} {missing:none} {{x}}", base)) == "Grove later none {x}");
+    CHECK(grove_bark_unknown_count("{a} {name} {b}", base) == 2);
+    CHECK(std::string(grove_bark_unknown("{a} {name} {b}", base, 1)) == "b");
+    CHECK(grove_bark_values_get(base, "nope") == nullptr);
+
+    grove_bark_file* file = grove_bark_parse(
+        "$who = \"world\";\n"
+        "greet {\n"
+        "    label: \"Hi {who}\";\n"
+        "    ask: mood \"How are you?\";\n"
+        "    say: \"hello {who}, {name} feels {mood}\";\n"
+        "    shout: \"{raw}\";\n"
+        "    done;\n"
+        "}\n", "c.bark");
+    CHECK(grove_bark_error_count(file) == 0);
+    CHECK(grove_bark_rule_count(file) == 1 && std::string(grove_bark_rule_name(file, 0)) == "greet");
+    CHECK(grove_bark_find_rule(file, "greet") == 0 && grove_bark_find_rule(file, "nope") == -1);
+    CHECK(grove_bark_property_count(file, 0) == 5 && std::string(grove_bark_property_name(file, 0, 4)) == "done" && grove_bark_value_count(file, 0, 4) == 0);
+    CHECK(grove_bark_property_line(file, 0, 1) == 4);
+    CHECK(grove_bark_variable_count(file) == 1 && std::string(grove_bark_variable_name(file, 0)) == "who" && std::string(grove_bark_variable_value(file, 0)) == "world");
+    grove_bark_add_variables(file, base);
+    CHECK(std::string(grove_bark_setting(file, 0, "label", base)) == "Hi world");
+    CHECK(std::string(grove_bark_setting(file, 0, "label", nullptr)) == "Hi {who}");
+
+    struct Log {
+        std::vector<std::string> lines;
+    };
+    auto* log = new Log();
+    static int released = 0;
+    grove_bark_actions* actions = grove_bark_actions_new();
+    grove_bark_actions_setting(actions, "label", 1, 1);
+    grove_bark_actions_add(actions, "ask", 1, 2, 0, [](grove_bark_call*, void*) -> int { return GROVE_BARK_WAIT; }, nullptr, nullptr);
+    grove_bark_actions_add(actions, "say", 1, 1, 0, [](grove_bark_call* call, void* user) -> int {
+        static_cast<Log*>(user)->lines.push_back(grove_bark_call_arg(call, 0));
+        return GROVE_BARK_NEXT;
+    }, log, [](void* user) { ++released; delete static_cast<Log*>(user); });
+    grove_bark_actions_add(actions, "shout", 1, 1, GROVE_BARK_RAW, [](grove_bark_call* call, void*) -> int {
+        grove_bark_values_set(grove_bark_call_values(call), "shouted", grove_bark_call_arg(call, 0));
+        return GROVE_BARK_NEXT;
+    }, nullptr, nullptr);
+    CHECK(grove_bark_check_count(actions, file, 0) == 1);
+    CHECK(std::string(grove_bark_check(actions, file, 0, 0)) == "line 7: unknown property 'done'");
+    grove_bark_actions_add(actions, "done", 0, 0, 0, [](grove_bark_call* call, void*) -> int { return grove_bark_call_fail(call, "finished early"); }, nullptr, nullptr);
+    CHECK(grove_bark_check_count(actions, file, 0) == 0);
+
+    grove_bark_runner* runner = grove_bark_runner_new(actions, file, 0, base);
+    CHECK(grove_bark_runner_run(runner) == GROVE_BARK_WAITING);
+    CHECK(grove_bark_runner_position(runner) == 2 && grove_bark_runner_size(runner) == 5);
+    CHECK(grove_bark_runner_answer(runner, "mood", "great") == GROVE_BARK_FAILED);
+    CHECK(std::string(grove_bark_runner_error(runner)) == "finished early");
+    CHECK(log->lines.size() == 1 && log->lines[0] == "hello world, Grove feels great");
+    CHECK(std::string(grove_bark_values_get(grove_bark_runner_values(runner), "shouted")) == "{raw}");
+    grove_bark_runner_free(runner);
+    grove_bark_actions_free(actions);
+    CHECK(released == 1);
+    grove_bark_file_free(file);
+    grove_bark_values_free(base);
+    CHECK(grove_bark_load("/no/such/file.bark") == nullptr);
+
+    grove::BarkFile tasks = grove::BarkFile::parse("build {\n    run: \"make -j {jobs:8}\";\n    set: jobs 2;\n    run: \"make -j {jobs}\";\n    wait;\n    run: \"{target}\";\n}\n", "tasks.bark");
+    CHECK(tasks.ok() && tasks.has_rule("build") && tasks.property_count(0) == 5);
+    std::vector<std::string> ran;
+    grove::BarkActions acts;
+    acts.add_standard();
+    acts.add("run", 1, 1, [&ran](grove::BarkCall& call) -> std::int64_t {
+        ran.push_back(call.arg(0));
+        return call.next();
+    });
+    acts.add("wait", [](grove::BarkCall& call) -> std::int64_t { return call.wait(); });
+    grove::BarkValues program;
+    program.provide("target", [] { return std::string("all"); });
+    grove::BarkRunner r(acts, tasks, "build", program);
+    CHECK(r.run() == grove::BarkRunner::waiting_state && r.waiting());
+    CHECK(r.resume() == grove::BarkRunner::done_state && r.done());
+    CHECK(ran == std::vector<std::string>({ "make -j 8", "make -j 2", "all" }));
+    CHECK(r.values().get("jobs") == "2" && r.values().get_or("nope", "x") == "x");
+    acts.add("boom", [](grove::BarkCall&) -> std::int64_t { throw std::runtime_error("kaboom"); });
+    grove::BarkRunner bad(acts, grove::BarkFile::parse("x { boom; }", "b.bark"), "x");
+    CHECK(bad.run() == grove::BarkRunner::failed_state && bad.error() == "kaboom");
+    grove::BarkRunner none(acts, tasks, "missing");
+    CHECK(!none.exists() && none.failed() && none.run() == grove::BarkRunner::failed_state);
+    CHECK(grove::bark_escape_braces("{a}") == "{{a}}");
+    CHECK(!grove::BarkFile::load("/no/such/file.bark").loaded());
+}
+
 int main() {
     test_markup();
     test_markup_errors();
     test_bark();
     test_bark_errors();
+    test_bark_actions();
+    test_bark_c_api();
     test_math();
     test_scripts();
     test_api();
@@ -1820,6 +2035,7 @@ int main() {
     test_code_find();
     test_web_highlighting();
     test_more_languages();
+    test_docs_languages();
     std::cout << (g_checks - g_failures) << '/' << g_checks << " checks passed\n";
     return g_failures == 0 ? 0 : 1;
 }

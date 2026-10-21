@@ -40,7 +40,12 @@ MathSyntax math_syntax_of(const Node& element, const std::string& file, Diagnost
 
 std::string math_source_of(const Node& element) {
     const Node* raw = raw_child(element);
-    return raw ? raw->text() : std::string();
+    if (raw) return raw->text();
+    std::string out;
+    for (const auto& c : element.children()) {
+        if (c->is_text()) out += c->text();
+    }
+    return out;
 }
 
 std::string to_brace_form(const MathBlock& block) {

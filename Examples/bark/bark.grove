@@ -1,0 +1,16 @@
+<grove>
+    <head>
+        <title>Grove Bark actions</title>
+        <script lang="walnut" src="bark.wal"></script>
+    </head>
+    <body>
+        <h2>Bark actions</h2>
+        <p class="muted">The steps come from a Bark file; Walnut says what each property does.</p>
+        <p id="rules">Loading...</p>
+        <row>
+            <button id="greet">Greet</button>
+            <button id="check">Check</button>
+        </row>
+        <p id="out">Not run yet.</p>
+    </body>
+</grove>

@@ -64,6 +64,123 @@ body {
 - Scripts read any property, custom or not, with `computed_style("--glow")` (the text), `computed_number("--glow")` (a number, with lengths in pixels: `2em` comes back as 32), `computed_color("--accent")` (`#rrggbbaa`), `computed_bool("--spin")` (`true`, `yes`, `on` or `1`) and `has_computed_style`. See [Scripts](grove.md#the-document-like-javascript).
 - A property without `--` that Grove doesn't know is still kept for scripts to read, but `grove check` warns about it in case it's a typo, and it isn't inherited.
 
+## Bark beyond styles: values and actions
+
+Bark files can describe things to do, not just how things look. Canopy's `tasks.bark` is one: each rule is a task, and its properties are steps that run in order. `#include <grove/bark/actions.hpp>` gives any program the same building blocks, so its own Bark files can have prompts, values and steps without writing a parser.
+
+```bark
+$target = "all";
+
+build {
+    label: "Build {target}";
+    ask: jobs "Parallel jobs" 8;
+    run: "make {target} -j {jobs}";
+    log: "built {target} with {jobs:8} jobs";
+    done;
+}
+```
+
+**Placeholders.** `{name}` inside a string is replaced with a value by `bark::interpolate`. `{name:fallback}` uses the fallback when there's no value, `{{` and `}}` are a literal `{` and `}`, and `${...}` (a shell variable) is left alone, as is anything that isn't a name (`{}`, `{ x }`, `awk '{print $1}'`). A name with no value is left as it was and reported, so a typo is easy to catch. Placeholders only work inside strings: a bare `{` starts a nested rule.
+
+**A property with no value.** `done;` (a name and a `;`) is a property with no values, for actions that don't need any. Style properties still need a value.
+
+**`bark::Values`** holds the names. `set(name, value)`, `set_default` (only when it has no value yet), `provide(name, function)` for a value that's worked out the first time it's used (reading a version from a file, say), `add_variables(sheet.variables())` to make the file's `$variables` usable as `{name}` too, and a parent `Values` to fall back on, so a program's own values can sit under each run's.
+
+**`bark::Actions`** says what each property does. `add(name, handler)` (or with a minimum and maximum number of values) registers an action; the handler gets an `ActionCall` with the values as text, placeholders already filled in, and returns `Flow::Next`, `Wait` (for something that answers later, like a prompt), `Stop` or `Fail`. `setting(name)` registers a property that's read rather than run, like `label`. `add_standard()` adds `set: name value;`, `default: name value;`, `stop;` and `fail: "why";`. `check(rule)` lists unknown properties, wrong numbers of values and settings given twice.
+
+**`bark::Runner`** runs a rule's actions in order with its own `Values`. `run()` goes until an action waits, stops, fails or the rule ends; after a `Wait`, `answer(name, value)` stores the answer and carries on (or `resume()` without one).
+
+```cpp
+grove::bark::Actions actions;
+actions.add_standard();
+actions.setting("label");
+actions.add("ask", 1, 3, [&](grove::bark::ActionCall& call) {
+    show_prompt(call.arg(1, call.arg(0)), call.arg(2));
+    return grove::bark::Flow::Wait;
+});
+actions.add("run", 1, 1, [&](grove::bark::ActionCall& call) {
+    return start(call.arg(0)) ? grove::bark::Flow::Next : call.fail("couldn't start " + call.arg(0));
+});
+
+grove::bark::Values program;
+program.provide("version", [] { return read_version(); });
+grove::bark::Runner runner(actions, *grove::bark::find_rule(sheet, "build"), &program);
+runner.run();
+on_prompt_answered = [&](std::string text) { runner.answer("jobs", text); };
+```
+
+`bark::text_of`, `texts_of` and `joined_text` turn values into plain text (strings without quotes, `8` as `8`), and `setting_of(rule, "label", values)` reads a setting with its placeholders filled in.
+
+### From Walnut
+
+Scripts get the same thing through `import module.grove`: `grove::BarkFile`, `grove::BarkValues`, `grove::BarkActions`, `grove::BarkRunner` and `grove::BarkCall`. An action is a function that takes the call; it carries on to the next step unless it calls `call.wait()`, `call.stop()` or `call.fail("why")`. `Examples/bark` has the whole thing, with the answer to an `ask:` coming from a popup:
+
+```walnut
+import module.grove
+
+grove::BarkFile: file = grove::BarkFile::parse("greet {\n    ask: mood \"How are you?\" \"fine\";\n    say: \"feeling {mood}\";\n}\n", "steps.bark");
+grove::BarkValues: program;
+program.set("app", "Grove");
+
+grove::BarkActions: actions;
+actions.add_standard();
+actions.add_counted("say", 1, 1, [&](grove::BarkCall&: call) -> void {
+    grove::log(call.arg(0));
+});
+actions.add_counted("ask", 1, 3, [&](grove::BarkCall&: call) -> void {
+    call.wait();
+});
+
+grove::BarkRunner: runner = grove::BarkRunner(actions, file, "greet", program);
+runner.run();
+if (runner.waiting()) then {
+    grove::prompt_string("Greeting", "How are you?", "fine", [&](string: answer) -> void {
+        runner.answer("mood", answer);
+    });
+}
+```
+
+- `BarkFile::parse(source, path)` or `BarkFile::load(path)`; `ok()`, `error_count()`/`error_at(i)`, `rule_count()`, `rule_name(i)`, `find_rule(name)` (`-1` when it isn't there), `property_count(rule)`, `property_name(rule, i)`, `property_line`, `property_text`, `value_count`, `value_at(rule, i, n)`, `setting(rule, name)`, `setting_with(rule, name, values)`, the `$variables` (`variable_count`, `variable_name`, `variable_value`) and `add_variables_to(values)`.
+- `BarkValues`: `set`, `set_default`, `has`, `get`, `get_or`, `erase`, `provide(name, function)`, `set_parent`, `interpolate(source)`, `unknown_count(source)`/`unknown_at(source, i)` for the placeholders nothing sets, and `BarkValues::escape_braces(source)`.
+- `BarkActions`: `add(name, fn)`, `add_counted(name, min, max, fn)` (`-1` for no maximum), `add_raw` (the values come without placeholders filled in), `setting(name)`, `add_standard()`, `has`, `remove`, `check_count(file, rule)`/`check_at(file, rule, i)`.
+- `BarkRunner(actions, file, rule)` or with a parent `BarkValues`: `run`, `step`, `resume`, `answer(name, value)`, `stop`, `waiting`, `done`, `stopped`, `failed`, `finished`, `error`, `position`, `size` and `values()`.
+- `BarkCall`: `name`, `arg_count`, `arg(i)`, `arg_or(i, fallback)`, `rest(first)`, `line`, `values()`, and `wait`, `stop`, `fail`.
+
+C++ scripts use the same classes from `#include <grove/bark_api.hpp>`. There an action can also return what happens next: `acts.add("say", [](grove::BarkCall& call) { return call.next(); })`.
+
+### From C
+
+`#include <grove/api/grove_api.h>` has it as plain functions on handles, for C scripts and anything else that can call C:
+
+```c
+grove_bark_file* file = grove_bark_load("steps.bark");
+grove_bark_values* program = grove_bark_values_new();
+grove_bark_values_set(program, "app", "Grove");
+grove_bark_add_variables(file, program);
+
+grove_bark_actions* actions = grove_bark_actions_new();
+grove_bark_actions_add_standard(actions);
+grove_bark_actions_add(actions, "say", 1, 1, 0, say, NULL, NULL);
+
+grove_bark_runner* runner = grove_bark_runner_new(actions, file, (size_t)grove_bark_find_rule(file, "greet"), program);
+if (grove_bark_runner_run(runner) == GROVE_BARK_WAITING) grove_bark_runner_answer(runner, "mood", "great");
+```
+
+with an action like
+
+```c
+static int say(grove_bark_call* call, void* user_data) {
+    grove_log(grove_bark_call_arg(call, 0));
+    return GROVE_BARK_NEXT;
+}
+```
+
+- Handles: `grove_bark_values` (`_new`, `_free`, `_set`, `_set_default`, `_has`, `_get` (`NULL` when unset), `_erase`, `_provide`, `_set_parent`, `_count`, `_name`), `grove_bark_file` (`grove_bark_parse`, `grove_bark_load` (`NULL` when the file can't be read), `grove_bark_file_free`, errors, rules, properties, values, settings and variables), `grove_bark_actions` (`_new`, `_free`, `_add`, `_setting`, `_add_standard`, `_has`, `_remove`, and `grove_bark_check_count`/`grove_bark_check`) and `grove_bark_runner` (`_new`, `_free`, `_run`, `_step`, `_resume`, `_answer`, `_stop`, `_state`, `_error`, `_values`, `_position`, `_size`).
+- An action returns `GROVE_BARK_NEXT`, `GROVE_BARK_WAIT`, `GROVE_BARK_STOP` or `GROVE_BARK_FAIL` (`return grove_bark_call_fail(call, "why");` sets the message too), and reads its call with `grove_bark_call_name`, `_arg_count`, `_arg`, `_rest`, `_line`, `_values` and `_runner`. `GROVE_BARK_ANY` as the maximum allows any number of values, and the `GROVE_BARK_RAW` flag passes them without filling in placeholders.
+- The runner's state is `GROVE_BARK_READY`, `GROVE_BARK_WAITING`, `GROVE_BARK_DONE`, `GROVE_BARK_STOPPED` or `GROVE_BARK_FAILED`.
+- `grove_bark_interpolate(text, values)`, `grove_bark_unknown_count`/`grove_bark_unknown` and `grove_bark_escape_braces` work on any text.
+- Strings that come back stay valid until a few more calls return strings, so copy one you want to keep. The `release` function given to `_add` or `_provide` is called with `user_data` when the actions or values are freed. A runner keeps its actions alive, but the parent values have to outlive it.
+
 ## Selectors
 
 | Selector | Matches |

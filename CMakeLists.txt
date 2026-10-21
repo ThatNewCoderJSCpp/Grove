@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.1.32 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.1.33 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -62,6 +62,7 @@ add_library(grove_core STATIC
     Source/bark/parser.cpp
     Source/bark/cascade.cpp
     Source/bark/properties.cpp
+    Source/bark/actions.cpp
     Source/script/script.cpp
     Source/script/builder.cpp
     Source/script/loader.cpp
@@ -74,6 +75,7 @@ add_library(grove_core STATIC
     Source/native.cpp
     Source/math/math_block.cpp
     Source/api/grove_api.cpp
+    Source/api/grove_bark_api.cpp
     Source/project.cpp
     Source/dom_tools.cpp
     Source/bundle.cpp
@@ -136,6 +138,7 @@ if(GROVE_BUILD_TESTS)
     add_test(NAME grove_check_editor COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/editor/editor.grove")
     add_test(NAME grove_check_pages COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/pages/pages.grove")
     add_test(NAME grove_check_align COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/align/align.grove")
+    add_test(NAME grove_check_bark COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/bark/bark.grove")
     add_test(NAME grove_exec_pages COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/pages/pages.grove" --event "click #notes-tab" --event "click #starred-tab" --event "click #back-tab")
     set_tests_properties(grove_exec_pages PROPERTIES PASS_REGULAR_EXPRESSION "<page id=\"all-notes\" current")
     if(GROVE_WITH_WALNUT AND TARGET walnut)
@@ -151,6 +154,14 @@ if(GROVE_BUILD_TESTS)
         set_tests_properties(grove_exec_windows PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
             PASS_REGULAR_EXPRESSION "be 31")
+        add_test(NAME grove_exec_bark COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/bark/bark.grove" --event "click #greet" --event "click .popup-ok")
+        set_tests_properties(grove_exec_bark PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            PASS_REGULAR_EXPRESSION "hello Walnut, feeling fine; 2 lines from Grove")
+        add_test(NAME grove_exec_bark_fail COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Examples/bark/bark.grove" --event "click #check")
+        set_tests_properties(grove_exec_bark_fail PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            PASS_REGULAR_EXPRESSION "checking everything; failed: everything is broken")
         if(GROVE_BUILD_RUNTIME)
             add_test(NAME grove_build_todo COMMAND grove build "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove" -o "${CMAKE_CURRENT_BINARY_DIR}/todo-app")
             set_tests_properties(grove_build_todo PROPERTIES

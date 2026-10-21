@@ -2215,6 +2215,264 @@ bool asm_register(const std::string& w) {
            numbered("dr", 7);
 }
 
+std::vector<CodeToken> highlight_mathtext(std::string_view line, CodeLineState& state) {
+    (void)state;
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        const char c = line[i];
+        if (c == '"' || c == '\'') {
+            const std::size_t end = skip_string(line, i, c);
+            push(out, i, end, CodeTokenKind::String);
+            i = end;
+            continue;
+        }
+        if (c == '\\') {
+            std::size_t end = i + 1;
+            while (end < line.size() && line[end] != '\\' && line[end] != ' ' && line[end] != '\t' && line[end] != '{' && line[end] != '}' && line[end] != '(' && line[end] != ')' && line[end] != ',') ++end;
+            if (end < line.size() && line[end] == '\\') ++end;
+            push(out, i, end, CodeTokenKind::Keyword);
+            i = end;
+            continue;
+        }
+        if (digit(c) || (c == '.' && i + 1 < line.size() && digit(line[i + 1]))) {
+            std::size_t end = i;
+            while (end < line.size() && (digit(line[end]) || line[end] == '.')) ++end;
+            if (end < line.size() && (line[end] == 'e' || line[end] == 'E') && end + 1 < line.size() && (digit(line[end + 1]) || ((line[end + 1] == '+' || line[end + 1] == '-') && end + 2 < line.size() && digit(line[end + 2])))) {
+                end += 2;
+                while (end < line.size() && digit(line[end])) ++end;
+            }
+            push(out, i, end, CodeTokenKind::Number);
+            i = end;
+            continue;
+        }
+        if (std::isalpha(static_cast<unsigned char>(c))) {
+            std::size_t end = i + 1;
+            while (end < line.size() && (std::isalnum(static_cast<unsigned char>(line[end])) || line[end] == '_' || line[end] == '-')) {
+                if (line[end] == '-' && (end + 1 >= line.size() || !std::isalpha(static_cast<unsigned char>(line[end + 1])))) break;
+                ++end;
+            }
+            std::size_t next = end;
+            while (next < line.size() && (line[next] == ' ' || line[next] == '\t')) ++next;
+            const std::string_view word = line.substr(i, end - i);
+            CodeTokenKind kind = CodeTokenKind::Variable;
+            if (next < line.size() && (line[next] == '{' || line[next] == '(')) kind = CodeTokenKind::Function;
+            else if (word == "pi" || word == "e" || word == "i" || word == "inf" || word == "infinity" || word == "true" || word == "false") kind = CodeTokenKind::Constant;
+            push(out, i, end, kind);
+            i = end;
+            continue;
+        }
+        if (std::string_view("+-*/^_=<>!").find(c) != std::string_view::npos) {
+            push(out, i, i + 1, CodeTokenKind::Operator);
+            ++i;
+            continue;
+        }
+        push(out, i, i + 1, CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
+std::size_t markdown_inline_end(std::string_view line, std::size_t from, std::string_view close) {
+    const std::size_t at = line.find(close, from);
+    return at == std::string_view::npos ? std::string_view::npos : at + close.size();
+}
+
+void markdown_inline(std::vector<CodeToken>& out, std::string_view line, std::size_t i, std::size_t stop, CodeTokenKind base) {
+    while (i < stop) {
+        const char c = line[i];
+        if (c == '`') {
+            std::size_t ticks = i;
+            while (ticks < stop && line[ticks] == '`') ++ticks;
+            const std::string_view run = line.substr(i, ticks - i);
+            const std::size_t end = markdown_inline_end(line, ticks, run);
+            if (end != std::string_view::npos && end <= stop) {
+                push(out, i, end, CodeTokenKind::String);
+                i = end;
+                continue;
+            }
+        }
+        if ((c == '*' || c == '_') && i + 1 < stop && line[i + 1] == c) {
+            const std::string_view mark = line.substr(i, 2);
+            const std::size_t end = markdown_inline_end(line, i + 2, mark);
+            if (end != std::string_view::npos && end <= stop && end > i + 4) {
+                push(out, i, end, CodeTokenKind::ControlKeyword);
+                i = end;
+                continue;
+            }
+        }
+        if ((c == '*' || c == '_') && i + 1 < stop && line[i + 1] != ' ' && (c == '*' || i == 0 || !std::isalnum(static_cast<unsigned char>(line[i - 1])))) {
+            const std::size_t end = line.find(c, i + 1);
+            if (end != std::string_view::npos && end < stop && end > i + 1 && line[end - 1] != ' ') {
+                push(out, i, end + 1, CodeTokenKind::Type);
+                i = end + 1;
+                continue;
+            }
+        }
+        if (c == '[' || (c == '!' && i + 1 < stop && line[i + 1] == '[')) {
+            const std::size_t open = c == '!' ? i + 1 : i;
+            const std::size_t close = line.find(']', open + 1);
+            if (close != std::string_view::npos && close + 1 < stop && line[close + 1] == '(') {
+                const std::size_t paren = line.find(')', close + 2);
+                if (paren != std::string_view::npos && paren < stop) {
+                    push(out, i, close + 1, CodeTokenKind::Function);
+                    push(out, close + 1, paren + 1, CodeTokenKind::Attribute);
+                    i = paren + 1;
+                    continue;
+                }
+            }
+        }
+        if (c == '<') {
+            const std::size_t close = line.find('>', i + 1);
+            if (close != std::string_view::npos && close < stop && i + 1 < stop && (std::isalpha(static_cast<unsigned char>(line[i + 1])) || line[i + 1] == '/' || line[i + 1] == '!')) {
+                const std::string_view inner = line.substr(i + 1, close - i - 1);
+                push(out, i, close + 1, inner.find("://") != std::string_view::npos || inner.find('@') != std::string_view::npos ? CodeTokenKind::Attribute : CodeTokenKind::Tag);
+                i = close + 1;
+                continue;
+            }
+        }
+        if (c == '\\' && i + 1 < stop && std::ispunct(static_cast<unsigned char>(line[i + 1]))) {
+            push(out, i, i + 2, CodeTokenKind::Escape);
+            i += 2;
+            continue;
+        }
+        push(out, i, i + 1, base);
+        ++i;
+    }
+}
+
+std::vector<CodeToken> highlight_markdown(std::string_view line, CodeLineState& state) {
+    std::vector<CodeToken> out;
+    std::size_t lead = 0;
+    while (lead < line.size() && lead < 4 && line[lead] == ' ') ++lead;
+    const std::string_view rest = line.substr(lead);
+    const bool fence = rest.rfind("```", 0) == 0 || rest.rfind("~~~", 0) == 0;
+    if (state.raw_string) {
+        if (fence && rest.substr(0, 3) == std::string_view(state.raw_delimiter)) {
+            state.raw_string = false;
+            state.raw_delimiter.clear();
+            if (!line.empty()) push(out, 0, line.size(), CodeTokenKind::Preprocessor);
+        } else if (!line.empty()) {
+            push(out, 0, line.size(), CodeTokenKind::String);
+        }
+        return out;
+    }
+    if (fence) {
+        state.raw_string = true;
+        state.raw_delimiter = std::string(rest.substr(0, 3));
+        push(out, 0, line.size(), CodeTokenKind::Preprocessor);
+        return out;
+    }
+    if (state.markup_comment) {
+        const std::size_t end = line.find("-->");
+        if (end == std::string_view::npos) {
+            if (!line.empty()) push(out, 0, line.size(), CodeTokenKind::Comment);
+            return out;
+        }
+        state.markup_comment = false;
+        push(out, 0, end + 3, CodeTokenKind::Comment);
+        markdown_inline(out, line, end + 3, line.size(), CodeTokenKind::Plain);
+        return out;
+    }
+    if (rest.rfind("<!--", 0) == 0) {
+        const std::size_t end = line.find("-->", lead + 4);
+        if (end == std::string_view::npos) {
+            state.markup_comment = true;
+            push(out, 0, line.size(), CodeTokenKind::Comment);
+            return out;
+        }
+        push(out, 0, end + 3, CodeTokenKind::Comment);
+        markdown_inline(out, line, end + 3, line.size(), CodeTokenKind::Plain);
+        return out;
+    }
+    if (!rest.empty() && rest[0] == '#') {
+        std::size_t hashes = 0;
+        while (hashes < rest.size() && rest[hashes] == '#') ++hashes;
+        if (hashes <= 6 && (hashes == rest.size() || rest[hashes] == ' ')) {
+            push(out, 0, line.size(), CodeTokenKind::Keyword);
+            return out;
+        }
+    }
+    if (rest.size() >= 3) {
+        const char r = rest[0];
+        if (r == '-' || r == '*' || r == '_' || r == '=') {
+            bool rule = true;
+            std::size_t marks = 0;
+            for (char ch : rest) {
+                if (ch == r) ++marks;
+                else if (ch != ' ') rule = false;
+            }
+            if (rule && marks >= 3) {
+                push(out, 0, line.size(), CodeTokenKind::Operator);
+                return out;
+            }
+        }
+    }
+    std::size_t i = lead;
+    if (i < line.size() && line[i] == '>') {
+        push(out, 0, line.size(), CodeTokenKind::Comment);
+        return out;
+    }
+    if (i + 1 < line.size() && (line[i] == '-' || line[i] == '*' || line[i] == '+') && line[i + 1] == ' ') {
+        push(out, i, i + 1, CodeTokenKind::Operator);
+        i += 2;
+        if (i + 3 <= line.size() && line[i] == '[' && (line[i + 1] == ' ' || line[i + 1] == 'x' || line[i + 1] == 'X') && line[i + 2] == ']') {
+            push(out, i, i + 3, CodeTokenKind::Constant);
+            i += 3;
+        }
+    } else if (i < line.size() && digit(line[i])) {
+        std::size_t n = i;
+        while (n < line.size() && digit(line[n])) ++n;
+        if (n < line.size() && (line[n] == '.' || line[n] == ')') && n + 1 < line.size() && line[n + 1] == ' ') {
+            push(out, i, n + 1, CodeTokenKind::Operator);
+            i = n + 1;
+        }
+    } else if (i < line.size() && line[i] == '|') {
+        for (std::size_t k = i; k < line.size(); ++k) {
+            if (line[k] == '|') push(out, k, k + 1, CodeTokenKind::Operator);
+        }
+    }
+    markdown_inline(out, line, i, line.size(), CodeTokenKind::Plain);
+    return out;
+}
+
+std::vector<CodeToken> highlight_text(std::string_view line, CodeLineState& state) {
+    (void)state;
+    std::vector<CodeToken> out;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        const char c = line[i];
+        if ((line.compare(i, 7, "http://") == 0 || line.compare(i, 8, "https://") == 0 || line.compare(i, 4, "www.") == 0) && (i == 0 || !std::isalnum(static_cast<unsigned char>(line[i - 1])))) {
+            std::size_t end = i;
+            while (end < line.size() && line[end] != ' ' && line[end] != '\t' && line[end] != '"' && line[end] != '<' && line[end] != '>') ++end;
+            while (end > i && (line[end - 1] == '.' || line[end - 1] == ',' || line[end - 1] == ')' || line[end - 1] == ';' || line[end - 1] == ':')) --end;
+            push(out, i, end, CodeTokenKind::Function);
+            i = end;
+            continue;
+        }
+        if (c == '"' && line.find('"', i + 1) != std::string_view::npos) {
+            const std::size_t end = line.find('"', i + 1) + 1;
+            push(out, i, end, CodeTokenKind::String);
+            i = end;
+            continue;
+        }
+        if (digit(c) && (i == 0 || !std::isalpha(static_cast<unsigned char>(line[i - 1])))) {
+            std::size_t end = i;
+            while (end < line.size() && (digit(line[end]) || ((line[end] == '.' || line[end] == ',' || line[end] == ':') && end + 1 < line.size() && digit(line[end + 1])))) ++end;
+            if (end < line.size() && std::isalpha(static_cast<unsigned char>(line[end]))) {
+                push(out, i, end, CodeTokenKind::Plain);
+            } else {
+                push(out, i, end, CodeTokenKind::Number);
+            }
+            i = end;
+            continue;
+        }
+        push(out, i, i + 1, CodeTokenKind::Plain);
+        ++i;
+    }
+    return out;
+}
+
 std::vector<CodeToken> highlight_assembly(std::string_view line, CodeLineState& state) {
     std::vector<CodeToken> out;
     std::size_t i = 0;
@@ -2354,6 +2612,9 @@ const char* to_string(CodeLanguage language) noexcept {
         case CodeLanguage::Java: return "java";
         case CodeLanguage::CSharp: return "csharp";
         case CodeLanguage::Assembly: return "asm";
+        case CodeLanguage::MathText: return "mathtext";
+        case CodeLanguage::Markdown: return "markdown";
+        case CodeLanguage::Text: return "text";
     }
     return "plain";
 }
@@ -2411,6 +2672,9 @@ CodeLanguage code_language_from_name(std::string_view name) noexcept {
     if (n == "java") return CodeLanguage::Java;
     if (n == "csharp" || n == "c#" || n == "cs" || n == "csx") return CodeLanguage::CSharp;
     if (n == "asm" || n == "assembly" || n == "s" || n == "nasm" || n == "masm" || n == "gas" || n == "inc") return CodeLanguage::Assembly;
+    if (n == "mathtext" || n == "math" || n == "mt" || n == "mtb" || n == "brace" || n == "mtbrace") return CodeLanguage::MathText;
+    if (n == "markdown" || n == "md" || n == "mdown" || n == "mkd" || n == "mkdn") return CodeLanguage::Markdown;
+    if (n == "text" || n == "txt" || n == "log") return CodeLanguage::Text;
     return CodeLanguage::Plain;
 }
 
@@ -2427,7 +2691,7 @@ const std::vector<CodeLanguage>& code_languages() noexcept {
     static const std::vector<CodeLanguage> all = { CodeLanguage::C, CodeLanguage::Cpp, CodeLanguage::Walnut, CodeLanguage::Grove, CodeLanguage::Bark, CodeLanguage::CMake,
                                                    CodeLanguage::Html, CodeLanguage::Css, CodeLanguage::JavaScript, CodeLanguage::Json, CodeLanguage::Rust,
                                                    CodeLanguage::Zig, CodeLanguage::Python, CodeLanguage::Lua, CodeLanguage::Java, CodeLanguage::CSharp,
-                                                   CodeLanguage::Assembly };
+                                                   CodeLanguage::Assembly, CodeLanguage::MathText, CodeLanguage::Markdown, CodeLanguage::Text };
     return all;
 }
 
@@ -2555,6 +2819,10 @@ const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) no
                                             K::Constant, K::String, K::Escape, K::Number, K::Comment, K::Operator, K::Attribute, K::Preprocessor };
     static const std::vector<K> assembly = { K::Keyword, K::ControlKeyword, K::Variable, K::Function, K::Preprocessor, K::BuiltinType, K::Number,
                                              K::String, K::Escape, K::Comment, K::Operator };
+    static const std::vector<K> mathtext = { K::Function, K::Variable, K::Keyword, K::Constant, K::String, K::Number, K::Operator };
+    static const std::vector<K> markdown = { K::Keyword, K::ControlKeyword, K::Type, K::String, K::Preprocessor, K::Function, K::Attribute, K::Tag, K::Comment,
+                                             K::Operator, K::Constant, K::Escape };
+    static const std::vector<K> text = { K::Function, K::String, K::Number };
     switch (language) {
         case CodeLanguage::C: return c;
         case CodeLanguage::Cpp: return cpp;
@@ -2573,6 +2841,9 @@ const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) no
         case CodeLanguage::Java:
         case CodeLanguage::CSharp: return general;
         case CodeLanguage::Assembly: return assembly;
+        case CodeLanguage::MathText: return mathtext;
+        case CodeLanguage::Markdown: return markdown;
+        case CodeLanguage::Text: return text;
         case CodeLanguage::Plain: break;
     }
     return code_token_kinds();
@@ -2597,6 +2868,9 @@ std::vector<CodeToken> highlight_code_line(CodeLanguage language, std::string_vi
         case CodeLanguage::Java: return highlight_generic(java_syntax(), line, state);
         case CodeLanguage::CSharp: return highlight_generic(csharp_syntax(), line, state);
         case CodeLanguage::Assembly: return highlight_assembly(line, state);
+        case CodeLanguage::MathText: return highlight_mathtext(line, state);
+        case CodeLanguage::Markdown: return highlight_markdown(line, state);
+        case CodeLanguage::Text: return highlight_text(line, state);
         case CodeLanguage::Plain: break;
     }
     std::vector<CodeToken> out;
