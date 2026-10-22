@@ -149,6 +149,7 @@ class Builder {
 public:
     Builder(const std::string& text, const MathInputMetrics& m) : m_cps(split(text)), m_m(m) {
         m_glyph_of.assign(m_cps.size(), k_none);
+        m_caret_override.assign(m_cps.size(), Spot{});
     }
 
     MathInputLayout run() {
@@ -181,14 +182,19 @@ public:
         m_out.base_ascent = m_m.ascent;
         m_out.base_descent = m_m.descent;
         for (std::size_t k = 0; k < m_cps.size(); ++k) {
+            const Spot& o = m_caret_override[k];
             const MathInputGlyph& g = m_out.glyphs[m_glyph_of[k]];
-            m_out.carets.push_back(MathInputCaret{ m_cps[k].begin, g.x, g.y, g.scale });
+            MathInputCaret c = o.set ? MathInputCaret{ m_cps[k].begin, o.x, o.y, o.s } : MathInputCaret{ m_cps[k].begin, g.x, g.y, g.scale };
+            c.weak = (k > 0 && m_cps[k - 1].text == "}") || m_cps[k].text == "{";
+            if (!g.visible && k > 0 && ascii_letter(m_cps[k - 1].text) && (ascii_letter(m_cps[k].text) || m_cps[k].text == "(")) c.weak = true;
+            m_out.carets.push_back(c);
         }
         if (m_cps.empty()) {
             m_out.carets.push_back(MathInputCaret{ 0, 0.0f, 0.0f, 1.0f });
         } else {
             const MathInputGlyph& g = m_out.glyphs[m_glyph_of.back()];
-            m_out.carets.push_back(MathInputCaret{ m_cps.back().end, g.x + g.width, g.y, g.scale });
+            if (!g.visible && (m_cps.back().text == "}" || m_cps.back().text == ")")) m_out.carets.push_back(MathInputCaret{ m_cps.back().end, top->box.w, 0.0f, 1.0f });
+            else m_out.carets.push_back(MathInputCaret{ m_cps.back().end, g.x + g.width, g.y, g.scale });
         }
         return std::move(m_out);
     }
@@ -655,6 +661,10 @@ private:
             }
             case Kind::Script: {
                 place(*it.base, x, y, s);
+                for (std::size_t marker : { it.sup_marker, it.sub_marker }) {
+                    if (marker != k_none && marker < m_caret_override.size()) m_caret_override[marker] = Spot{ true, x + it.base->box.w, y, s };
+                }
+                record_script(it);
                 const float sx = x + it.base->box.w + 0.02f * em(s);
                 const float ss = std::max(0.42f, s * 0.7f);
                 if (it.sup) {
@@ -679,6 +689,10 @@ private:
                 const float nx = x + pad + 0.5f * (inner_w - it.num->box.w);
                 const float dx = x + pad + 0.5f * (inner_w - it.den->box.w);
                 place(*it.num, nx, num_base, fs);
+                if (const Item* g = braced(*it.num)) {
+                    if (g->open != k_none) m_caret_override[g->open] = Spot{ true, x, y, s };
+                }
+                record_fraction(it);
                 put(it.slash, "/", false, false, nx + it.num->box.w, num_base, fs, 0.0f, 0.0f);
                 place(*it.den, dx, den_base, fs);
                 const float bar_y = y - axis + 0.5f * th;
@@ -708,15 +722,84 @@ private:
                 if (it.cube) decoration("3", xs + 0.18f * rw0 - width("3", is, false), index_base, is);
                 if (it.comma != k_none) put(it.comma, ",", false, false, cx, y, s, 0.0f, 0.0f);
                 if (it.index) place(*it.index, std::max(x, xs + 0.2f * rw0 - it.index->box.w), index_base, is);
-                if (it.close != k_none) put(it.close, ")", false, false, x + it.box.w, y, s, 0.0f, 0.0f);
+                if (it.close != k_none) put(it.close, ")", false, false, cx, y, s, 0.0f, 0.0f);
                 break;
             }
         }
     }
 
+    struct Spot {
+        bool set = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float s = 1.0f;
+    };
+
+    void span(const Item& it, std::size_t& lo, std::size_t& hi) const {
+        for (std::size_t c : { it.cp, it.open, it.close, it.sup_marker, it.sub_marker, it.slash, it.name_first, it.name_last, it.comma }) {
+            if (c == k_none) continue;
+            lo = std::min(lo, c);
+            hi = hi == k_none ? c : std::max(hi, c);
+        }
+        for (const ItemPtr& c : it.items) span(*c, lo, hi);
+        for (const Item* c : { it.base.get(), it.sup.get(), it.sub.get(), it.num.get(), it.den.get(), it.inner.get(), it.index.get() }) {
+            if (c) span(*c, lo, hi);
+        }
+    }
+
+    std::size_t end_offset() const { return m_cps.empty() ? 0 : m_cps.back().end; }
+
+    const Item* braced(const Item& it) const {
+        const Item* p = &it;
+        while (p->kind == Kind::Seq && p->items.size() == 1) p = p->items.front().get();
+        return p->kind == Kind::Group && p->hide ? p : nullptr;
+    }
+
+    bool content(const Item& it, std::size_t& a, std::size_t& b) const {
+        if (const Item* g = braced(it)) {
+            if (g->open == k_none) return false;
+            a = m_cps[g->open].end;
+            b = g->close != k_none ? m_cps[g->close].begin : end_offset();
+            return true;
+        }
+        std::size_t lo = k_none;
+        std::size_t hi = k_none;
+        span(it, lo, hi);
+        if (lo == k_none || hi == k_none) return false;
+        a = m_cps[lo].begin;
+        b = m_cps[hi].end;
+        return true;
+    }
+
+    void record_script(const Item& it) {
+        MathInputRegion r;
+        std::size_t lo = k_none;
+        std::size_t hi = k_none;
+        span(it, lo, hi);
+        if (hi == k_none) return;
+        r.after = m_cps[hi].end;
+        if (it.sup) r.has_upper = content(*it.sup, r.upper_begin, r.upper_end);
+        if (it.sub) r.has_lower = content(*it.sub, r.lower_begin, r.lower_end);
+        if (r.has_upper || r.has_lower) m_out.regions.push_back(r);
+    }
+
+    void record_fraction(const Item& it) {
+        MathInputRegion r;
+        r.fraction = true;
+        std::size_t lo = k_none;
+        std::size_t hi = k_none;
+        span(it, lo, hi);
+        if (hi == k_none) return;
+        r.after = m_cps[hi].end;
+        r.has_upper = content(*it.num, r.upper_begin, r.upper_end);
+        r.has_lower = content(*it.den, r.lower_begin, r.lower_end);
+        if (r.has_upper && r.has_lower) m_out.regions.push_back(r);
+    }
+
     std::vector<CodePoint> m_cps;
     const MathInputMetrics& m_m;
     std::vector<std::size_t> m_glyph_of;
+    std::vector<Spot> m_caret_override;
     MathInputLayout m_out;
 };
 
@@ -755,6 +838,108 @@ std::size_t math_input_hit(const MathInputLayout& layout, float x, float y) {
         }
     }
     return best;
+}
+
+namespace {
+
+bool same_spot(const MathInputCaret& a, const MathInputCaret& b) {
+    return std::fabs(a.x - b.x) < 0.01f && std::fabs(a.y - b.y) < 0.01f && std::fabs(a.scale - b.scale) < 0.001f;
+}
+
+std::size_t pick_in_run(const MathInputLayout& layout, std::size_t index, bool rightward) {
+    std::size_t first = index;
+    std::size_t last = index;
+    while (first > 0 && same_spot(layout.carets[first - 1], layout.carets[index])) --first;
+    while (last + 1 < layout.carets.size() && same_spot(layout.carets[last + 1], layout.carets[index])) ++last;
+    if (rightward) {
+        for (std::size_t k = last + 1; k-- > first;) {
+            if (!layout.carets[k].weak) return layout.carets[k].offset;
+        }
+        return layout.carets[last].offset;
+    }
+    for (std::size_t k = last + 1; k-- > first;) {
+        if (k > index) continue;
+        if (!layout.carets[k].weak) return layout.carets[k].offset;
+    }
+    for (std::size_t k = first; k <= last; ++k) {
+        if (!layout.carets[k].weak) return layout.carets[k].offset;
+    }
+    return layout.carets[index].offset;
+}
+
+std::size_t caret_index(const MathInputLayout& layout, std::size_t offset) {
+    for (std::size_t k = 0; k < layout.carets.size(); ++k) {
+        if (layout.carets[k].offset >= offset) return k;
+    }
+    return layout.carets.empty() ? 0 : layout.carets.size() - 1;
+}
+
+} // namespace
+
+std::size_t math_input_left(const MathInputLayout& layout, std::size_t offset) {
+    if (layout.carets.empty()) return 0;
+    const std::size_t at = caret_index(layout, offset);
+    const MathInputCaret& here = layout.carets[at];
+    for (std::size_t k = at; k-- > 0;) {
+        if (!same_spot(layout.carets[k], here)) return pick_in_run(layout, k, false);
+    }
+    return layout.carets.front().offset;
+}
+
+std::size_t math_input_right(const MathInputLayout& layout, std::size_t offset, std::size_t size) {
+    if (layout.carets.empty()) return std::min(offset, size);
+    const std::size_t at = caret_index(layout, offset);
+    const MathInputCaret& here = layout.carets[at];
+    for (std::size_t k = at + 1; k < layout.carets.size(); ++k) {
+        if (!same_spot(layout.carets[k], here)) return std::min(pick_in_run(layout, k, true), size);
+    }
+    return std::min(layout.carets.back().offset, size);
+}
+
+std::size_t math_input_vertical(const MathInputLayout& layout, std::size_t offset, int direction) {
+    const MathInputCaret& here = math_input_caret(layout, offset);
+    const MathInputRegion* inner = nullptr;
+    bool in_upper = false;
+    std::size_t inner_width = std::string::npos;
+    for (const MathInputRegion& r : layout.regions) {
+        const bool up = r.has_upper && offset >= r.upper_begin && offset <= r.upper_end;
+        const bool low = r.has_lower && offset >= r.lower_begin && offset <= r.lower_end;
+        if (!up && !low) continue;
+        const std::size_t width = up ? r.upper_end - r.upper_begin : r.lower_end - r.lower_begin;
+        if (!inner || width < inner_width) {
+            inner = &r;
+            in_upper = up;
+            inner_width = width;
+        }
+    }
+    auto nearest = [&](std::size_t a, std::size_t b) {
+        std::size_t pick = a;
+        float best = std::numeric_limits<float>::max();
+        for (std::size_t k = 0; k < layout.carets.size(); ++k) {
+            const MathInputCaret& c = layout.carets[k];
+            if (c.offset < a || c.offset > b || c.weak) continue;
+            const float d = std::fabs(c.x - here.x);
+            if (d < best) {
+                best = d;
+                pick = c.offset;
+            }
+        }
+        return pick;
+    };
+    if (inner) {
+        if (inner->fraction) {
+            if (in_upper && direction > 0) return nearest(inner->lower_begin, inner->lower_end);
+            if (!in_upper && direction < 0) return nearest(inner->upper_begin, inner->upper_end);
+        } else if ((in_upper && direction > 0) || (!in_upper && direction < 0)) {
+            return inner->after;
+        }
+    }
+    for (const MathInputRegion& r : layout.regions) {
+        if (r.after != offset) continue;
+        if (direction < 0 && r.has_upper) return r.upper_end;
+        if (direction > 0 && r.has_lower) return r.lower_end;
+    }
+    return std::string::npos;
 }
 
 } // namespace grove

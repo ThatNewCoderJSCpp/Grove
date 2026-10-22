@@ -2901,6 +2901,10 @@ private:
         y += h;
     }
 
+    bool math_layout_current() const {
+        return m_focus && m_focus->tag() == "input_math" && m_math_layout_text == m_edit && !m_math_layout.carets.empty();
+    }
+
     MathInputLayout math_field_layout(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& ts) {
         const float lh = line_height(r, ts);
         const double base_size = ts.has_size() ? ts.size() : 16.0;
@@ -2929,6 +2933,10 @@ private:
         const std::string text = focused ? m_edit : input_text(element);
         const std::size_t caret = focused ? std::min(m_edit_caret, text.size()) : text.size();
         const MathInputLayout layout = math_field_layout(r, text, ts);
+        if (focused) {
+            m_math_layout = layout;
+            m_math_layout_text = text;
+        }
         const float content_h = std::max(lh, layout.ascent + layout.descent);
         const float h = content_h + pad.top + pad.bottom;
         const float radius = static_cast<float>(style.length("border-radius").value_or(0.0));
@@ -7220,8 +7228,9 @@ private:
                 if (m_edit_anchor == std::string::npos) m_edit_anchor = std::min(m_edit_caret, m_edit.size());
                 const bool word = ctrl_key || fizmo::input::has(e.mods, fizmo::input::Modifiers::Alt);
                 m_edit_caret = std::min(m_edit_caret, m_edit.size());
-                if (key == Key::Left) m_edit_caret = word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
-                else if (key == Key::Right) m_edit_caret = word ? word_right(m_edit, m_edit_caret) : next_code_point(m_edit, m_edit_caret);
+                const bool math_steps = !word && math_layout_current();
+                if (key == Key::Left) m_edit_caret = word ? word_left(m_edit, m_edit_caret) : math_steps ? math_input_left(m_math_layout, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
+                else if (key == Key::Right) m_edit_caret = word ? word_right(m_edit, m_edit_caret) : math_steps ? math_input_right(m_math_layout, m_edit_caret, m_edit.size()) : next_code_point(m_edit, m_edit_caret);
                 else if (key == Key::Home) m_edit_caret = 0;
                 else m_edit_caret = m_edit.size();
                 return;
@@ -7246,14 +7255,22 @@ private:
         if (key == Key::Backspace || key == Key::Delete || key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End) m_edit_all = false;
         const bool by_word = fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Alt);
         m_edit_caret = std::min(m_edit_caret, m_edit.size());
+        const bool math_steps = !by_word && !was_all && math_layout_current();
+        if (math_steps && (key == Key::Up || key == Key::Down)) {
+            const std::size_t to = math_input_vertical(m_math_layout, m_edit_caret, key == Key::Up ? -1 : 1);
+            if (to != std::string::npos) {
+                m_edit_caret = std::min(to, m_edit.size());
+                return;
+            }
+        }
         switch (key) {
             case Key::Left:
                 if (was_all) m_edit_caret = 0;
-                else m_edit_caret = by_word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
+                else m_edit_caret = by_word ? word_left(m_edit, m_edit_caret) : math_steps ? math_input_left(m_math_layout, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
                 break;
             case Key::Right:
                 if (was_all) m_edit_caret = m_edit.size();
-                else m_edit_caret = by_word ? word_right(m_edit, m_edit_caret) : next_code_point(m_edit, m_edit_caret);
+                else m_edit_caret = by_word ? word_right(m_edit, m_edit_caret) : math_steps ? math_input_right(m_math_layout, m_edit_caret, m_edit.size()) : next_code_point(m_edit, m_edit_caret);
                 break;
             case Key::Home:
                 m_edit_caret = 0;
@@ -8438,6 +8455,8 @@ private:
     bool m_edit_all = false;
     std::size_t m_edit_caret = 0;
     float m_edit_scroll = 0.0f;
+    MathInputLayout m_math_layout;
+    std::string m_math_layout_text;
     float m_edit_click_x = -1.0f;
     float m_edit_click_y = -1.0f;
     bool m_edit_click_extend = false;

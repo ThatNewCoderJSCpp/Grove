@@ -7,6 +7,7 @@
 #include "grove/input/code_find.hpp"
 #include "grove/math_input.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -29,6 +30,13 @@ void check(bool ok, const char* what, int line) {
 }
 
 #define CHECK(expr) check((expr), #expr, __LINE__)
+
+std::string examples_dir() {
+    if (const char* dir = std::getenv("GROVE_EXAMPLES_DIR")) {
+        if (*dir) return dir;
+    }
+    return GROVE_EXAMPLES_DIR;
+}
 
 void test_math_input_layout() {
     grove::MathInputMetrics m;
@@ -102,6 +110,26 @@ void test_math_input_layout() {
     CHECK(grove::math_input_hit(line, 0.0f, 0.0f) == 0);
     CHECK(grove::math_input_hit(line, 1000.0f, 0.0f) == 6);
     CHECK(grove::math_input_hit(power, two->x + 1.0f, two->y - 2.0f) == 2);
+    {
+        const grove::MathInputLayout e = grove::layout_math_input("e^{x+1}", m);
+        CHECK(grove::math_input_caret(e, 7).y == 0.0f);
+        CHECK(grove::math_input_right(e, 1, 7) == 3);
+        CHECK(grove::math_input_left(e, 3) == 1);
+        CHECK(grove::math_input_left(e, 7) == 6);
+        CHECK(grove::math_input_vertical(e, 4, 1) == 7);
+        CHECK(grove::math_input_vertical(e, 7, -1) == 6);
+        const grove::MathInputLayout f = grove::layout_math_input("1+{ab}/{c}", m);
+        CHECK(grove::math_input_vertical(f, 4, 1) == 8);
+        CHECK(grove::math_input_vertical(f, 8, -1) == 4);
+        CHECK(grove::math_input_left(f, 8) == 5);
+        CHECK(grove::math_input_left(f, 3) == 2);
+        CHECK(grove::math_input_right(f, 2, 10) == 3);
+        CHECK(grove::math_input_vertical(f, 10, -1) == 5);
+        const grove::MathInputLayout r = grove::layout_math_input("sqrt(x)+1", m);
+        CHECK(grove::math_input_left(r, 5) == 0);
+        CHECK(grove::math_input_right(r, 0, 9) == 5);
+        CHECK(grove::math_input_right(r, 6, 9) == 7);
+    }
 }
 
 void test_markup() {
@@ -473,7 +501,7 @@ void test_highlight() {
 }
 
 void test_example() {
-    grove::Project project = grove::load_project(std::string(GROVE_EXAMPLES_DIR) + "/hello/hello.grove");
+    grove::Project project = grove::load_project(examples_dir() + "/hello/hello.grove");
     if (!project.diagnostics.ok()) project.diagnostics.print(std::cerr);
     CHECK(project.diagnostics.ok());
     CHECK(project.math.size() == 2);
@@ -481,7 +509,7 @@ void test_example() {
 }
 
 void test_inputs_example() {
-    grove::Project project = grove::load_project(std::string(GROVE_EXAMPLES_DIR) + "/inputs/inputs.grove");
+    grove::Project project = grove::load_project(examples_dir() + "/inputs/inputs.grove");
     if (!project.diagnostics.ok()) project.diagnostics.print(std::cerr);
     CHECK(project.diagnostics.ok() && project.diagnostics.warning_count() == 0);
 }
@@ -727,7 +755,7 @@ void test_bundle() {
 }
 
 void test_todo_example() {
-    grove::Project project = grove::load_project(std::string(GROVE_EXAMPLES_DIR) + "/todo/todo.grove");
+    grove::Project project = grove::load_project(examples_dir() + "/todo/todo.grove");
     if (!project.diagnostics.ok()) project.diagnostics.print(std::cerr);
     CHECK(project.diagnostics.ok());
     CHECK(project.scripts.size() == 2);
@@ -843,7 +871,7 @@ void test_popups() {
 }
 
 void test_windows_example() {
-    grove::Project project = grove::load_project(std::string(GROVE_EXAMPLES_DIR) + "/windows/windows.grove");
+    grove::Project project = grove::load_project(examples_dir() + "/windows/windows.grove");
     if (!project.diagnostics.ok()) project.diagnostics.print(std::cerr);
     CHECK(project.diagnostics.ok() && project.diagnostics.warning_count() == 0);
     CHECK(project.document.elements_by_tag("window").size() == 2);
@@ -1313,7 +1341,7 @@ void test_natives() {
 }
 
 void test_images() {
-    const std::string dir = std::string(GROVE_EXAMPLES_DIR) + "/editor";
+    const std::string dir = examples_dir() + "/editor";
     grove::Project p = grove::load_project_from_source("<body icon=\"../../Tools/icons/grove-32.png missing-icon.png\"><img src=\"nope.png\" /><img src=\"../../Tools/icons/bark-16.png\" /></body>", dir + "/t.grove", dir);
     CHECK(p.diagnostics.warning_count() == 2);
     const grove::Node* body = p.document.first_by_tag("body");

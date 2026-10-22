@@ -35,6 +35,7 @@ struct MathInputCaret {
     float x = 0.0f;
     float y = 0.0f;
     float scale = 1.0f;
+    bool weak = false;
 };
 
 struct MathInputMetrics {
@@ -43,8 +44,20 @@ struct MathInputMetrics {
     float descent = 4.0f;
 };
 
+struct MathInputRegion {
+    std::size_t upper_begin = 0;
+    std::size_t upper_end = 0;
+    std::size_t lower_begin = 0;
+    std::size_t lower_end = 0;
+    std::size_t after = 0;
+    bool fraction = false;
+    bool has_upper = false;
+    bool has_lower = false;
+};
+
 struct MathInputLayout {
     std::vector<MathInputGlyph> glyphs;
+    std::vector<MathInputRegion> regions;
     std::vector<MathInputLine> lines;
     std::vector<MathInputCaret> carets;
     float width = 0.0f;
@@ -57,6 +70,9 @@ struct MathInputLayout {
 MathInputLayout layout_math_input(const std::string& text, const MathInputMetrics& metrics);
 const MathInputCaret& math_input_caret(const MathInputLayout& layout, std::size_t offset);
 std::size_t math_input_hit(const MathInputLayout& layout, float x, float y);
+std::size_t math_input_left(const MathInputLayout& layout, std::size_t offset);
+std::size_t math_input_right(const MathInputLayout& layout, std::size_t offset, std::size_t size);
+std::size_t math_input_vertical(const MathInputLayout& layout, std::size_t offset, int direction);
 
 } // namespace grove
 
