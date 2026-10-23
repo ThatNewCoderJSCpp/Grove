@@ -6,6 +6,7 @@
 #include "script/builder.hpp"
 
 #include <cstdint>
+#include <map>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -23,6 +24,9 @@ struct AndroidBuildOptions {
     std::string ks_pass;
     std::string key_alias;
     std::string key_pass;
+    std::string runtime_lib;
+    std::string lib_name;
+    std::map<std::string, std::string> declarations;
     ScriptTools tools;
     bool force_target = false;
     bool install = false;
@@ -48,6 +52,8 @@ struct AndroidManifestInfo {
     std::string orientation;
     std::string activity = "android.app.NativeActivity";
     bool has_code = false;
+    bool all_files = false;
+    std::string lib_name = "grove_android";
     bool icon = false;
     int platform_api = 0;
 };

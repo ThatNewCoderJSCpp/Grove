@@ -716,7 +716,13 @@ std::string android_manifest_xml(const AndroidManifestInfo& info) {
     x += "    <uses-sdk android:minSdkVersion=\"" + xml_escape(info.min_sdk) + "\" android:targetSdkVersion=\"" + xml_escape(info.target_sdk) + "\"/>\n";
     x += "    <uses-permission android:name=\"android.permission.INTERNET\"/>\n";
     x += "    <uses-permission android:name=\"android.permission.VIBRATE\"/>\n";
+    if (info.all_files) {
+        x += "    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\"/>\n";
+        x += "    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\"/>\n";
+        x += "    <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>\n";
+    }
     x += "    <application android:label=\"" + label + "\" android:hasCode=\"" + std::string(info.has_code ? "true" : "false") + "\" android:extractNativeLibs=\"true\"";
+    if (info.all_files && (info.platform_api == 0 || info.platform_api >= 29)) x += " android:requestLegacyExternalStorage=\"true\"";
     if (info.icon) x += " android:icon=\"@mipmap/ic_launcher\"";
     x += ">\n";
     x += "        <activity android:name=\"" + xml_escape(info.activity) + "\"\n";
@@ -727,7 +733,7 @@ std::string android_manifest_xml(const AndroidManifestInfo& info) {
     const std::string orientation = orientation_value(info.orientation);
     if (!orientation.empty()) x += "            android:screenOrientation=\"" + orientation + "\"\n";
     x += "            android:theme=\"@android:style/Theme.DeviceDefault.NoActionBar\">\n";
-    x += "            <meta-data android:name=\"android.app.lib_name\" android:value=\"grove_android\"/>\n";
+    x += "            <meta-data android:name=\"android.app.lib_name\" android:value=\"" + xml_escape(info.lib_name.empty() ? std::string("grove_android") : info.lib_name) + "\"/>\n";
     x += "            <intent-filter>\n";
     x += "                <action android:name=\"android.intent.action.MAIN\"/>\n";
     x += "                <category android:name=\"android.intent.category.LAUNCHER\"/>\n";
@@ -745,6 +751,16 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
     const Document& doc = project.document;
     const Span span = doc.declaration_span();
     const std::string& file = project.path;
+    auto decl = [&](const std::string& key, const std::string& fallback = std::string()) {
+        const auto it = options.declarations.find(key);
+        if (it != options.declarations.end()) return it->second;
+        return doc.declaration(key, fallback);
+    };
+    auto has_decl = [&](const std::string& key) {
+        return options.declarations.count(key) > 0 || doc.has_declaration(key);
+    };
+    const std::string lib_name = options.lib_name.empty() ? std::string("grove_android") : options.lib_name;
+    const std::string lib_file = "lib" + lib_name + ".so";
     auto fail = [&](const std::string& message) {
         diag.error(file, span, message);
         return false;
@@ -755,17 +771,17 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
     const std::string stem = doc_abs.stem().string();
 
     if (!project.android()) {
-        const std::string package = doc.declaration("package");
+        const std::string package = decl("package");
         if (!package.empty() && !valid_package_name(package)) return fail("package \"" + package + "\" isn't an Android package name like com.example.app");
         for (const char* key : { "version-code", "min-sdk", "target-sdk" }) {
-            const std::string v = doc.declaration(key);
+            const std::string v = decl(key);
             if (!v.empty() && !all_digits(v)) return fail(std::string("'") + key + "' has to be a whole number");
         }
     }
 
     std::vector<std::string> abis;
     std::vector<std::string> requested = options.abis;
-    if (requested.empty()) requested = split_asset_list(doc.declaration("abi"));
+    if (requested.empty()) requested = split_asset_list(decl("abi"));
     if (requested.empty()) requested.push_back("arm64-v8a");
     for (const std::string& abi : requested) {
         if (!valid_abi(abi)) return fail("abi \"" + abi + "\" isn't arm64-v8a, armeabi-v7a, x86_64 or x86");
@@ -779,12 +795,19 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
         for (const auto& [label, root] : roots) {
             const fs::path dir = root / abi;
             const std::optional<std::string> text = read_binary(dir / "kit.txt");
-            if (!text || !file_exists(dir / "libgrove_android.so")) continue;
+            if (!text || (options.runtime_lib.empty() && !file_exists(dir / "libgrove_android.so"))) continue;
             Kit kit = parse_kit(dir, abi, *text);
             if (kit.abi != abi) return fail("the Android kit in '" + dir.string() + "' is for " + kit.abi + ", not " + abi);
             kits.push_back(std::move(kit));
             found = true;
             break;
+        }
+        if (!found && !options.runtime_lib.empty()) {
+            Kit kit;
+            kit.abi = abi;
+            kit.dir = fs::absolute(options.runtime_lib) / abi;
+            kits.push_back(std::move(kit));
+            found = true;
         }
         if (!found) {
             std::string message = "there's no Grove Android kit for " + abi + " (a folder with kit.txt and libgrove_android.so); looked in:";
@@ -799,14 +822,14 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
         }
     }
 
-    int min_sdk = to_int(doc.declaration("min-sdk"), 26);
+    int min_sdk = to_int(decl("min-sdk"), 26);
     for (const Kit& kit : kits) {
         if (kit.api > min_sdk) {
-            if (doc.has_declaration("min-sdk")) diag.warning(file, span, "the Android kit for " + kit.abi + " needs API " + std::to_string(kit.api) + ", so min-sdk is raised to " + std::to_string(kit.api));
+            if (has_decl("min-sdk")) diag.warning(file, span, "the Android kit for " + kit.abi + " needs API " + std::to_string(kit.api) + ", so min-sdk is raised to " + std::to_string(kit.api));
             min_sdk = kit.api;
         }
     }
-    const int target_sdk = to_int(doc.declaration("target-sdk"), std::max(35, min_sdk));
+    const int target_sdk = to_int(decl("target-sdk"), std::max(35, min_sdk));
     if (target_sdk < min_sdk) return fail("target-sdk " + std::to_string(target_sdk) + " is lower than min-sdk " + std::to_string(min_sdk));
 
     std::size_t runnable = 0;
@@ -864,8 +887,8 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
         diag.note(file, span, "android.jar is from API " + std::to_string(platform.api) + ", which is older than Grove expects; install " + std::string("\"platforms;android-35\"") + " for a better build");
     }
 
-    std::string label = android_app_label(project);
-    std::string package = doc.declaration("package");
+    std::string label = options.declarations.count("label") ? collapse_whitespace(options.declarations.at("label")) : android_app_label(project);
+    std::string package = decl("package");
     if (package.empty()) package = default_android_package(document_path);
     const bool has_dex = detail::kFizmoActivityDexSize > 0;
     const std::string activity = has_dex ? "fizmo.android.FizmoActivity" : "android.app.NativeActivity";
@@ -951,19 +974,21 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
     AndroidManifestInfo info;
     info.package = package;
     info.label = label;
-    info.version_name = doc.declaration("version", "1.0");
-    info.version_code = doc.declaration("version-code", "1");
+    info.version_name = decl("version", "1.0");
+    info.version_code = decl("version-code", "1");
     info.min_sdk = std::to_string(min_sdk);
     info.target_sdk = std::to_string(target_sdk);
-    info.orientation = doc.declaration("orientation");
+    info.orientation = decl("orientation");
     info.activity = activity;
     info.has_code = has_dex;
+    info.all_files = decl("storage") == "all";
+    info.lib_name = lib_name;
     info.platform_api = platform.api;
 
     const fs::path res = work / "res";
     fs::remove_all(res, ec);
     std::vector<std::string> compiled;
-    const std::string icon = doc.declaration("icon");
+    const std::string icon = decl("icon");
     if (!icon.empty()) {
         const fs::path icon_path = fs::absolute(resolve_path(project.base_dir, icon));
         std::string ext = icon_path.extension().string();
@@ -1011,9 +1036,10 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
     additions.push_back({ "assets/grove/app.bundle", serialize_bundle(bundle) });
     for (std::size_t k = 0; k < kits.size(); ++k) {
         const Kit& kit = kits[k];
-        const std::optional<std::string> runtime = read_binary(kit.dir / "libgrove_android.so");
-        if (!runtime) return fail("can't read '" + (kit.dir / "libgrove_android.so").string() + "'");
-        additions.push_back({ "lib/" + kit.abi + "/libgrove_android.so", *runtime });
+        const fs::path runtime_path = options.runtime_lib.empty() ? kit.dir / "libgrove_android.so" : fs::absolute(options.runtime_lib) / kit.abi / lib_file;
+        const std::optional<std::string> runtime = read_binary(runtime_path);
+        if (!runtime) return fail("can't read '" + runtime_path.string() + "'");
+        additions.push_back({ "lib/" + kit.abi + "/" + lib_file, *runtime });
         for (std::size_t i = 0; i < modules[k].size(); ++i) {
             if (modules[k][i].empty()) continue;
             const std::optional<std::string> bytes = read_binary(modules[k][i]);

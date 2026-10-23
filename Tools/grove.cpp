@@ -54,6 +54,9 @@ void print_usage(std::ostream& os) {
           "  --target <t>    with build: desktop or android (default: the document's <!GROVE type>)\n"
           "  --abi <list>    with an Android build: arm64-v8a, armeabi-v7a, x86_64 and/or x86, comma separated (default: abi= or arm64-v8a)\n"
           "  --android-kit <dir>  with an Android build: the folder holding one Grove runtime kit per ABI\n"
+          "  --runtime-lib <dir>  with an Android build: ship <dir>/<abi>/lib<name>.so (your own C++ host) instead of the kit's Grove runtime\n"
+          "  --lib-name <n>  with --runtime-lib: the library's name without lib and .so (default: grove_android)\n"
+          "  --set k=v       with an Android build: use v for the <!GROVE> key k (package, label, storage, version, ...)\n"
           "  --ndk <dir>     with an Android build: the Android NDK used to compile scripts (default: ANDROID_NDK_HOME or the SDK's ndk/)\n"
           "  --sdk <dir>     with an Android build: the Android SDK with build-tools and platforms (default: ANDROID_HOME)\n"
           "  --keystore <file>    with an Android build: sign with this keystore instead of the debug key\n"
@@ -182,6 +185,17 @@ int main(int argc, char** argv) {
         }
         else if (a == "--android-kit" && i + 1 < argc) android.kit_dir = argv[++i];
         else if (a == "--ndk" && i + 1 < argc) android.ndk = argv[++i];
+        else if (a == "--runtime-lib" && i + 1 < argc) android.runtime_lib = argv[++i];
+        else if (a == "--lib-name" && i + 1 < argc) android.lib_name = argv[++i];
+        else if (a == "--set" && i + 1 < argc) {
+            const std::string kv = argv[++i];
+            const std::size_t eq = kv.find('=');
+            if (eq == std::string::npos || eq == 0) {
+                std::cerr << "grove: --set expects key=value\n";
+                return 2;
+            }
+            android.declarations[kv.substr(0, eq)] = kv.substr(eq + 1);
+        }
         else if (a == "--sdk" && i + 1 < argc) android.sdk = argv[++i];
         else if (a == "--keystore" && i + 1 < argc) android.keystore = argv[++i];
         else if (a == "--ks-pass" && i + 1 < argc) android.ks_pass = argv[++i];

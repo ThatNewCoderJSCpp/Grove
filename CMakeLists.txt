@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.2.0 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.2.1 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -17,8 +17,8 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ${GROVE_DESKTOP_DEFAULT})
 set(GROVE_ANDROID_KIT_DIR "" CACHE PATH "Where grove build looks for the Android runtime kit (one folder per ABI) before its own lib/grove/android")
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.3.0" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.2.1" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.3.1" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.2.2" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -168,6 +168,7 @@ if(ANDROID)
         "LINKER:-z,max-page-size=16384"
         "LINKER:-u,ANativeActivity_onCreate"
         "LINKER:--gc-sections"
+        "$<$<NOT:$<CONFIG:Debug>>:LINKER:--strip-debug>"
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/android_exports.map")
     set_property(TARGET grove_android APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/android_exports.map")
     grove_warnings(grove_android)
@@ -204,12 +205,17 @@ optional-libs=${_grove_kit_libs}
         endif()
     endforeach()
     if(FIZMO_BUNDLED_PREFIX)
-        install(DIRECTORY "${FIZMO_BUNDLED_PREFIX}/lib/" DESTINATION ${GROVE_ANDROID_KIT_DEST} FILES_MATCHING PATTERN "*.a")
+        install(DIRECTORY "${FIZMO_BUNDLED_PREFIX}/lib/" DESTINATION ${GROVE_ANDROID_KIT_DEST} FILES_MATCHING PATTERN "*.a" PATTERN "cmake" EXCLUDE PATTERN "pkgconfig" EXCLUDE)
     endif()
     add_custom_target(grove_android_kit
         COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${CMAKE_BINARY_DIR}/kit"
         DEPENDS grove_android
         COMMENT "Putting the Grove Android kit in ${CMAKE_BINARY_DIR}/kit/${GROVE_ANDROID_KIT_DEST}")
+    foreach(_grove_component IN LISTS FIZMO_COMPONENT_LINK_ORDER)
+        if(TARGET fizmo_${_grove_component})
+            add_dependencies(grove_android_kit fizmo_${_grove_component})
+        endif()
+    endforeach()
 else()
     add_executable(grove Tools/grove.cpp)
     target_link_libraries(grove PRIVATE grove_core)

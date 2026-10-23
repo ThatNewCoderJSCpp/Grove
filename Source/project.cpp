@@ -270,7 +270,7 @@ bool all_digits(const std::string& s) {
 void apply_declaration(Project& project) {
     const Document& doc = project.document;
     const Span span = doc.declaration_span();
-    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on" };
+    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on", "storage" };
     for (const auto& entry : doc.declarations()) {
         const std::string& key = entry.first;
         bool listed = false;
@@ -283,7 +283,7 @@ void apply_declaration(Project& project) {
         else project.diagnostics.error(project.path, span, "<!GROVE type=\"" + type + "\"> isn't a target; use desktop or android");
     }
     if (!project.android()) {
-        for (const char* key : { "package", "version-code", "orientation", "min-sdk", "target-sdk", "abi" }) {
+        for (const char* key : { "package", "version-code", "orientation", "min-sdk", "target-sdk", "abi", "storage" }) {
             if (doc.has_declaration(key)) project.diagnostics.warning(project.path, span, std::string("'") + key + "' only matters with <!GROVE type=android>");
         }
         return;
@@ -303,6 +303,8 @@ void apply_declaration(Project& project) {
     for (const std::string& abi : split_asset_list(doc.declaration("abi"))) {
         if (abi != "arm64-v8a" && abi != "armeabi-v7a" && abi != "x86_64" && abi != "x86") project.diagnostics.error(project.path, span, "abi \"" + abi + "\" isn't arm64-v8a, armeabi-v7a, x86_64 or x86");
     }
+    const std::string storage = doc.declaration("storage");
+    if (!storage.empty() && storage != "app" && storage != "all") project.diagnostics.error(project.path, span, "storage \"" + storage + "\" isn't app or all");
     const std::string icon = doc.declaration("icon");
     if (!icon.empty() && !read_file(resolve_path(project.base_dir, icon))) project.diagnostics.warning(project.path, span, "can't find the app icon '" + icon + "'");
 }
@@ -311,7 +313,11 @@ void check_android(Project& project) {
     project.document.root().walk([&](const Node& n) {
         if (!n.is_element()) return;
         if (n.tag() == "terminal") project.diagnostics.warning(project.path, n.span(), "<terminal> has no shell to run on Android");
-        if (n.tag() == "input_file") project.diagnostics.warning(project.path, n.span(), "<input_file> can't open the file picker on Android yet");
+        if (n.tag() == "input_file" && project.document.declaration("storage") != "all") {
+            const std::string mode = n.attribute_or("mode", "open");
+            if (mode == "folder") project.diagnostics.warning(project.path, n.span(), "<input_file mode=\"folder\"> can only open folders on Android with <!GROVE storage=all>");
+            else if (mode == "save") project.diagnostics.warning(project.path, n.span(), "<input_file mode=\"save\"> can only save outside the app's own storage on Android with <!GROVE storage=all>");
+        }
     });
 }
 

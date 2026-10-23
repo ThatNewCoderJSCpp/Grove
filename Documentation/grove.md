@@ -762,8 +762,9 @@ Start the document with `<!GROVE type=android>` and `grove build` makes an Andro
 | `abi` | the processors to build for: `arm64-v8a` (phones, the default), `armeabi-v7a` (old phones), `x86_64` (the emulator, Chromebooks) |
 | `fullscreen` | hide the status and navigation bars |
 | `keep-screen-on` | stop the screen from turning off while the app is open |
+| `storage` | `app` (the default): files the user picks are read where they are when the app can, or as a copy otherwise. `all`: the app asks once for Android's "All files access", so it can open folders and save anywhere on the phone's storage, as a code editor or file manager needs |
 
-`grove check` reports keys it doesn't know, values that can't work and elements that do nothing on a phone (`<terminal>`, `<input_file>`). `grove run` on a computer opens an Android document in a phone-sized window (412×892), so you can try the layout before building.
+`grove check` reports keys it doesn't know, values that can't work and elements that do nothing on a phone (`<terminal>`, and `<input_file>` folder and save pickers without `storage=all`). `grove run` on a computer opens an Android document in a phone-sized window (412×892), so you can try the layout before building.
 
 ### What changes on a phone
 
@@ -775,7 +776,11 @@ Start the document with `<!GROVE type=android>` and `grove build` makes an Andro
 - The Back button closes, in order: an open menu or modal, the top popup or window (a `<window>` gets its `close` event and can refuse), the last `<page>` it went to, and finally puts the app in the background like any Android app.
 - Fonts come from the phone (Roboto and the Noto fonts for every script and emoji); a family the phone doesn't have falls back to `sans-serif`, `serif` or `monospace`.
 - The clipboard is Android's.
-- Not there yet: `<input_file>` (the file picker) and `<terminal>` (there's no shell to run).
+- `<input_file>` opens Android's own file picker, with the `filter` turned into file types, `multiple` for picking several files, and `start` as the folder it opens in. The value is a normal path the scripts can open:
+  - `mode="open"`: the file where it is on the phone's storage when the app can read it there; otherwise (Google Drive, another app's files) a copy in the app's cache, so changes to it don't go back to the original.
+  - `mode="folder"` and `mode="save"` need `<!GROVE storage=all>`. The first time, the app opens Android's "All files access" setting for the user to allow it (on Android 10 and older, the storage permission prompt instead). A folder or place that isn't on the phone's storage (a cloud drive) can't be opened as a folder or saved to, and the picker fires `cancel`.
+  - From C++, `fizmo::windows::dialogs::open_file`, `save_file` and `select_folder` use the same picker; call them off the app's main thread, since they wait for the user.
+- Not there yet: `<terminal>` (there's no shell to run).
 
 ### Building the APK
 
@@ -817,5 +822,32 @@ grove build recipes.grove --keystore recipes.keystore --key-alias recipes --ks-p
 | `--android-kit <dir>`, `--ndk <dir>`, `--sdk <dir>` | where to find the kit, NDK and SDK |
 | `--keystore <file>`, `--key-alias <name>`, `--ks-pass <pass>`, `--key-pass <pass>` | sign with your own key; a pass can be `pass:...`, `env:VAR` or `file:path` |
 | `--install`, `--launch` | install the APK on the phone over `adb`, then start it |
+| `--set key=value` | use this value for a `<!GROVE>` key (`package`, `label`, `storage`, `version`, ...) without changing the document |
+| `--runtime-lib <dir>`, `--lib-name <name>` | ship your own native library, `<dir>/<abi>/lib<name>.so`, instead of the kit's Grove runtime; see below |
+
+### A C++ program as an Android app
+
+A program that uses Grove from C++ (it loads the document and drives it itself, like Canopy does) builds its own Android library instead of using `libgrove_android.so`. That library defines `fizmo_android_main`, reads the document the same way Grove's runtime does, and runs it with `grove::runtime::run_android`:
+
+```cpp
+int fizmo_android_main(fizmo::android::App& app) {
+    const std::optional<std::string> data = app.assets().read("grove/app.bundle");
+    std::optional<grove::Bundle> bundle = data ? grove::parse_bundle(*data) : std::nullopt;
+    grove::LoadedApp loaded;
+    std::string error;
+    if (!bundle || !grove::load_app(*bundle, loaded, error, {})) return 1;
+    grove::runtime::RunOptions run;
+    run.window_id = loaded.window_id;
+    run.scripts = false;
+    return grove::runtime::run_android(loaded.project, app, nullptr, run);
+}
+```
+
+Build it with the NDK as a shared library linked to `grove::runtime`, with the same link options as `grove_android` (`-z max-page-size=16384`, `-u ANativeActivity_onCreate` and Grove's `cmake/android_exports.map`). Put it at `<dir>/<abi>/lib<name>.so` and let `grove build` make the APK around it:
+
+```sh
+grove build ui.grove --target android --runtime-lib build/android-libs --lib-name myapp \
+    --set package=com.example.myapp --set label="My App" --abi arm64-v8a,x86_64
+```
 
 To put the app on a phone without `--install`, send the `.apk` to it (a cable, email, a shared folder) and open it there; Android asks once to allow installing apps from that source. `adb logcat -s grove fizmo` shows what the app prints, including script errors.
