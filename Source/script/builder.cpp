@@ -331,6 +331,10 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& requested, std::o
     base = fnv(base, tools.cc);
     base = fnv(base, module_extension());
     base = fnv(base, tools.portable ? "portable" : "local");
+    base = fnv(base, tools.target);
+    for (const std::string& f : tools.cxx_flags) base = fnv(base, f);
+    for (const std::string& f : tools.link_flags) base = fnv(base, f);
+    for (const std::string& f : tools.walnut_args) base = fnv(base, f);
 
     std::vector<std::string> header_dirs;
     for (const ScriptBlock& s : project.scripts) {
@@ -422,14 +426,17 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& requested, std::o
         for (const std::string& d : header_dirs) includes.push_back("-I" + d);
 
         std::vector<std::string> common = { "-std=c++17", "-O2", "-fPIC", "-fvisibility=hidden", "-DGROVE_SCRIPT_ID=0" };
+        common.insert(common.end(), tools.cxx_flags.begin(), tools.cxx_flags.end());
 #if defined(_WIN32)
-        const std::vector<std::string> shared = { "-shared", "-static-libgcc", "-static-libstdc++" };
+        std::vector<std::string> shared = { "-shared" };
+        if (!tools.cross) shared.insert(shared.end(), { "-static-libgcc", "-static-libstdc++" });
 #else
         std::vector<std::string> shared = { "-shared" };
 #if defined(__linux__)
-        if (tools.portable && static_runtime_available(tools)) shared.insert(shared.end(), { "-static-libstdc++", "-static-libgcc" });
+        if (!tools.cross && tools.portable && static_runtime_available(tools)) shared.insert(shared.end(), { "-static-libstdc++", "-static-libgcc" });
 #endif
 #endif
+        shared.insert(shared.end(), tools.link_flags.begin(), tools.link_flags.end());
         if (!s.entry.empty() && !is_walnut(s.language)) common.push_back("-DGROVE_MODULE_ENTRY=" + s.entry);
 
         std::string combined_log;
@@ -447,6 +454,8 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& requested, std::o
             combined_log = append_log(combined_log, step_log);
             if (ok) {
                 std::vector<std::string> w = { tools.walnut, "build", source_path, glue_obj, "-o", module.string(), "--no-cache", "--cxx", tools.cxx, "-M", walnut_modules };
+                w.insert(w.end(), tools.walnut_args.begin(), tools.walnut_args.end());
+                for (const std::string& f : tools.cxx_flags) w.insert(w.end(), { "--cxx-flag", f });
                 if (!script_dir.empty()) w.insert(w.end(), { "-I", script_dir, "-M", script_dir });
                 for (const std::string& f : { std::string("-fPIC"), std::string("-Dmain=grove_walnut_main") }) w.insert(w.end(), { "--cxx-flag", f });
                 for (const std::string& f : shared) w.insert(w.end(), { "--cxx-flag", f });
@@ -461,6 +470,7 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& requested, std::o
             if (needs_c_compile(s.language)) {
                 object = (fs::path(tools.cache_dir) / (stem + "-c.o")).string();
                 std::vector<std::string> cmd = { tools.cc, "-O2", "-fPIC", "-c", source_path, "-o", object };
+                cmd.insert(cmd.end(), tools.cxx_flags.begin(), tools.cxx_flags.end());
                 cmd.insert(cmd.end(), includes.begin(), includes.end());
                 ok = run(cmd, step_log, tools, log) == 0;
                 combined_log = append_log(combined_log, step_log);

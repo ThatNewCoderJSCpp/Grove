@@ -233,6 +233,16 @@ public:
     std::uint64_t revision() const noexcept { return m_revision; }
     void touch() noexcept { ++m_revision; }
 
+    const std::map<std::string, std::string>& declarations() const noexcept { return m_declarations; }
+    std::string declaration(std::string_view key, const std::string& fallback = std::string()) const {
+        const auto it = m_declarations.find(std::string(key));
+        return it == m_declarations.end() || it->second.empty() ? fallback : it->second;
+    }
+    bool has_declaration(std::string_view key) const { return m_declarations.count(std::string(key)) != 0; }
+    void set_declaration(std::string key, std::string value) { m_declarations[std::move(key)] = std::move(value); }
+    const Span& declaration_span() const noexcept { return m_declaration_span; }
+    void set_declaration_span(const Span& span) noexcept { m_declaration_span = span; }
+
 private:
     std::unique_ptr<Node> m_root;
     std::unique_ptr<Node> take_detached(Node& node);
@@ -244,6 +254,8 @@ private:
     std::unique_ptr<EventRegistry> m_events = std::make_unique<EventRegistry>();
     std::unique_ptr<DocumentHost> m_host = std::make_unique<DocumentHost>();
     std::uint64_t m_revision = 0;
+    std::map<std::string, std::string> m_declarations;
+    Span m_declaration_span{};
 };
 
 struct DumpOptions {

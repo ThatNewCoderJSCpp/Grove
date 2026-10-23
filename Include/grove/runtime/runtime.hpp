@@ -8,6 +8,14 @@
 #include <string_view>
 #include <vector>
 
+#if defined(__ANDROID__)
+namespace fizmo {
+namespace android {
+class App;
+} // namespace android
+} // namespace fizmo
+#endif
+
 namespace grove {
 namespace runtime {
 
@@ -20,6 +28,10 @@ struct RunOptions {
 };
 
 int run(Project& project, const RunOptions& options = RunOptions());
+
+#if defined(__ANDROID__)
+int run_android(Project& project, fizmo::android::App& app, const ScriptBuild* scripts, const RunOptions& options = RunOptions());
+#endif
 
 std::vector<std::string> font_families(std::string_view kind = "all");
 

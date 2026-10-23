@@ -37,6 +37,17 @@ struct LoadedApp {
 
 bool load_app(const Bundle& bundle, LoadedApp& app, std::string& error);
 
+struct AppLoadOptions {
+    std::string root;
+    std::string cache_dir;
+    std::string module_dir;
+    std::string module_prefix = "libgrove_script";
+};
+
+bool load_app(const Bundle& bundle, LoadedApp& app, std::string& error, const AppLoadOptions& options);
+
+std::string android_module_name(std::size_t script_index);
+
 } // namespace grove
 
 #endif // GROVE_APP_HPP

@@ -156,9 +156,15 @@ std::vector<Chord> parse_chords(std::string_view text) {
 std::string chord_text(const Chord& c) {
     if (c.key.empty()) return std::string();
     std::string out;
+#if defined(__APPLE__)
+    if (c.ctrl) out += "Cmd+";
+    if (c.shift) out += "Shift+";
+    if (c.alt) out += "Option+";
+#else
     if (c.ctrl) out += "Ctrl+";
     if (c.shift) out += "Shift+";
     if (c.alt) out += "Alt+";
+#endif
     return out + c.key;
 }
 

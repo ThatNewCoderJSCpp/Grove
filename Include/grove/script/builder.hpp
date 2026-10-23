@@ -21,6 +21,11 @@ struct ScriptTools {
     bool verbose = false;
     bool portable = false;
     bool compiler_from_walnut = false;
+    bool cross = false;
+    std::string target;
+    std::vector<std::string> cxx_flags;
+    std::vector<std::string> link_flags;
+    std::vector<std::string> walnut_args;
 };
 
 struct BuiltScript {

@@ -10,9 +10,18 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace grove {
+
+enum class Target {
+    Desktop = 0,
+    Android
+};
+
+const char* target_name(Target target) noexcept;
+std::optional<Target> parse_target(std::string_view name) noexcept;
 
 struct Project {
     std::string path;
@@ -22,6 +31,9 @@ struct Project {
     std::vector<ScriptBlock> scripts;
     std::vector<MathBlock> math;
     Diagnostics diagnostics;
+    Target target = Target::Desktop;
+
+    bool android() const noexcept { return target == Target::Android; }
 };
 
 using FileReadObserver = std::function<void(const std::string& path, const std::string& text)>;

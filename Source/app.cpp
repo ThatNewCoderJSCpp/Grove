@@ -168,7 +168,15 @@ AppBuildResult build_app(const std::string& document_path, const AppBuildOptions
 }
 
 bool load_app(const Bundle& bundle, LoadedApp& app, std::string& error) {
-    const fs::path exe = executable_path();
+    return load_app(bundle, app, error, AppLoadOptions{});
+}
+
+std::string android_module_name(std::size_t script_index) {
+    return "libgrove_script" + std::to_string(script_index) + ".so";
+}
+
+bool load_app(const Bundle& bundle, LoadedApp& app, std::string& error, const AppLoadOptions& options) {
+    const fs::path exe = options.root.empty() ? fs::path(executable_path()) : fs::path(options.root) / "app";
     const fs::path root = exe.has_parent_path() ? exe.parent_path() : fs::current_path();
 
     std::map<std::string, std::string> files;
@@ -189,9 +197,9 @@ bool load_app(const Bundle& bundle, LoadedApp& app, std::string& error) {
     }
 
     const std::string ext = bundle.meta("module-extension", module_extension());
-    const fs::path dir = app_cache_root() / hex16(bundle.hash());
+    const fs::path dir = (options.cache_dir.empty() ? app_cache_root() : fs::path(options.cache_dir)) / hex16(bundle.hash());
     std::error_code ec;
-    fs::create_directories(dir, ec);
+    if (options.module_dir.empty()) fs::create_directories(dir, ec);
 
     for (std::size_t i = 0; i < app.project.scripts.size(); ++i) {
         BuiltScript built;
@@ -200,6 +208,18 @@ bool load_app(const Bundle& bundle, LoadedApp& app, std::string& error) {
         built.runnable = !is_header(built.script.language);
         if (!built.runnable) {
             built.ok = true;
+            app.scripts.scripts.push_back(std::move(built));
+            continue;
+        }
+        if (!options.module_dir.empty()) {
+            const fs::path path = fs::path(options.module_dir) / (options.module_prefix + std::to_string(i) + ".so");
+            if (!fs::exists(path, ec)) {
+                error = "this app is missing the code for script " + std::to_string(i + 1) + " (" + path.string() + "); build it again";
+                return false;
+            }
+            built.module_path = path.string();
+            built.ok = true;
+            built.cached = true;
             app.scripts.scripts.push_back(std::move(built));
             continue;
         }

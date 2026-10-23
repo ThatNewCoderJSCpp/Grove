@@ -4,6 +4,7 @@
 #include "grove/input/input.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -242,6 +243,78 @@ std::string image_path(const Project& project, const Node& img) {
 
 namespace {
 
+bool valid_package(const std::string& p) {
+    if (p.empty()) return false;
+    bool start = true;
+    int parts = 1;
+    for (char c : p) {
+        if (c == '.') {
+            if (start) return false;
+            start = true;
+            ++parts;
+            continue;
+        }
+        const bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        const bool digit = c >= '0' && c <= '9';
+        if (start && !letter) return false;
+        if (!letter && !digit && c != '_') return false;
+        start = false;
+    }
+    return !start && parts >= 2;
+}
+
+bool all_digits(const std::string& s) {
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+void apply_declaration(Project& project) {
+    const Document& doc = project.document;
+    const Span span = doc.declaration_span();
+    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on" };
+    for (const auto& entry : doc.declarations()) {
+        const std::string& key = entry.first;
+        bool listed = false;
+        for (const char* k : known) listed = listed || key == k;
+        if (!listed) project.diagnostics.warning(project.path, span, "<!GROVE> doesn't know '" + key + "'");
+    }
+    const std::string type = doc.declaration("type");
+    if (!type.empty()) {
+        if (const std::optional<Target> t = parse_target(type)) project.target = *t;
+        else project.diagnostics.error(project.path, span, "<!GROVE type=\"" + type + "\"> isn't a target; use desktop or android");
+    }
+    if (!project.android()) {
+        for (const char* key : { "package", "version-code", "orientation", "min-sdk", "target-sdk", "abi" }) {
+            if (doc.has_declaration(key)) project.diagnostics.warning(project.path, span, std::string("'") + key + "' only matters with <!GROVE type=android>");
+        }
+        return;
+    }
+    const std::string package = doc.declaration("package");
+    if (!package.empty() && !valid_package(package)) project.diagnostics.error(project.path, span, "package \"" + package + "\" isn't an Android package name like com.example.app");
+    for (const char* key : { "version-code", "min-sdk", "target-sdk" }) {
+        const std::string v = doc.declaration(key);
+        if (!v.empty() && !all_digits(v)) project.diagnostics.error(project.path, span, std::string("'") + key + "' has to be a whole number");
+    }
+    const std::string min_sdk = doc.declaration("min-sdk");
+    if (all_digits(min_sdk) && std::stoi(min_sdk) < 26) project.diagnostics.error(project.path, span, "min-sdk " + min_sdk + " is too old; Grove apps need Android 8.0 (26) or newer");
+    const std::string orientation = doc.declaration("orientation");
+    if (!orientation.empty() && orientation != "portrait" && orientation != "landscape" && orientation != "sensor" && orientation != "any" && orientation != "locked") {
+        project.diagnostics.error(project.path, span, "orientation \"" + orientation + "\" isn't portrait, landscape, sensor, any or locked");
+    }
+    for (const std::string& abi : split_asset_list(doc.declaration("abi"))) {
+        if (abi != "arm64-v8a" && abi != "armeabi-v7a" && abi != "x86_64" && abi != "x86") project.diagnostics.error(project.path, span, "abi \"" + abi + "\" isn't arm64-v8a, armeabi-v7a, x86_64 or x86");
+    }
+    const std::string icon = doc.declaration("icon");
+    if (!icon.empty() && !read_file(resolve_path(project.base_dir, icon))) project.diagnostics.warning(project.path, span, "can't find the app icon '" + icon + "'");
+}
+
+void check_android(Project& project) {
+    project.document.root().walk([&](const Node& n) {
+        if (!n.is_element()) return;
+        if (n.tag() == "terminal") project.diagnostics.warning(project.path, n.span(), "<terminal> has no shell to run on Android");
+        if (n.tag() == "input_file") project.diagnostics.warning(project.path, n.span(), "<input_file> can't open the file picker on Android yet");
+    });
+}
+
 void check_assets(Project& project) {
     project.document.root().walk([&](const Node& n) {
         if (!n.is_element()) return;
@@ -263,6 +336,7 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     project.path = path;
     project.base_dir = base_dir;
     project.document = parse_markup(source, path, project.diagnostics);
+    apply_declaration(project);
     std::vector<std::string> chain{ std::filesystem::path(path).lexically_normal().generic_string() };
     include_pages(project, project.document.root(), chain);
     check_structure(project);
@@ -273,7 +347,23 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     project.math = collect_math(project.document, project.diagnostics);
     check_inputs(project.document, project.diagnostics);
     check_assets(project);
+    if (project.android()) check_android(project);
     return project;
+}
+
+const char* target_name(Target target) noexcept {
+    switch (target) {
+        case Target::Android: return "android";
+        default:              return "desktop";
+    }
+}
+
+std::optional<Target> parse_target(std::string_view name) noexcept {
+    std::string n(name);
+    for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (n == "desktop" || n == "pc" || n == "computer") return Target::Desktop;
+    if (n == "android") return Target::Android;
+    return std::nullopt;
 }
 
 Project load_project(const std::string& path) {

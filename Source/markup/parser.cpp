@@ -84,7 +84,53 @@ private:
             m_diag.error(m_file, m_cursor.span_from(start), "declaration is never closed with '>'");
             return;
         }
+        const std::string_view body = m_cursor.slice(start);
         m_cursor.advance();
+        if (body.size() >= 7 && body[0] == '<' && body[1] == '!' && to_lower(body.substr(2, 5)) == "grove" && (body.size() == 7 || Cursor::is_space(body[7]))) {
+            parse_grove_declaration(body.substr(7), m_cursor.span_from(start));
+        }
+    }
+
+    void parse_grove_declaration(std::string_view text, const Span& span) {
+        if (m_seen_grove) {
+            m_diag.warning(m_file, span, "only the first <!GROVE ...> counts; this one is ignored");
+            return;
+        }
+        m_seen_grove = true;
+        m_doc.set_declaration_span(span);
+        std::size_t i = 0;
+        auto skip = [&] { while (i < text.size() && Cursor::is_space(text[i])) ++i; };
+        while (true) {
+            skip();
+            if (i >= text.size()) break;
+            const std::size_t key_start = i;
+            while (i < text.size() && is_attr_char(text[i])) ++i;
+            if (i == key_start) {
+                m_diag.warning(m_file, span, std::string("unexpected '") + text[i] + "' in <!GROVE ...>");
+                ++i;
+                continue;
+            }
+            const std::string key = to_lower(text.substr(key_start, i - key_start));
+            skip();
+            std::string value;
+            if (i < text.size() && text[i] == '=') {
+                ++i;
+                skip();
+                if (i < text.size() && (text[i] == '"' || text[i] == '\'')) {
+                    const char q = text[i++];
+                    const std::size_t v_start = i;
+                    while (i < text.size() && text[i] != q) ++i;
+                    value = std::string(text.substr(v_start, i - v_start));
+                    if (i < text.size()) ++i;
+                } else {
+                    const std::size_t v_start = i;
+                    while (i < text.size() && !Cursor::is_space(text[i])) ++i;
+                    value = std::string(text.substr(v_start, i - v_start));
+                }
+            }
+            if (!m_doc.declaration(key).empty()) m_diag.warning(m_file, span, "'" + key + "' is set twice in <!GROVE ...>");
+            m_doc.set_declaration(key, value);
+        }
     }
 
     void parse_text() {
@@ -249,6 +295,7 @@ private:
     Diagnostics& m_diag;
     const MarkupOptions& m_options;
     Document m_doc;
+    bool m_seen_grove = false;
     std::vector<Node*> m_stack;
 };
 

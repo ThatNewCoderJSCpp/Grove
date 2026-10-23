@@ -291,10 +291,68 @@ jobs:
           & "$($root.FullName)/bin/grove.exe" check "$($root.FullName)/examples/hello/hello.grove"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  android:
+    name: Android kit ${{ matrix.abi }}
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_static \
+            -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
+            -DFIZMO_TUNE=OFF -DFIZMO_BUILD_SHARED=OFF -DFIZMO_BUILD_SHADER_TOOL=OFF
+
+      - name: Build the kit
+        run: cmake --build build --target grove_android_kit -j 4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grove-android-${{ matrix.abi }}
+          path: build/kit
+          if-no-files-found: error
+
+  android-kit:
+    name: Package the Android kit
+    needs: android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grove-android-*
+          path: kit
+          merge-multiple: true
+
+      - name: Zip it
+        run: |
+          version=$(sed -n 's/^project(grove VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -n 1)
+          cd kit
+          zip -r "../Grove-$version-android-kit.zip" lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grove-android-kit
+          path: Grove-*-android-kit.zip
+          if-no-files-found: error
+
   publish:
     name: Attach Grove to the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, linux-i686, windows, windows-native]
+    needs: [linux, linux-i686, windows, windows-native, android-kit]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

@@ -66,6 +66,14 @@ void forget_clipboard_window(const fizmo::windows::Window* window) {
     if (window && g_clipboard_window == window) g_clipboard_window = nullptr;
 }
 
+struct ViewPlatform {
+    std::function<bool(const std::string&)> set_clipboard;
+    std::function<std::string()> clipboard;
+    std::function<void(const Node*)> start_text_input;
+    std::function<void()> stop_text_input;
+    double scale = 0.0;
+};
+
 struct Box {
     float top = 0;
     float right = 0;
@@ -852,6 +860,48 @@ unsigned modifiers_of(fizmo::input::Modifiers m) {
     return out;
 }
 
+void apple_editing_keys(fizmo::input::Key& key, fizmo::input::Modifiers& mods) {
+#if defined(__APPLE__)
+    using fizmo::input::Key;
+    using fizmo::input::Modifiers;
+    const bool command = fizmo::input::has(mods, Modifiers::Meta) && !fizmo::input::has(mods, Modifiers::Control);
+    const bool option = fizmo::input::has(mods, Modifiers::Alt) && !fizmo::input::has(mods, Modifiers::Control) && !fizmo::input::has(mods, Modifiers::Meta);
+    const Modifiers shift = fizmo::input::has(mods, Modifiers::Shift) ? Modifiers::Shift : Modifiers::None;
+    if (command && !fizmo::input::has(mods, Modifiers::Alt)) {
+        if (key == Key::Left || key == Key::Right) {
+            key = key == Key::Left ? Key::Home : Key::End;
+            mods = shift;
+        } else if (key == Key::Up || key == Key::Down) {
+            key = key == Key::Up ? Key::Home : Key::End;
+            mods = shift | Modifiers::Control;
+        }
+        return;
+    }
+    if (option && (key == Key::Left || key == Key::Right || key == Key::Backspace || key == Key::Delete)) mods = shift | Modifiers::Control;
+#else
+    (void)key;
+    (void)mods;
+#endif
+}
+
+double device_scale(const fizmo::windows::Window* window) {
+#if defined(__APPLE__)
+    const float k = window && window->is_open() ? window->dpi_scale() : fizmo::windows::primary_monitor().scale;
+    return k > 0.0f ? static_cast<double>(k) : 1.0;
+#else
+    (void)window;
+    return 1.0;
+#endif
+}
+
+std::string shortcut_label(std::string_view key) {
+#if defined(__APPLE__)
+    return "Cmd+" + std::string(key);
+#else
+    return "Ctrl+" + std::string(key);
+#endif
+}
+
 bool is_disabled(const Node* n) {
     for (; n; n = n->parent()) {
         if (n->is_element() && n->has_attribute("disabled")) return true;
@@ -906,6 +956,53 @@ public:
     }
 
     void set_window(fizmo::windows::Window* window) noexcept { m_native = window; }
+    void set_platform(ViewPlatform platform) { m_platform = std::move(platform); }
+    const ViewPlatform& platform() const noexcept { return m_platform; }
+
+    void set_frame(float x, float y, float w, float h) noexcept {
+        m_frame_x = x;
+        m_frame_y = y;
+        m_frame_w = std::max(0.0f, w);
+        m_frame_h = std::max(0.0f, h);
+        m_framed = m_frame_w > 0.0f && m_frame_h > 0.0f;
+    }
+
+    void clear_frame() noexcept { m_framed = false; m_frame_x = m_frame_y = m_frame_w = m_frame_h = 0.0f; }
+    bool framed() const noexcept { return m_framed; }
+    float frame_x() const noexcept { return m_frame_x; }
+    float frame_y() const noexcept { return m_frame_y; }
+    float frame_w() const noexcept { return m_frame_w; }
+    float frame_h() const noexcept { return m_frame_h; }
+
+    bool platform_ready() const noexcept { return m_native != nullptr || static_cast<bool>(m_platform.clipboard); }
+
+    bool put_text(const std::string& text) {
+        if (m_native) return put_clipboard(m_native, text);
+        return m_platform.set_clipboard && m_platform.set_clipboard(text);
+    }
+
+    std::string get_text() {
+        if (m_native) return read_clipboard(m_native);
+        return m_platform.clipboard ? m_platform.clipboard() : std::string();
+    }
+
+    void text_input_on() {
+        if (m_native) {
+            m_native->start_text_input();
+            return;
+        }
+        if (!m_platform.start_text_input) return;
+        const Node* target = m_code_focus ? m_code_focus : m_focus ? m_focus : m_focused;
+        m_platform.start_text_input(target);
+    }
+
+    void text_input_off() {
+        if (m_native) {
+            m_native->stop_text_input();
+            return;
+        }
+        if (m_platform.stop_text_input) m_platform.stop_text_input();
+    }
     void set_title_callback(std::function<void(const std::string&)> fn) { m_on_title = std::move(fn); }
 
     Document& document() { return m_project.document; }
@@ -930,7 +1027,7 @@ public:
             const bark::Value& z = v->front();
             zoom = z.unit == "%" ? z.number / 100.0 : z.unit.empty() ? z.number : 1.0;
         }
-        zoom = std::clamp(zoom, 0.25, 5.0);
+        zoom = std::clamp(zoom, 0.25, 5.0) * m_device_scale;
         bark::Viewport vp = m_styles.viewport();
         if (vp.zoom == zoom) return;
         vp.zoom = zoom;
@@ -939,15 +1036,36 @@ public:
     }
 
     void paint(fizmo::graphics::Renderer& r) {
+        if (!m_framed) {
+            paint_view(r);
+            return;
+        }
+        r.push_transform();
+        r.translate(m_frame_x, m_frame_y);
+        paint_view(r);
+        r.pop_transform();
+        r.reset_clip_rect();
+    }
+
+    void reset_view_clip(fizmo::graphics::Renderer& r) {
+        if (m_framed) r.set_clip_rect(0, 0, static_cast<unsigned int>(std::ceil(m_frame_w)), static_cast<unsigned int>(std::ceil(m_frame_h)));
+        else r.reset_clip_rect();
+    }
+
+    void paint_view(fizmo::graphics::Renderer& r) {
         m_renderer = &r;
         const auto now = std::chrono::steady_clock::now();
         FrameStatsLog& stats = frame_stats_log();
         m_dt = m_has_frame ? std::min(0.1f, std::chrono::duration<float>(now - m_last_frame).count()) : 0.0f;
         m_last_frame = now;
         m_has_frame = true;
+        if (const double k = m_platform.scale > 0.0 ? m_platform.scale : device_scale(m_native); k != m_device_scale) {
+            m_device_scale = k;
+            apply_zoom();
+        }
 
-        const float w = static_cast<float>(r.viewport_width());
-        const float h = static_cast<float>(r.viewport_height());
+        const float w = m_framed ? m_frame_w : static_cast<float>(r.viewport_width());
+        const float h = m_framed ? m_frame_h : static_cast<float>(r.viewport_height());
         if (w != m_view_w || h != m_view_h) {
             const bool first = m_view_w == 0 && m_view_h == 0;
             m_view_w = w;
@@ -1048,7 +1166,7 @@ public:
                 last_kind = -1;
             } else if (op.kind == DrawOp::Kind::ClipPop) {
                 if (!clips.empty()) clips.pop_back();
-                if (clips.empty()) r.reset_clip_rect();
+                if (clips.empty()) reset_view_clip(r);
                 else apply(clips.back());
                 last_kind = -1;
             } else {
@@ -1063,7 +1181,7 @@ public:
                 draw(r, op);
             }
         }
-        r.reset_clip_rect();
+        reset_view_clip(r);
         run_find_requests();
         report_cursors();
         {
@@ -3604,12 +3722,12 @@ private:
 
     void term_copy(const Node& node) {
         const std::shared_ptr<Terminal> term = terminal_of(document(), node);
-        if (term->has_selection() && m_native) put_clipboard(m_native, term->selected_text());
+        if (term->has_selection()) put_text(term->selected_text());
     }
 
     void term_paste(const Node& node) {
-        if (!m_native) return;
-        const std::string text = read_clipboard(m_native);
+        if (!platform_ready()) return;
+        const std::string text = get_text();
         if (!text.empty()) term_send(node, terminal_of(document(), node)->encode_paste(text));
     }
 
@@ -4062,10 +4180,10 @@ private:
     }
 
     bool copy_text_selection() {
-        if (!has_text_selection() || !m_native) return false;
+        if (!has_text_selection() || !platform_ready()) return false;
         const std::string text = selection_text();
         if (text.empty()) return false;
-        return put_clipboard(m_native, text);
+        return put_text(text);
     }
 
     bool select_contents(const Node& node) {
@@ -5878,8 +5996,8 @@ private:
         m_styles.invalidate();
         const bool was_term = old && old->tag() == "terminal" && document().is_attached(*old);
         const bool is_term = node && node->tag() == "terminal";
-        if (is_term && m_native) m_native->start_text_input();
-        else if (was_term && m_native && !m_focus && !m_code_focus) m_native->stop_text_input();
+        if (is_term) text_input_on();
+        else if (was_term && !m_focus && !m_code_focus) text_input_off();
         if (was_term) {
             const std::shared_ptr<Terminal> term = terminal_of(document(), *old);
             term->send(term->encode_focus(false));
@@ -5929,7 +6047,7 @@ private:
         m_edit_redo.clear();
         m_edit_undo_kind = 0;
         m_edit_all = input_kind_of(*node) == InputKind::Color && !m_edit.empty();
-        if (m_native) m_native->start_text_input();
+        text_input_on();
         set_focused(node);
     }
 
@@ -5964,7 +6082,7 @@ private:
         m_edit_dragging = false;
         m_edit_undo.clear();
         m_edit_redo.clear();
-        if (m_native) m_native->stop_text_input();
+        text_input_off();
     }
 
     void layout_floating(fizmo::graphics::Renderer& r, float view_w, float view_h) {
@@ -6988,19 +7106,19 @@ private:
     }
 
     bool edit_copy(bool cut) {
-        if (!m_focus || !m_native) return false;
+        if (!m_focus || !platform_ready()) return false;
         if (m_focus->has_attribute("masked") || m_edit.empty()) return false;
         std::size_t a = 0;
         std::size_t b = 0;
         if (m_edit_anchor != std::string::npos && !m_edit_all && edit_range(a, b)) {
-            put_clipboard(m_native, m_edit.substr(a, b - a));
+            put_text(m_edit.substr(a, b - a));
             if (!cut || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return true;
             edit_remember(0);
             edit_delete_selection();
             edit_fire_input();
             return true;
         }
-        put_clipboard(m_native, m_edit);
+        put_text(m_edit);
         if (!cut || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return true;
         edit_remember(0);
         m_edit.clear();
@@ -7016,8 +7134,8 @@ private:
     }
 
     bool edit_paste() {
-        if (!m_focus || !m_native || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return false;
-        const std::string text = one_line_paste(read_clipboard(m_native));
+        if (!m_focus || !platform_ready() || is_disabled(m_focus) || m_focus->has_attribute("readonly")) return false;
+        const std::string text = one_line_paste(get_text());
         if (text.empty()) return false;
         edit_insert(text);
         return true;
@@ -7035,11 +7153,11 @@ private:
         const bool locked = field->has_attribute("readonly");
         const bool has_text = !m_edit.empty();
         std::vector<MenuItem> items;
-        items.push_back(MenuItem{ "grove:cut", "Cut", "Ctrl+X", hidden || locked || !has_text, false });
-        items.push_back(MenuItem{ "grove:copy", "Copy", "Ctrl+C", hidden || !has_text, false });
-        items.push_back(MenuItem{ "grove:paste", "Paste", "Ctrl+V", locked || !m_native, false });
+        items.push_back(MenuItem{ "grove:cut", "Cut", shortcut_label("X"), hidden || locked || !has_text, false });
+        items.push_back(MenuItem{ "grove:copy", "Copy", shortcut_label("C"), hidden || !has_text, false });
+        items.push_back(MenuItem{ "grove:paste", "Paste", shortcut_label("V"), locked || !platform_ready(), false });
         items.push_back(MenuItem{ "", "", "", false, true });
-        items.push_back(MenuItem{ "grove:select-all", "Select All", "Ctrl+A", !has_text, false });
+        items.push_back(MenuItem{ "grove:select-all", "Select All", shortcut_label("A"), !has_text, false });
         return open_context_menu(mutable_node(*field), items, px, py);
     }
 
@@ -7114,7 +7232,9 @@ private:
                 return;
             }
         }
-        const Key key = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
+        Key key = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
+        fizmo::input::Modifiers mods = e.mods;
+        if (m_focus || m_code_focus) apple_editing_keys(key, mods);
         if (m_picker.node && !m_focus && (key == Key::Enter || key == Key::Escape)) {
             close_picker(key == Key::Enter);
             return;
@@ -7145,8 +7265,8 @@ private:
             }
         }
         if (m_code_focus) {
-            if (completion_key(key, e.mods)) return;
-            code_key(key, e.mods);
+            if (completion_key(key, mods)) return;
+            code_key(key, mods);
             if (m_code_focus) after_code_key(key);
             return;
         }
@@ -7190,15 +7310,15 @@ private:
             return;
         }
         Node& node = mutable_node(*m_focus);
-        const bool select_all = key == Key::A && (fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Meta));
+        const bool select_all = key == Key::A && (fizmo::input::has(mods, fizmo::input::Modifiers::Control) || fizmo::input::has(mods, fizmo::input::Modifiers::Meta));
         if (select_all) {
             m_edit_all = !m_edit.empty();
             m_swallow_text = true;
             return;
         }
         {
-            const bool ctrl_key = fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Meta);
-            const bool shift_key = fizmo::input::has(e.mods, fizmo::input::Modifiers::Shift);
+            const bool ctrl_key = fizmo::input::has(mods, fizmo::input::Modifiers::Control) || fizmo::input::has(mods, fizmo::input::Modifiers::Meta);
+            const bool shift_key = fizmo::input::has(mods, fizmo::input::Modifiers::Shift);
             if ((ctrl_key && key == Key::V) || (shift_key && !ctrl_key && key == Key::Insert)) {
                 edit_paste();
                 m_swallow_text = true;
@@ -7226,7 +7346,7 @@ private:
                     m_edit_all = false;
                 }
                 if (m_edit_anchor == std::string::npos) m_edit_anchor = std::min(m_edit_caret, m_edit.size());
-                const bool word = ctrl_key || fizmo::input::has(e.mods, fizmo::input::Modifiers::Alt);
+                const bool word = ctrl_key || fizmo::input::has(mods, fizmo::input::Modifiers::Alt);
                 m_edit_caret = std::min(m_edit_caret, m_edit.size());
                 const bool math_steps = !word && math_layout_current();
                 if (key == Key::Left) m_edit_caret = word ? word_left(m_edit, m_edit_caret) : math_steps ? math_input_left(m_math_layout, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
@@ -7253,7 +7373,7 @@ private:
         }
         const bool was_all = m_edit_all;
         if (key == Key::Backspace || key == Key::Delete || key == Key::Up || key == Key::Down || key == Key::Left || key == Key::Right || key == Key::Home || key == Key::End) m_edit_all = false;
-        const bool by_word = fizmo::input::has(e.mods, fizmo::input::Modifiers::Control) || fizmo::input::has(e.mods, fizmo::input::Modifiers::Alt);
+        const bool by_word = fizmo::input::has(mods, fizmo::input::Modifiers::Control) || fizmo::input::has(mods, fizmo::input::Modifiers::Alt);
         m_edit_caret = std::min(m_edit_caret, m_edit.size());
         const bool math_steps = !by_word && !was_all && math_layout_current();
         if (math_steps && (key == Key::Up || key == Key::Down)) {
@@ -7312,7 +7432,7 @@ private:
                 blur(false);
                 break;
             case Key::Tab:
-                focus_next(fizmo::input::has(e.mods, fizmo::input::Modifiers::Shift) ? -1 : 1);
+                focus_next(fizmo::input::has(mods, fizmo::input::Modifiers::Shift) ? -1 : 1);
                 break;
             case Key::Up:
             case Key::Down:
@@ -7948,7 +8068,7 @@ private:
         CodeEditor& ed = m_code[node];
         ed.focus_start = ed.buffer.text();
         ed.last_reported = CodePos{ static_cast<std::size_t>(-1), 0 };
-        if (m_native) m_native->start_text_input();
+        text_input_on();
         set_focused(node);
     }
 
@@ -7958,7 +8078,7 @@ private:
         const Node* node = m_code_focus;
         m_code_focus = nullptr;
         m_code_drag = nullptr;
-        if (m_native && !m_focus) m_native->stop_text_input();
+        if (!m_focus) text_input_off();
         CodeEditor& ed = m_code[node];
         if (document().is_attached(*node) && ed.buffer.text() != ed.focus_start) {
             ed.focus_start = ed.buffer.text();
@@ -8273,33 +8393,33 @@ private:
                 break;
             case Key::A: if (ctrl) buf.select_all(); break;
             case Key::C:
-                if (ctrl && m_native) {
+                if (ctrl && platform_ready()) {
                     if (buf.has_extra_cursors()) {
-                        if (buf.any_selection()) put_clipboard(m_native, buf.selected_texts());
+                        if (buf.any_selection()) put_text(buf.selected_texts());
                     } else {
-                        put_clipboard(m_native, buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
+                        put_text(buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
                     }
                 }
                 break;
             case Key::X:
-                if (ctrl && m_native && !ro) {
+                if (ctrl && platform_ready() && !ro) {
                     if (buf.has_extra_cursors()) {
                         if (buf.any_selection()) {
-                            put_clipboard(m_native, buf.selected_texts());
+                            put_text(buf.selected_texts());
                             buf.delete_selection();
                             edited = true;
                         }
                         break;
                     }
                     if (!buf.has_selection()) buf.select_line(buf.caret().line);
-                    put_clipboard(m_native, buf.selected_text());
+                    put_text(buf.selected_text());
                     buf.delete_selection();
                     edited = true;
                 }
                 break;
             case Key::V:
-                if (ctrl && m_native && !ro) {
-                    const std::string text = read_clipboard(m_native);
+                if (ctrl && platform_ready() && !ro) {
+                    const std::string text = get_text();
                     if (!text.empty()) {
                         if (buf.has_extra_cursors()) {
                             std::vector<std::string> pieces(1);
@@ -8383,6 +8503,12 @@ private:
     std::function<bool()> m_blocked;
     std::function<void()> m_on_blocked;
     fizmo::windows::Window* m_native = nullptr;
+    ViewPlatform m_platform;
+    bool m_framed = false;
+    float m_frame_x = 0.0f;
+    float m_frame_y = 0.0f;
+    float m_frame_w = 0.0f;
+    float m_frame_h = 0.0f;
     std::function<void(const std::string&)> m_on_title;
     std::string m_title;
     std::uint64_t m_revision = ~std::uint64_t(0);
@@ -8477,6 +8603,7 @@ private:
     float m_dt = 0.0f;
     float m_view_w = 0.0f;
     float m_view_h = 0.0f;
+    double m_device_scale = 1.0;
     float m_scroll = 0.0f;
     float m_content_height = 0.0f;
     double m_last_layout_ms = 0.0;
@@ -8521,6 +8648,8 @@ public:
     }
 
     void poke() { m_last_activity = std::chrono::steady_clock::now(); }
+
+    bool has_overlay() const noexcept { return m_context.owner != nullptr || m_menu.node != nullptr || m_picker.node != nullptr || m_modal != nullptr; }
 };
 
 const Node* pick_window(const Project& project, const RunOptions& options) {
@@ -8637,15 +8766,17 @@ public:
         host.window_size = [this](const Node& n, double& w, double& h) {
             WindowHost* wh = host_for(&n);
             if (!wh || !wh->window || !wh->window->is_open()) return false;
-            w = wh->window->width();
-            h = wh->window->height();
+            const double k = device_scale(wh->window.get());
+            w = wh->window->width() / k;
+            h = wh->window->height() / k;
             return true;
         };
         host.resize_window = [this](Node& n, double w, double h) {
             WindowHost* wh = host_for(&n);
             if (!wh || !wh->window || !wh->window->is_open()) return false;
             wh->auto_height = false;
-            return wh->window->set_size(static_cast<unsigned>(w), static_cast<unsigned>(h));
+            const double k = device_scale(wh->window.get());
+            return wh->window->set_size(static_cast<unsigned>(std::lround(w * k)), static_cast<unsigned>(std::lround(h * k)));
         };
         host.move_window = [this](Node& n, double x, double y) {
             WindowHost* wh = host_for(&n);
@@ -8829,14 +8960,20 @@ private:
                 has_height = true;
             }
         }
+        if (main && m_project.android()) {
+            width = 412;
+            height = 892;
+            has_height = true;
+        }
+        const double k = device_scale(nullptr);
         const double min_w = std::max(0.0, style.length("min-size", 0).value_or(0.0));
         const double min_h = std::max(0.0, style.length("min-size", 1).value_or(min_w));
-        host->min_width = static_cast<unsigned>(std::lround(min_w));
-        host->min_height = static_cast<unsigned>(std::lround(min_h));
-        host->width = std::max({ width, 60u, host->min_width });
-        host->height = std::max({ height, 40u, host->min_height });
+        host->min_width = static_cast<unsigned>(std::lround(min_w * k));
+        host->min_height = static_cast<unsigned>(std::lround(min_h * k));
+        host->width = std::max({ static_cast<unsigned>(std::lround(width * k)), static_cast<unsigned>(60 * k), host->min_width });
+        host->height = std::max({ static_cast<unsigned>(std::lround(height * k)), static_cast<unsigned>(40 * k), host->min_height });
         host->auto_height = !main && !has_height;
-        if (host->auto_height) host->height = host->popup ? 160u : 240u;
+        if (host->auto_height) host->height = static_cast<unsigned>((host->popup ? 160 : 240) * k);
         host->background = to_color(style.color("background").value_or(bark::Rgba{ 30, 30, 36, 255 }));
         const std::string title = title_of(element, style);
 
@@ -9015,7 +9152,8 @@ private:
             const std::optional<unsigned> hh = parse_pixels(h->element->attribute_or("height", ""));
             if (w || hh) {
                 if (hh) h->auto_height = false;
-                h->window->set_size(w.value_or(h->window->width()), hh.value_or(h->window->height()));
+                const double k = device_scale(h->window.get());
+                h->window->set_size(w ? static_cast<unsigned>(std::lround(*w * k)) : h->window->width(), hh ? static_cast<unsigned>(std::lround(*hh * k)) : h->window->height());
             }
         }
     }
@@ -9117,6 +9255,785 @@ private:
     bark::Viewport m_screen{ 1920, 1080 };
 };
 
+#if defined(__ANDROID__)
+struct AndroidLayer {
+    Node* element = nullptr;
+    bool main = false;
+    bool popup = false;
+    std::unique_ptr<bark::StyleEngine> own_styles;
+    std::unique_ptr<DocumentView> view;
+    Color background;
+    bool close_requested = false;
+    bool blocked = false;
+    bool auto_height = false;
+    bool fitted = false;
+    float card_w = 0.0f;
+    float card_h = 0.0f;
+    float x = 0.0f;
+    float y = 0.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+    std::uint64_t frames = 0;
+    double paint_ms = 0.0;
+    double present_ms = 0.0;
+};
+
+fizmo::android::KeyboardKind keyboard_for(const Node* n) {
+    using fizmo::android::KeyboardKind;
+    if (!n) return KeyboardKind::Text;
+    if (n->tag() == "terminal" || n->tag() == "input_code") return KeyboardKind::Multiline;
+    if (const std::optional<InputKind> k = input_kind_of(*n)) {
+        if (*k == InputKind::Integer) return KeyboardKind::Number;
+        if (*k == InputKind::Float) return KeyboardKind::Decimal;
+        if (*k == InputKind::Code) return KeyboardKind::Multiline;
+    }
+    const std::string type = n->attribute_or("type", n->attribute_or("keyboard", ""));
+    if (type == "email") return KeyboardKind::Email;
+    if (type == "url") return KeyboardKind::Url;
+    if (type == "password" || n->has_attribute("password") || n->has_attribute("secret")) return KeyboardKind::Password;
+    if (type == "tel" || type == "phone") return KeyboardKind::Phone;
+    if (type == "number") return KeyboardKind::Decimal;
+    if (n->has_attribute("multiline")) return KeyboardKind::Multiline;
+    return KeyboardKind::Text;
+}
+
+class AndroidShell {
+public:
+    AndroidShell(Project& project, const RunOptions& options, Node& main, fizmo::android::App& app)
+        : m_project(project), m_doc(project.document), m_options(options), m_main(main), m_app(app), m_renderer(app.surface()) {
+        m_density = std::max(0.5f, app.density());
+        DocumentHost& host = m_doc.host();
+        host.main_window = &m_main;
+        host.computed_style = [this](const Node& n, const std::string& property) {
+            AndroidLayer* l = layer_containing(n);
+            return l ? l->view->computed(n, property) : std::string();
+        };
+        host.computed_number = [this](const Node& n, const std::string& property, std::size_t index, double& out) {
+            AndroidLayer* l = layer_containing(n);
+            return l && l->view->computed_number(n, property, index, out);
+        };
+        host.computed_color = [this](const Node& n, const std::string& property) {
+            AndroidLayer* l = layer_containing(n);
+            return l ? l->view->computed_color(n, property) : std::string();
+        };
+        host.focus = [this](Node* n) {
+            AndroidLayer* l = n ? layer_containing(*n) : layer_for(&m_main);
+            return l && l->view->focus_from_script(n);
+        };
+        host.window_info = [this](const Node& n, WindowInfo& info) {
+            AndroidLayer* l = layer_for(&n);
+            if (!l) l = layer_containing(n);
+            if (!l) return false;
+            info.width = static_cast<unsigned>(std::lround(l->w));
+            info.height = static_cast<unsigned>(std::lround(l->h));
+            info.x = static_cast<int>(std::lround(l->x));
+            info.y = static_cast<int>(std::lround(l->y));
+            info.dpi_scale = m_density;
+            info.monitor = "android";
+            info.monitor_width = m_app.surface().width();
+            info.monitor_height = m_app.surface().height();
+            info.refresh_rate = 60;
+            info.layout_ms = l->view->last_layout_ms();
+            info.draw_ms = l->view->last_draw_ms();
+            info.present_ms = l->present_ms;
+            info.frame_ms = l->paint_ms + l->present_ms;
+            info.draw_ops = l->view->last_ops();
+            info.frames = l->frames;
+            info.frames_per_second = 0.0;
+            info.renderer = m_renderer.backend_name();
+            return true;
+        };
+        host.native_window = [this](const Node&, std::string_view what) -> void* {
+            if (what == "renderer") return &m_renderer;
+            if (what == "android") return &m_app;
+            return nullptr;
+        };
+        host.window_size = [this](const Node& n, double& w, double& h) {
+            AndroidLayer* l = layer_for(&n);
+            if (!l) return false;
+            w = l->w / m_density;
+            h = l->h / m_density;
+            return true;
+        };
+        host.resize_window = [this](Node& n, double, double h) {
+            AndroidLayer* l = layer_for(&n);
+            if (!l || !l->popup) return false;
+            l->auto_height = false;
+            l->card_h = static_cast<float>(h) * m_density;
+            m_dirty = true;
+            return true;
+        };
+        host.move_window = [](Node&, double, double) { return false; };
+        host.focus_window = [this](Node& n) {
+            AndroidLayer* l = layer_for(&n);
+            if (!l || l->main) return l != nullptr;
+            for (auto it = m_layers.begin(); it != m_layers.end(); ++it) {
+                if (it->get() != l) continue;
+                std::unique_ptr<AndroidLayer> moved = std::move(*it);
+                m_layers.erase(it);
+                m_layers.push_back(std::move(moved));
+                break;
+            }
+            m_dirty = true;
+            return true;
+        };
+        host.file_dialog = [](const FileDialogRequest&) { return std::vector<std::string>{}; };
+        host.set_clipboard = [this](const std::string& text) { return m_app.set_clipboard_text(text); };
+        host.clipboard = [this]() { return m_app.clipboard_text(); };
+        host.open_menu = [this](Node& owner, const std::vector<MenuItem>& items, double x, double y) {
+            AndroidLayer* l = layer_containing(owner);
+            return l && l->view->open_context_menu(owner, items, x, y);
+        };
+        host.close_menu = [this]() {
+            bool closed = false;
+            for (const auto& l : m_layers) closed = l->view->close_context_menu(true) || closed;
+            return closed;
+        };
+        host.selected_text = [this]() {
+            for (const auto& l : m_layers) {
+                const std::string t = l->view->public_selected_text();
+                if (!t.empty()) return t;
+            }
+            return std::string();
+        };
+        host.select_text = [this](Node& node) {
+            AndroidLayer* l = layer_containing(node);
+            return l && l->view->public_select(node);
+        };
+        host.clear_selection = [this]() {
+            for (const auto& l : m_layers) l->view->public_clear_selection();
+        };
+    }
+
+    ~AndroidShell() {
+        while (!m_layers.empty()) destroy_layer(m_layers.back().get());
+        DocumentHost& host = m_doc.host();
+        host.computed_style = nullptr;
+        host.computed_number = nullptr;
+        host.computed_color = nullptr;
+        host.focus = nullptr;
+        host.window_size = nullptr;
+        host.window_info = nullptr;
+        host.native_window = nullptr;
+        host.resize_window = nullptr;
+        host.move_window = nullptr;
+        host.focus_window = nullptr;
+        host.file_dialog = nullptr;
+        host.set_clipboard = nullptr;
+        host.clipboard = nullptr;
+        host.open_menu = nullptr;
+        host.close_menu = nullptr;
+        host.selected_text = nullptr;
+        host.select_text = nullptr;
+        host.clear_selection = nullptr;
+        host.main_window = nullptr;
+        m_app.hide_keyboard();
+    }
+
+    bool open_main() {
+        apply_declaration();
+        m_renderer.bind();
+        return open_layer(m_main, true) != nullptr;
+    }
+
+    int loop() {
+        using Clock = std::chrono::steady_clock;
+        const double fps = m_options.max_fps > 0 ? m_options.max_fps : 60.0;
+        Clock::time_point next = Clock::now();
+        while (m_app.running()) {
+            int wait_ms = 0;
+            const bool visible = m_app.visible() && m_renderer.is_bound();
+            if (!visible) wait_ms = 250;
+            else if (all_idle() && !m_dirty && !m_fling && !m_touching) wait_ms = idle_wait();
+            fizmo::android::Event e;
+            bool first = true;
+            while (m_app.poll(e, first ? wait_ms : 0)) {
+                first = false;
+                handle(e);
+                if (!m_app.running()) return 0;
+            }
+            if (!process_close_requests()) {
+                m_app.finish();
+                continue;
+            }
+            m_doc.events().run_due_timers();
+            if (m_doc.events().quit_requested()) {
+                m_app.finish();
+                continue;
+            }
+            reconcile();
+            if (!layer_for(&m_main)) {
+                m_app.finish();
+                continue;
+            }
+            step_touch();
+            if (!(m_app.visible() && m_renderer.is_bound())) continue;
+            const bool busy = !all_idle() || m_fling || m_touching;
+            if (m_dirty || busy || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_app.surface().redraw_requested()) {
+                render();
+                m_painted_revision = m_doc.revision();
+                m_painted_stamp = m_doc.root().tree_stamp();
+                m_app.surface().clear_redraw();
+                m_dirty = false;
+            }
+            if (busy) {
+                next += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
+                const Clock::time_point now = Clock::now();
+                if (next < now) next = now;
+                else std::this_thread::sleep_until(next);
+            } else {
+                next = Clock::now();
+            }
+        }
+        return 0;
+    }
+
+private:
+    int idle_wait() const {
+        const double due = m_doc.events().next_timer_due();
+        if (due < 0.0 || !std::isfinite(due)) return 500;
+        const double in = due - m_doc.events().now();
+        if (in <= 0.0) return 0;
+        return static_cast<int>(std::min(500.0, std::ceil(in)));
+    }
+
+    float dp(float v) const noexcept { return v * m_density; }
+
+    void apply_declaration() {
+        const std::string orientation = m_doc.declaration("orientation");
+        if (orientation == "portrait") m_app.set_orientation(fizmo::android::Orientation::SensorPortrait);
+        else if (orientation == "landscape") m_app.set_orientation(fizmo::android::Orientation::SensorLandscape);
+        else if (orientation == "sensor" || orientation == "any") m_app.set_orientation(fizmo::android::Orientation::Sensor);
+        else if (orientation == "locked") m_app.set_orientation(fizmo::android::Orientation::Locked);
+        const std::string full = m_doc.declaration("fullscreen");
+        if (full == "true" || full == "yes" || (m_doc.has_declaration("fullscreen") && full.empty())) m_app.set_immersive(true);
+        const std::string awake = m_doc.declaration("keep-screen-on");
+        if (awake == "true" || awake == "yes" || (m_doc.has_declaration("keep-screen-on") && awake.empty())) m_app.set_keep_screen_on(true);
+    }
+
+    bool all_idle() {
+        for (const auto& l : m_layers) if (!l->view->idle()) return false;
+        return true;
+    }
+
+    AndroidLayer* layer_for(const Node* element) {
+        for (const auto& l : m_layers) if (l->element == element) return l.get();
+        return nullptr;
+    }
+
+    AndroidLayer* layer_containing(const Node& node) {
+        Node* w = window_of(m_doc, const_cast<Node*>(&node));
+        if (AndroidLayer* l = layer_for(w)) return l;
+        return layer_for(&m_main);
+    }
+
+    bool owner_open(Node& element) {
+        Node* owner = owner_window(m_doc, element);
+        return owner == &m_main || (owner && layer_for(owner));
+    }
+
+    void fire(Node& target, const char* type) {
+        Event e;
+        e.type = type;
+        m_doc.events().dispatch(m_doc, &target, e);
+    }
+
+    AndroidLayer* top_sheet() {
+        for (auto it = m_layers.rbegin(); it != m_layers.rend(); ++it) if (!(*it)->popup) return it->get();
+        return m_layers.empty() ? nullptr : m_layers.front().get();
+    }
+
+    AndroidLayer* input_layer() {
+        return m_layers.empty() ? nullptr : m_layers.back().get();
+    }
+
+    AndroidLayer* open_layer(Node& element, bool main) {
+        auto layer = std::make_unique<AndroidLayer>();
+        layer->element = &element;
+        layer->main = main;
+        layer->popup = !main && is_popup(element);
+        bark::StyleEngine* styles = &m_project.styles;
+        if (!main) {
+            layer->own_styles = std::make_unique<bark::StyleEngine>(m_project.styles);
+            styles = layer->own_styles.get();
+        }
+        styles->set_viewport(bark::Viewport{ m_app.surface().width() / m_density, m_app.surface().height() / m_density });
+        const bark::ComputedStyle& style = styles->style_of(element, m_project.diagnostics);
+        layer->background = to_color(style.color("background").value_or(bark::Rgba{ 30, 30, 36, 255 }));
+        if (layer->popup) {
+            const std::optional<double> w = style.length("size", 0);
+            const std::optional<double> h = style.length("size", 1);
+            layer->card_w = dp(static_cast<float>(w.value_or(360.0)));
+            layer->auto_height = !h.has_value();
+            layer->card_h = dp(static_cast<float>(h.value_or(200.0)));
+            if (const std::optional<unsigned> px = parse_pixels(element.attribute_or("width", ""))) layer->card_w = dp(static_cast<float>(*px));
+            if (const std::optional<unsigned> px = parse_pixels(element.attribute_or("height", ""))) {
+                layer->card_h = dp(static_cast<float>(*px));
+                layer->auto_height = false;
+            }
+        }
+        layer->view = std::make_unique<DocumentView>(m_project, *styles, element, main);
+        AndroidLayer* raw = layer.get();
+        ViewPlatform platform;
+        platform.scale = m_density;
+        platform.set_clipboard = [this](const std::string& text) { return m_app.set_clipboard_text(text); };
+        platform.clipboard = [this]() { return m_app.clipboard_text(); };
+        platform.start_text_input = [this](const Node* n) {
+            m_app.show_keyboard(keyboard_for(n));
+            m_keyboard = true;
+        };
+        platform.stop_text_input = [this]() {
+            m_app.hide_keyboard();
+            m_keyboard = false;
+        };
+        raw->view->set_platform(std::move(platform));
+        raw->view->set_title_callback([](const std::string&) {});
+        raw->view->set_blocked([raw] { return raw->blocked; }, [] {});
+        m_layers.push_back(std::move(layer));
+        layout();
+        if (!main) fire(element, "open");
+        if (layer_for(&element) == raw) raw->view->apply_autofocus();
+        m_dirty = true;
+        return raw;
+    }
+
+    void destroy_layer(AndroidLayer* layer) {
+        if (!layer) return;
+        if (layer->view) layer->view->release_states();
+        if (m_touch_layer == layer) m_touch_layer = nullptr;
+        for (auto it = m_layers.begin(); it != m_layers.end(); ++it) {
+            if (it->get() == layer) {
+                m_layers.erase(it);
+                break;
+            }
+        }
+        m_dirty = true;
+    }
+
+    bool process_close_requests() {
+        std::vector<Node*> requested;
+        for (const auto& l : m_layers) if (l->close_requested) requested.push_back(l->element);
+        for (Node* element : requested) {
+            AndroidLayer* l = layer_for(element);
+            if (!l) continue;
+            l->close_requested = false;
+            const bool main = l->main;
+            if (l->popup) {
+                destroy_layer(l);
+                if (m_doc.is_attached(*element)) answer_popup(m_doc, *element, false);
+                continue;
+            }
+            Event e;
+            e.type = "close";
+            const bool allowed = m_doc.events().dispatch(m_doc, element, e);
+            if (!allowed) continue;
+            if (main) return false;
+            destroy_layer(l);
+            if (element->remove_attribute("open")) m_doc.touch();
+        }
+        return true;
+    }
+
+    void reconcile() {
+        if (m_doc.revision() == m_seen_revision) return;
+        for (int pass = 0; pass < 4 && m_doc.revision() != m_seen_revision; ++pass) {
+            m_seen_revision = m_doc.revision();
+            std::vector<Node*> closing;
+            for (const auto& l : m_layers) {
+                if (l->main) continue;
+                Node& el = *l->element;
+                const bool wants = m_doc.is_attached(el) && el.has_attribute("open") && owner_open(el);
+                if (!wants) closing.push_back(&el);
+            }
+            for (Node* el : closing) {
+                AndroidLayer* l = layer_for(el);
+                if (!l) continue;
+                const bool popup = l->popup;
+                destroy_layer(l);
+                if (popup) {
+                    if (m_doc.is_attached(*el) && !el->has_attribute("answered")) answer_popup(m_doc, *el, false);
+                } else {
+                    fire(*el, "close");
+                }
+            }
+            for (Node* el : m_doc.elements_by_tag("window")) {
+                if (el == &m_main || !el->has_attribute("open") || layer_for(el)) continue;
+                if (!owner_open(*el)) continue;
+                open_layer(*el, false);
+            }
+        }
+        for (const auto& l : m_layers) l->blocked = !open_popups(m_doc, *l->element).empty();
+        m_dirty = true;
+    }
+
+    void layout() {
+        const float W = static_cast<float>(m_app.surface().width());
+        const float H = static_cast<float>(m_app.surface().height());
+        if (W <= 0.0f || H <= 0.0f) return;
+        const fizmo::android::Insets in = m_app.content_insets();
+        const float sx = static_cast<float>(in.left);
+        const float sy = static_cast<float>(in.top);
+        const float sw = std::max(1.0f, W - static_cast<float>(in.left + in.right));
+        const float sh = std::max(1.0f, H - static_cast<float>(in.top + in.bottom));
+        for (const auto& l : m_layers) {
+            if (!l->popup) {
+                l->x = sx;
+                l->y = sy;
+                l->w = sw;
+                l->h = sh;
+            } else {
+                float w = std::min(l->card_w, sw - dp(32.0f));
+                w = std::max(w, std::min(sw, dp(220.0f)));
+                float h = std::min(l->card_h, sh - dp(48.0f));
+                h = std::max(h, dp(80.0f));
+                l->w = std::floor(w);
+                l->h = std::floor(h);
+                l->x = std::floor(sx + (sw - l->w) * 0.5f);
+                l->y = std::floor(sy + std::max(dp(24.0f), (sh - l->h) / 3.0f));
+            }
+            l->view->set_frame(l->x, l->y, l->w, l->h);
+        }
+    }
+
+    void render() {
+        fizmo::graphics::Renderer& r = m_renderer;
+        layout();
+        AndroidLayer* sheet = top_sheet();
+        if (!sheet) return;
+        const auto started = std::chrono::steady_clock::now();
+        r.begin_frame();
+        r.clear(sheet->background);
+        sheet->view->paint(r);
+        bool after = false;
+        for (const auto& l : m_layers) {
+            if (l.get() == sheet) {
+                after = true;
+                continue;
+            }
+            if (!after || !l->popup) continue;
+            r.draw_rect(0, 0, m_app.surface().width(), m_app.surface().height(), fizmo::graphics::Paint::fill(Color(0, 0, 0, 115)));
+            r.draw_rounded_rect(l->x, l->y, l->w, l->h, dp(14.0f), fizmo::graphics::Paint::fill(l->background));
+            l->view->paint(r);
+            if (l->auto_height && !l->fitted && l->view->content_height() > 0.0f) {
+                l->fitted = true;
+                l->card_h = std::ceil(l->view->content_height());
+                m_dirty = true;
+            }
+        }
+        const auto painted = std::chrono::steady_clock::now();
+        r.present();
+        const auto presented = std::chrono::steady_clock::now();
+        sheet->paint_ms = std::chrono::duration<double, std::milli>(painted - started).count();
+        sheet->present_ms = std::chrono::duration<double, std::milli>(presented - painted).count();
+        ++sheet->frames;
+    }
+
+    static fizmo::windows::WindowEvent mouse_event(fizmo::windows::WindowEventType type, float x, float y, unsigned button) {
+        fizmo::windows::WindowEvent e;
+        e.type = type;
+        e.fx = x;
+        e.fy = y;
+        e.x = static_cast<unsigned>(std::max(0.0f, x));
+        e.y = static_cast<unsigned>(std::max(0.0f, y));
+        e.button = button;
+        e.pointer = fizmo::input::PointerType::Touch;
+        return e;
+    }
+
+    void send(AndroidLayer* l, fizmo::windows::WindowEvent e) {
+        if (!l || !l->view) return;
+        if (e.type == fizmo::windows::WindowEventType::MouseMove || e.type == fizmo::windows::WindowEventType::MouseClick ||
+            e.type == fizmo::windows::WindowEventType::MouseRelease || e.type == fizmo::windows::WindowEventType::MouseScroll ||
+            e.type == fizmo::windows::WindowEventType::MouseDoubleClick) {
+            e.fx -= l->x;
+            e.fy -= l->y;
+            e.x = static_cast<unsigned>(std::max(0.0f, e.fx));
+            e.y = static_cast<unsigned>(std::max(0.0f, e.fy));
+        }
+        l->view->on_event(e);
+        m_dirty = true;
+    }
+
+    AndroidLayer* layer_at(float x, float y) {
+        AndroidLayer* top = input_layer();
+        if (!top) return nullptr;
+        if (top->popup) return top;
+        (void)x;
+        (void)y;
+        return top_sheet();
+    }
+
+    void pointer_move(AndroidLayer* l, float x, float y) {
+        send(l, mouse_event(fizmo::windows::WindowEventType::MouseMove, x, y, 0));
+    }
+
+    void click(AndroidLayer* l, float x, float y, unsigned button) {
+        using fizmo::windows::WindowEventType;
+        pointer_move(l, x, y);
+        const auto now = std::chrono::steady_clock::now();
+        const bool twice = button == 1 && std::chrono::duration<double>(now - m_last_tap).count() < 0.35 &&
+                           std::hypot(x - m_last_tap_x, y - m_last_tap_y) < dp(24.0f);
+        send(l, mouse_event(twice ? WindowEventType::MouseDoubleClick : WindowEventType::MouseClick, x, y, button));
+        send(l, mouse_event(WindowEventType::MouseRelease, x, y, button));
+        if (button == 1) {
+            m_last_tap = twice ? std::chrono::steady_clock::time_point{} : now;
+            m_last_tap_x = x;
+            m_last_tap_y = y;
+        }
+    }
+
+    void scroll_by(AndroidLayer* l, float dx, float dy) {
+        using fizmo::windows::WindowEventType;
+        fizmo::windows::WindowEvent e = mouse_event(WindowEventType::MouseScroll, m_touch_x, m_touch_y, 0);
+        if (std::fabs(dx) > std::fabs(dy) * 1.5f) e.scroll_x = dx / 48.0f;
+        else e.scroll_y = dy / 48.0f;
+        if (e.scroll_x == 0.0f && e.scroll_y == 0.0f) return;
+        send(l, e);
+    }
+
+    void touch_down(const fizmo::android::Event& e) {
+        if (m_touching) return;
+        m_fling = false;
+        m_touching = true;
+        m_touch_id = e.pointer_id;
+        m_touch_x0 = m_touch_x = e.x;
+        m_touch_y0 = m_touch_y = e.y;
+        m_touch_t0 = m_last_move = std::chrono::steady_clock::now();
+        m_scrolling = false;
+        m_dragging = false;
+        m_long_pressed = false;
+        m_vx = m_vy = 0.0f;
+        m_touch_layer = layer_at(e.x, e.y);
+        pointer_move(m_touch_layer, e.x, e.y);
+    }
+
+    void touch_move(const fizmo::android::Event& e) {
+        if (!m_touching || e.pointer_id != m_touch_id) return;
+        const auto now = std::chrono::steady_clock::now();
+        const float dx = e.x - m_touch_x;
+        const float dy = e.y - m_touch_y;
+        const double dt = std::max(1e-3, std::chrono::duration<double>(now - m_last_move).count());
+        m_vx = static_cast<float>(0.6 * m_vx + 0.4 * dx / dt);
+        m_vy = static_cast<float>(0.6 * m_vy + 0.4 * dy / dt);
+        m_last_move = now;
+        if (m_long_pressed) return;
+        if (!m_scrolling && !m_dragging) {
+            const float moved = std::hypot(e.x - m_touch_x0, e.y - m_touch_y0);
+            if (moved < dp(8.0f)) return;
+            const double held = std::chrono::duration<double>(now - m_touch_t0).count();
+            if (held > 0.30) {
+                m_dragging = true;
+                send(m_touch_layer, mouse_event(fizmo::windows::WindowEventType::MouseClick, m_touch_x0, m_touch_y0, 1));
+            } else {
+                m_scrolling = true;
+            }
+        }
+        m_touch_x = e.x;
+        m_touch_y = e.y;
+        if (m_dragging) pointer_move(m_touch_layer, e.x, e.y);
+        else scroll_by(m_touch_layer, dx, dy);
+    }
+
+    void touch_up(const fizmo::android::Event& e, bool cancel) {
+        if (!m_touching || e.pointer_id != m_touch_id) return;
+        m_touching = false;
+        AndroidLayer* l = m_touch_layer;
+        if (cancel) {
+            if (m_dragging) send(l, mouse_event(fizmo::windows::WindowEventType::MouseRelease, e.x, e.y, 1));
+            return;
+        }
+        if (m_dragging) {
+            send(l, mouse_event(fizmo::windows::WindowEventType::MouseRelease, e.x, e.y, 1));
+        } else if (m_scrolling) {
+            const float speed = std::hypot(m_vx, m_vy);
+            if (speed > dp(250.0f) && std::chrono::duration<double>(std::chrono::steady_clock::now() - m_last_move).count() < 0.08) {
+                m_fling = true;
+                m_fling_at = std::chrono::steady_clock::now();
+            }
+        } else if (!m_long_pressed) {
+            click(l, e.x, e.y, 1);
+        }
+        pointer_move(l, -1000.0f, -1000.0f);
+    }
+
+    void step_touch() {
+        const auto now = std::chrono::steady_clock::now();
+        if (m_touching && !m_scrolling && !m_dragging && !m_long_pressed) {
+            if (std::chrono::duration<double>(now - m_touch_t0).count() > 0.55) {
+                m_long_pressed = true;
+                m_app.vibrate(12);
+                click(m_touch_layer, m_touch_x0, m_touch_y0, 2);
+            }
+        }
+        if (!m_fling) return;
+        const double dt = std::min(0.05, std::chrono::duration<double>(now - m_fling_at).count());
+        m_fling_at = now;
+        const float decay = static_cast<float>(std::exp(-dt * 3.2));
+        m_vx *= decay;
+        m_vy *= decay;
+        if (std::hypot(m_vx, m_vy) < dp(30.0f) || !m_touch_layer) {
+            m_fling = false;
+            return;
+        }
+        scroll_by(m_touch_layer, static_cast<float>(m_vx * dt), static_cast<float>(m_vy * dt));
+    }
+
+    void key(const fizmo::android::Event& e, bool down) {
+        fizmo::windows::WindowEvent k;
+        k.type = down ? fizmo::windows::WindowEventType::KeyPress : fizmo::windows::WindowEventType::KeyRelease;
+        k.physical_key = e.key;
+        k.logical_key = e.key;
+        k.mods = e.mods;
+        k.repeat = e.repeat;
+        k.key = static_cast<unsigned>(e.key_code);
+        k.scancode = static_cast<unsigned>(e.scan_code);
+        k.key_name = fizmo::input::key_name(e.key);
+        send(input_layer(), k);
+    }
+
+    void press_escape(AndroidLayer* l) {
+        fizmo::windows::WindowEvent k;
+        k.type = fizmo::windows::WindowEventType::KeyPress;
+        k.physical_key = k.logical_key = fizmo::input::Key::Escape;
+        k.key_name = "Escape";
+        send(l, k);
+        k.type = fizmo::windows::WindowEventType::KeyRelease;
+        send(l, k);
+    }
+
+    void back() {
+        AndroidLayer* top = input_layer();
+        if (!top) return;
+        if (top->view->has_overlay()) {
+            press_escape(top);
+            return;
+        }
+        if (top->popup || !top->main) {
+            top->close_requested = true;
+            return;
+        }
+        if (go_back(m_doc)) {
+            m_doc.touch();
+            m_dirty = true;
+            return;
+        }
+        m_app.move_to_back();
+    }
+
+    void handle(const fizmo::android::Event& e) {
+        using fizmo::android::EventType;
+        using fizmo::windows::WindowEventType;
+        switch (e.type) {
+            case EventType::SurfaceCreated:
+            case EventType::SurfaceResized:
+            case EventType::InsetsChanged:
+            case EventType::RedrawNeeded:
+            case EventType::Resume:
+            case EventType::Start:
+            case EventType::FocusGained:
+                layout();
+                m_dirty = true;
+                break;
+            case EventType::ConfigChanged:
+                m_density = std::max(0.5f, m_app.density());
+                for (const auto& l : m_layers) {
+                    ViewPlatform p = l->view->platform();
+                    p.scale = m_density;
+                    l->view->set_platform(std::move(p));
+                }
+                layout();
+                m_dirty = true;
+                break;
+            case EventType::TouchDown:
+                touch_down(e);
+                break;
+            case EventType::TouchMove:
+                touch_move(e);
+                break;
+            case EventType::TouchUp:
+                touch_up(e, false);
+                break;
+            case EventType::TouchCancel:
+                touch_up(e, true);
+                break;
+            case EventType::MouseMove:
+                pointer_move(layer_at(e.x, e.y), e.x, e.y);
+                break;
+            case EventType::MouseDown:
+            case EventType::MouseUp: {
+                const unsigned button = e.button == fizmo::android::MouseButton::Right ? 2u : e.button == fizmo::android::MouseButton::Middle ? 3u : 1u;
+                fizmo::windows::WindowEvent m = mouse_event(e.type == EventType::MouseDown ? WindowEventType::MouseClick : WindowEventType::MouseRelease, e.x, e.y, button);
+                m.pointer = fizmo::input::PointerType::Mouse;
+                m.mods = e.mods;
+                send(layer_at(e.x, e.y), m);
+                break;
+            }
+            case EventType::MouseScroll: {
+                fizmo::windows::WindowEvent m = mouse_event(WindowEventType::MouseScroll, e.x, e.y, 0);
+                m.pointer = fizmo::input::PointerType::Mouse;
+                m.scroll_x = e.scroll_x;
+                m.scroll_y = e.scroll_y;
+                m.mods = e.mods;
+                send(layer_at(e.x, e.y), m);
+                break;
+            }
+            case EventType::KeyDown:
+                key(e, true);
+                break;
+            case EventType::KeyUp:
+                key(e, false);
+                break;
+            case EventType::TextInput: {
+                fizmo::windows::WindowEvent t;
+                t.type = WindowEventType::TextInput;
+                t.text = e.text;
+                send(input_layer(), t);
+                break;
+            }
+            case EventType::Back:
+                back();
+                break;
+            default:
+                break;
+        }
+    }
+
+    Project& m_project;
+    Document& m_doc;
+    const RunOptions& m_options;
+    Node& m_main;
+    fizmo::android::App& m_app;
+    fizmo::graphics::Renderer m_renderer;
+    std::vector<std::unique_ptr<AndroidLayer>> m_layers;
+    float m_density = 1.0f;
+    bool m_dirty = true;
+    bool m_keyboard = false;
+    std::uint64_t m_seen_revision = ~std::uint64_t(0);
+    std::uint64_t m_painted_revision = ~std::uint64_t(0);
+    std::uint64_t m_painted_stamp = 0;
+
+    bool m_touching = false;
+    std::int32_t m_touch_id = -1;
+    float m_touch_x0 = 0.0f;
+    float m_touch_y0 = 0.0f;
+    float m_touch_x = 0.0f;
+    float m_touch_y = 0.0f;
+    std::chrono::steady_clock::time_point m_touch_t0{};
+    std::chrono::steady_clock::time_point m_last_move{};
+    bool m_scrolling = false;
+    bool m_dragging = false;
+    bool m_long_pressed = false;
+    AndroidLayer* m_touch_layer = nullptr;
+    float m_vx = 0.0f;
+    float m_vy = 0.0f;
+    bool m_fling = false;
+    std::chrono::steady_clock::time_point m_fling_at{};
+    std::chrono::steady_clock::time_point m_last_tap{};
+    float m_last_tap_x = 0.0f;
+    float m_last_tap_y = 0.0f;
+};
+#endif
+
 } // namespace
 
 std::vector<std::string> font_families(std::string_view kind) {
@@ -9210,6 +10127,48 @@ int run(Project& project, const RunOptions& options) {
     grove_bind_document(nullptr);
     return code;
 }
+
+#if defined(__ANDROID__)
+int run_android(Project& project, fizmo::android::App& app, const ScriptBuild* scripts, const RunOptions& options) {
+    const Node* window = pick_window(project, options);
+    if (!window) {
+        std::cerr << "grove: no <window> or <body> with id \"" << options.window_id << "\" in " << project.path << '\n';
+        return 1;
+    }
+    Document& doc = project.document;
+    grove_bind_document(reinterpret_cast<grove_document*>(&doc));
+    doc.events().set_error_handler([](const std::string& message) { std::cerr << "grove: script error: " << message << '\n'; });
+    int code = 0;
+    {
+        AndroidShell shell(project, options, const_cast<Node&>(*window), app);
+        if (!shell.open_main()) {
+            std::cerr << "grove: couldn't show the document\n";
+            grove_bind_document(nullptr);
+            return 1;
+        }
+        if (scripts && options.scripts) {
+            const std::size_t errors_before = project.diagnostics.error_count();
+            run_scripts(doc, *scripts, project.diagnostics, project.path);
+            const auto& items = project.diagnostics.items();
+            const std::size_t added = project.diagnostics.error_count() - errors_before;
+            for (std::size_t i = items.size() - std::min(items.size(), added); i < items.size(); ++i) {
+                const Diagnostic& d = items[i];
+                std::cerr << d.file << ':' << d.span.begin.line << ':' << d.span.begin.column << ": " << to_string(d.severity) << ": " << d.message << '\n';
+            }
+        }
+        {
+            Event load;
+            load.type = "load";
+            load.bubbles = false;
+            doc.events().dispatch(doc, nullptr, load);
+        }
+        code = shell.loop();
+    }
+    doc.events().clear();
+    grove_bind_document(nullptr);
+    return code;
+}
+#endif
 
 } // namespace runtime
 } // namespace grove

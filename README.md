@@ -76,7 +76,7 @@ Without the runtime, `grove_core` only needs Fizmo's headers (MathText is header
 | `grove scripts doc.grove` | the scripts the document uses |
 | `grove run doc.grove [--window id]` | build the scripts and open the document's `<body>` as a Fizmo window |
 | `grove exec doc.grove [--event "click #id"] [--for ms]` | build and run the scripts without a window, then print the element tree |
-| `grove build doc.grove [-o app]` | one executable with the document, its styles and its compiled scripts |
+| `grove build doc.grove [-o app]` | one executable with the document, its styles and its compiled scripts; an Android app (`.apk`) when the document starts with `<!GROVE type=android>` |
 | `grove scripts doc.grove --build` | compile every script and report errors |
 | `grove highlight doc.grove` | tokens, colors and diagnostics as JSON, for editors (`.bark` files too; `--stdin` reads unsaved text) |
 
@@ -139,5 +139,9 @@ Documentation/  the language references
 ## Releases
 
 Pushing a tag `vX.Y.Z` that matches `project(grove VERSION X.Y.Z)` runs `.github/workflows/release.yml`. It builds, tests and packages `grove` for Linux x86_64, arm64 and i686 (`.tar.gz`) and Windows x86_64 (`windows-ucrt64`), i686 and ARM64 (`windows-clangarm64`) as `.zip`, then attaches them to the GitHub release. The Windows packages are cross-compiled on Linux with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (no MSYS2): `cmake/llvm-mingw.cmake` is the toolchain file and `.github/scripts/windows-deps.sh` builds zlib, libjpeg-turbo and the Vulkan headers for it. The x86_64 build is tested under Wine, and the i686 and ARM64 builds run their tests on real Windows machines. Each package has `bin/grove`, the headers, `grove_core`/`grove_runtime`, the docs and the examples. Walnut isn't in the package; install it from its own release and put `walnut` on `PATH` (or next to `grove`, or in `GROVE_WALNUT`) to run Walnut scripts. Locally, `-DGROVE_PACKAGE=ON` and `cpack` make the same package.
+
+## Android
+
+`<!GROVE type=android package=com.example.app label="My App">` at the top of a document turns `grove build` into an APK builder: the same document runs full screen on a phone, with touch scrolling, the right on-screen keyboard for each input, the Back button, and Bark `px` as Android's density-independent pixels. It needs the Android NDK and SDK build tools (from Android Studio) and the Grove Android kit (`Grove-<version>-android-kit.zip` from a release, or `cmake --build <android build> --target grove_android_kit`). See [Documentation/grove.md](Documentation/grove.md#android).
 
 See [Documentation/grove.md](Documentation/grove.md) for the markup and [Documentation/bark.md](Documentation/bark.md) for styles.

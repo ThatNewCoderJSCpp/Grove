@@ -16,7 +16,7 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 </grove>
 ```
 
-`<!grove>` and the `<grove>` root are optional; a file can start straight at `<body>`.
+`<!grove>` and the `<grove>` root are optional; a file can start straight at `<body>`. `<!grove>` can also say what the document is built for: `<!GROVE type=android package=com.example.recipes label="Recipe Box">` makes it an Android app (see [Android](#android)).
 
 `<body>` is the app's window. Its `title`, `width` and `height` attributes, or Bark's `size` and `title` on `body`, set up the window; without them the title comes from `<title>` and the size defaults to 800×600. A document with no `<body>` draws everything in one window. Every `<window>` is a separate window of its own; see [Windows](#windows).
 
@@ -738,3 +738,84 @@ grove build todo.grove -o todo
 ```
 
 `grove build` compiles the scripts and writes a single program holding the document, its Bark files and its compiled scripts. It runs without Grove, Walnut, a compiler or the source files. Scripts are unpacked into a per-user cache (`~/.cache/grove/apps` or `%LOCALAPPDATA%\Grove\apps`) the first time it runs. On Linux the scripts are linked with `-static-libstdc++` so they don't depend on the compiler's C++ library, when the compiler has a static C++ library to link (Fedora and others need `libstdc++-static` installed); without one they're linked normally. From C++, `AppBuildOptions::portable = false` asks for a normal link.
+
+## Android
+
+Start the document with `<!GROVE type=android>` and `grove build` makes an Android app (an `.apk`) instead of a desktop program. The same `.grove`, `.bark` and script files are used; `grove build --target desktop` still makes the desktop program from an Android document, and `--target android` makes an APK from any document.
+
+```html
+<!GROVE type=android package=com.family.recipes label="Recipe Box" version=1.2 version-code=3 icon=icon.png orientation=portrait>
+<grove>
+    ...
+</grove>
+```
+
+| Key | |
+|---|---|
+| `type` | `desktop` (the default) or `android` |
+| `package` | the app's Android id, like `com.example.app`; it can't change once the app is installed somewhere. Defaults to `org.grove.<file name>` |
+| `label` | the name under the app's icon; defaults to `<title>`, then the file name |
+| `version`, `version-code` | the version people see (`1.2`) and the whole number Android compares to decide if an APK is newer (`3`); default `1.0` and `1` |
+| `icon` | a PNG for the launcher icon, relative to the document (512×512 or 192×192 works well) |
+| `orientation` | `portrait`, `landscape`, `sensor`/`any` (follows the phone) or `locked`; by default the app follows the phone |
+| `min-sdk`, `target-sdk` | the oldest Android the app installs on (26, Android 8.0, at the least) and the one it's written for (default 35) |
+| `abi` | the processors to build for: `arm64-v8a` (phones, the default), `armeabi-v7a` (old phones), `x86_64` (the emulator, Chromebooks) |
+| `fullscreen` | hide the status and navigation bars |
+| `keep-screen-on` | stop the screen from turning off while the app is open |
+
+`grove check` reports keys it doesn't know, values that can't work and elements that do nothing on a phone (`<terminal>`, `<input_file>`). `grove run` on a computer opens an Android document in a phone-sized window (412×892), so you can try the layout before building.
+
+### What changes on a phone
+
+- `<body>` fills the screen inside the status bar, the navigation bar, any camera cutout and the on-screen keyboard, so nothing is hidden behind them; when the keyboard opens, the page shrinks to the space above it.
+- Bark `px` are Android's density-independent pixels: `font-size: 16px` is the same size on every phone, and `zoom` multiplies on top. `grove::window_info` reports the phone's scale in `dpi_scale`.
+- A tap is a click, a double tap a double click, and a long press (it buzzes) a right-click, so text fields get the Cut / Copy / Paste menu. Dragging a finger scrolls whatever is under it, with a fling when you let go; touching and holding before dragging drags instead (sliders, selecting text). A mouse, trackpad or keyboard plugged in or on a Chromebook works as on a computer.
+- Typing into a text field opens the keyboard that suits it: numbers for `input_integer` and `input_float`, a multi-line keyboard for `input_code` and `multiline` fields, and the email, URL, phone or password keyboard for `type="email"`, `"url"`, `"tel"` or `"password"`. Gesture typing and autocorrect work.
+- Every `<window>` opens as a full screen of its own on top of the app; popups (`alert`, `confirm`, the `prompt_*` family) are cards over a dimmed screen.
+- The Back button closes, in order: an open menu or modal, the top popup or window (a `<window>` gets its `close` event and can refuse), the last `<page>` it went to, and finally puts the app in the background like any Android app.
+- Fonts come from the phone (Roboto and the Noto fonts for every script and emoji); a family the phone doesn't have falls back to `sans-serif`, `serif` or `monospace`.
+- The clipboard is Android's.
+- Not there yet: `<input_file>` (the file picker) and `<terminal>` (there's no shell to run).
+
+### Building the APK
+
+```sh
+grove build recipes.grove                 # recipes.apk next to the document
+grove build recipes.grove --install       # and put it on the phone plugged in over USB
+grove build recipes.grove --install --launch
+```
+
+Building needs three things from Google on the computer, which Android Studio installs (or `sdkmanager "ndk;27.2.12479018" "build-tools;35.0.0" "platforms;android-35" "platform-tools"` from the command-line tools):
+
+- the **Android NDK**, which compiles the scripts for the phone's processor. Grove finds it through `--ndk`, `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT` or the newest one in the SDK's `ndk` folder;
+- the **SDK build tools** (`aapt2`, `zipalign`, `apksigner`) and one **platform** (`android.jar`), found through `--sdk`, `ANDROID_HOME` or `ANDROID_SDK_ROOT`, or the usual `~/Android/Sdk`, `~/Library/Android/sdk` or `%LOCALAPPDATA%\Android\Sdk`;
+- **Java** (`keytool`), which comes with Android Studio, to make the signing key the first time.
+
+It also needs the **Grove Android kit**: Grove's runtime and Fizmo built for each processor. Releases have it as `Grove-<version>-android-kit.zip`; unzip it into the Grove folder so it sits at `lib/grove/android/<abi>/`, or point `--android-kit` or `GROVE_ANDROID_KIT` at the folder holding the `<abi>` folders. To build it yourself:
+
+```sh
+cmake -S . -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_static \
+    -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON -DFIZMO_TUNE=OFF
+cmake --build build-android --target grove_android_kit
+```
+
+That downloads and builds FreeType, HarfBuzz, libjpeg-turbo and OpenSSL for the phone too (OpenSSL needs `perl` and `make`), and leaves the kit in `build-android/kit/lib/grove/android/arm64-v8a`.
+
+`grove build` compiles each script once per `abi`, writes the manifest, packs the document, its Bark files, images and the compiled scripts into the APK, aligns it and signs it. Without `--keystore` it signs with the standard debug key in `~/.android/debug.keystore` (making it if it isn't there); that's fine for putting the app on your own phones. To publish an app, make a key of your own once and keep it safe, since every update has to be signed with the same key:
+
+```sh
+keytool -genkeypair -keystore recipes.keystore -alias recipes -keyalg RSA -keysize 2048 -validity 10000
+grove build recipes.grove --keystore recipes.keystore --key-alias recipes --ks-pass env:RECIPES_KEY_PASS
+```
+
+| Flag | |
+|---|---|
+| `--target android` / `--target desktop` | build for the other target than the document says |
+| `--abi arm64-v8a,x86_64` | processors to build for |
+| `--android-kit <dir>`, `--ndk <dir>`, `--sdk <dir>` | where to find the kit, NDK and SDK |
+| `--keystore <file>`, `--key-alias <name>`, `--ks-pass <pass>`, `--key-pass <pass>` | sign with your own key; a pass can be `pass:...`, `env:VAR` or `file:path` |
+| `--install`, `--launch` | install the APK on the phone over `adb`, then start it |
+
+To put the app on a phone without `--install`, send the `.apk` to it (a cable, email, a shared folder) and open it there; Android asks once to allow installing apps from that source. `adb logcat -s grove fizmo` shows what the app prints, including script errors.

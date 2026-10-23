@@ -1,4 +1,5 @@
 #include "grove/grove.hpp"
+#include "grove/android_package.hpp"
 #include "grove/script/builder.hpp"
 #include "grove/script/loader.hpp"
 
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <optional>
 #include <thread>
 #include <sstream>
 #include <string>
@@ -38,6 +40,7 @@ void print_usage(std::ostream& os) {
           "  highlight  print tokens, colors and diagnostics as JSON for editors (.grove or .bark; --stdin reads the text from standard input)\n"
           "  run      open the document's <body> as a window (needs the fizmo runtime)\n"
           "  build    make one executable that holds the document, its styles and its compiled scripts\n"
+          "           (for an <!GROVE type=android> document, or with --target android, make a signed .apk)\n"
           "  version  print the Grove version\n"
           "\n"
           "options:\n"
@@ -47,7 +50,18 @@ void print_usage(std::ostream& os) {
           "  --build         with scripts: compile every script and report errors\n"
           "  --rebuild       compile scripts again even if they're cached\n"
           "  --no-scripts    with run: don't build or run scripts\n"
-          "  -o <file>       with build: where to write the executable (default: the document's name)\n"
+          "  -o <file>       with build: where to write the executable or .apk (default: the document's name)\n"
+          "  --target <t>    with build: desktop or android (default: the document's <!GROVE type>)\n"
+          "  --abi <list>    with an Android build: arm64-v8a, armeabi-v7a, x86_64 and/or x86, comma separated (default: abi= or arm64-v8a)\n"
+          "  --android-kit <dir>  with an Android build: the folder holding one Grove runtime kit per ABI\n"
+          "  --ndk <dir>     with an Android build: the Android NDK used to compile scripts (default: ANDROID_NDK_HOME or the SDK's ndk/)\n"
+          "  --sdk <dir>     with an Android build: the Android SDK with build-tools and platforms (default: ANDROID_HOME)\n"
+          "  --keystore <file>    with an Android build: sign with this keystore instead of the debug key\n"
+          "  --ks-pass <p>   the keystore password: the password itself, env:VAR or file:path\n"
+          "  --key-alias <a> the key in the keystore to sign with\n"
+          "  --key-pass <p>  the key's password, if it isn't the keystore's (same forms as --ks-pass)\n"
+          "  --install       with an Android build: install the .apk with adb\n"
+          "  --launch        with an Android build: install the .apk with adb and start it\n"
           "  --event \"T S\"   with exec: dispatch event T to the first element matching selector S (repeatable)\n"
           "  --for <ms>      with exec: keep running timers for this long (default 0)\n"
           "  --tools         print where grove looks for walnut, the compilers and its headers\n"
@@ -131,6 +145,8 @@ int main(int argc, char** argv) {
     bool verbose = false;
     bool full = false;
     double run_for = 0.0;
+    std::optional<grove::Target> target;
+    grove::AndroidBuildOptions android;
     std::vector<std::string> events;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
@@ -152,6 +168,27 @@ int main(int argc, char** argv) {
             run_for = *ms;
         }
         else if (a == "--window" && i + 1 < argc) window_id = argv[++i];
+        else if (a == "--target" && i + 1 < argc) {
+            target = grove::parse_target(argv[++i]);
+            if (!target) {
+                std::cerr << "grove: --target expects desktop or android\n";
+                return 2;
+            }
+        }
+        else if (a == "--abi" && i + 1 < argc) {
+            std::string list = argv[++i];
+            std::replace(list.begin(), list.end(), ';', ',');
+            for (const std::string& abi : grove::split_asset_list(list)) android.abis.push_back(abi);
+        }
+        else if (a == "--android-kit" && i + 1 < argc) android.kit_dir = argv[++i];
+        else if (a == "--ndk" && i + 1 < argc) android.ndk = argv[++i];
+        else if (a == "--sdk" && i + 1 < argc) android.sdk = argv[++i];
+        else if (a == "--keystore" && i + 1 < argc) android.keystore = argv[++i];
+        else if (a == "--ks-pass" && i + 1 < argc) android.ks_pass = argv[++i];
+        else if (a == "--key-alias" && i + 1 < argc) android.key_alias = argv[++i];
+        else if (a == "--key-pass" && i + 1 < argc) android.key_pass = argv[++i];
+        else if (a == "--install") android.install = true;
+        else if (a == "--launch") android.launch = true;
         else if ((a == "-o" || a == "--output") && i + 1 < argc) output = argv[++i];
         else if (a == "--viewport" && i + 1 < argc) {
             const std::string v = argv[++i];
@@ -206,6 +243,33 @@ int main(int argc, char** argv) {
         if (command == "styles") sheet.dump(std::cout);
         else if (!quiet) std::cout << file << ": " << diagnostics.error_count() << " error(s), " << diagnostics.warning_count() << " warning(s); " << sheet.rules().size() << " rule(s), " << sheet.variables().size() << " variable(s)\n";
         return diagnostics.ok() ? 0 : 1;
+    }
+
+    if (command == "build" && target != grove::Target::Desktop && (target == grove::Target::Android || grove::load_project(file).android())) {
+        android.output = output;
+        android.window_id = window_id;
+        android.force_target = target == grove::Target::Android;
+        android.tools = grove::default_script_tools(file);
+        android.tools.rebuild = rebuild;
+        android.tools.verbose = verbose;
+        if (show_tools) std::cout << grove::describe(android.tools);
+        grove::Diagnostics diagnostics;
+        const grove::AndroidBuildResult result = grove::build_android_app(file, android, diagnostics, &std::cerr);
+        print_diagnostics(diagnostics, quiet);
+        if (!result.ok) {
+            std::cerr << "grove: build failed\n";
+            return 1;
+        }
+        if (!quiet) {
+            std::string abis;
+            for (const std::string& abi : result.abis) abis += (abis.empty() ? "" : ", ") + abi;
+            const std::string size = result.bytes >= 1024 * 1024 ? std::to_string((result.bytes + 512 * 1024) / (1024 * 1024)) + " MB" : std::to_string((result.bytes + 512) / 1024) + " KB";
+            std::cout << "built " << result.output << " (" << size << "; " << abis << "; " << result.files << " file" << (result.files == 1 ? "" : "s") << ", "
+                      << result.modules << " script" << (result.modules == 1 ? "" : "s") << "; " << result.package << "; " << (result.debug_signed ? "signed with the debug key" : "signed") << ")\n";
+            if (result.launched) std::cout << "installed and started " << result.package << '\n';
+            else if (result.installed) std::cout << "installed " << result.package << '\n';
+        }
+        return 0;
     }
 
     if (command == "build") {
