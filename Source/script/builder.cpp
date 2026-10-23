@@ -21,6 +21,11 @@
 #include <unistd.h>
 #endif
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <cstring>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace grove {
@@ -223,6 +228,15 @@ std::string executable_path() {
     const DWORD n = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     buffer.resize(n);
     return fs::path(buffer).string();
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) return std::string();
+    buffer.resize(std::strlen(buffer.c_str()));
+    std::error_code ec;
+    const fs::path real = fs::canonical(buffer, ec);
+    return ec ? buffer : real.string();
 #else
     std::error_code ec;
     const fs::path p = fs::read_symlink("/proc/self/exe", ec);
@@ -434,6 +448,8 @@ ScriptBuild build_scripts(Project& project, const ScriptTools& requested, std::o
         std::vector<std::string> shared = { "-shared" };
 #if defined(__linux__)
         if (!tools.cross && tools.portable && static_runtime_available(tools)) shared.insert(shared.end(), { "-static-libstdc++", "-static-libgcc" });
+#elif defined(__APPLE__)
+        if (!tools.cross) shared.push_back("-Wl,-dead_strip_dylibs");
 #endif
 #endif
         shared.insert(shared.end(), tools.link_flags.begin(), tools.link_flags.end());
