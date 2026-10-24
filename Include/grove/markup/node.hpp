@@ -168,6 +168,15 @@ struct WindowInfo {
     std::string renderer;
 };
 
+struct FrameRate {
+    std::optional<double> max_fps;
+    std::optional<double> idle_fps;
+    std::optional<bool> vsync;
+    double current_max_fps = 60.0;
+    double current_idle_fps = 12.0;
+    bool current_vsync = false;
+};
+
 struct DocumentHost {
     std::function<std::string(const Node&, const std::string&)> computed_style;
     std::function<bool(const Node&, const std::string&, std::size_t, double&)> computed_number;
@@ -193,6 +202,7 @@ struct DocumentHost {
     std::function<void()> clear_selection;
     std::map<const Node*, std::shared_ptr<Terminal>> terminals;
     std::map<const Node*, std::shared_ptr<CanvasPixels>> canvases;
+    FrameRate frame_rate;
 };
 
 class Document {

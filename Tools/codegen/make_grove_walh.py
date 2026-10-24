@@ -141,6 +141,12 @@ DOCUMENT = [
     ('width', [], 'short float', True),
     ('height', [], 'short float', True),
     ('quit', [], 'void', True),
+    ('set_max_fps', [('short float', 'fps')], 'void', True),
+    ('max_fps', [], 'short float', True),
+    ('set_idle_fps', [('short float', 'fps')], 'void', True),
+    ('idle_fps', [], 'short float', True),
+    ('set_vsync', [('bool', 'enabled')], 'void', True),
+    ('vsync', [], 'bool', True),
     ('log', [(S, 'message')], 'void', True),
 ]
 

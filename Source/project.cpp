@@ -270,7 +270,7 @@ bool all_digits(const std::string& s) {
 void apply_declaration(Project& project) {
     const Document& doc = project.document;
     const Span span = doc.declaration_span();
-    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on", "storage" };
+    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on", "storage", "max-fps", "idle-fps", "vsync" };
     for (const auto& entry : doc.declarations()) {
         const std::string& key = entry.first;
         bool listed = false;

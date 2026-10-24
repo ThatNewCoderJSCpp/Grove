@@ -8662,6 +8662,67 @@ const Node* pick_window(const Project& project, const RunOptions& options) {
     return &project.document.root();
 }
 
+struct FrameSettings {
+    double max_fps = 60.0;
+    double idle_fps = 12.0;
+    std::optional<bool> vsync;
+};
+
+std::string frame_word(std::string text) {
+    std::string out;
+    for (char c : text) {
+        if (c == ' ' || c == '\t') continue;
+        out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+std::optional<double> parse_fps(const std::string& text) {
+    const std::string t = frame_word(text);
+    if (t == "unlimited" || t == "uncapped" || t == "none" || t == "max" || t == "off") return 0.0;
+    std::string number = t;
+    if (number.size() > 3 && number.compare(number.size() - 3, 3, "fps") == 0) number.resize(number.size() - 3);
+    char* end = nullptr;
+    const double v = std::strtod(number.c_str(), &end);
+    if (end == number.c_str() || *end != '\0' || std::isnan(v)) return std::nullopt;
+    return std::isfinite(v) ? std::max(0.0, v) : 0.0;
+}
+
+std::optional<bool> parse_switch(const std::string& text) {
+    const std::string t = frame_word(text);
+    if (t.empty() || t == "on" || t == "true" || t == "yes" || t == "1") return true;
+    if (t == "off" || t == "false" || t == "no" || t == "0") return false;
+    return std::nullopt;
+}
+
+FrameSettings frame_settings(Document& doc, const RunOptions& options) {
+    FrameSettings s;
+    s.max_fps = std::isfinite(options.max_fps) ? std::max(0.0, options.max_fps) : 0.0;
+    s.idle_fps = std::isfinite(options.idle_fps) ? std::max(0.0, options.idle_fps) : 0.0;
+    s.vsync = options.vsync;
+    if (doc.has_declaration("max-fps")) {
+        if (const auto v = parse_fps(doc.declaration("max-fps"))) s.max_fps = *v;
+    }
+    if (doc.has_declaration("idle-fps")) {
+        if (const auto v = parse_fps(doc.declaration("idle-fps"))) s.idle_fps = *v;
+    }
+    if (doc.has_declaration("vsync")) {
+        if (const auto v = parse_switch(doc.declaration("vsync"))) s.vsync = *v;
+    }
+    FrameRate& f = doc.host().frame_rate;
+    if (f.max_fps) s.max_fps = *f.max_fps;
+    if (f.idle_fps) s.idle_fps = *f.idle_fps;
+    if (f.vsync) s.vsync = *f.vsync;
+    f.current_max_fps = s.max_fps;
+    f.current_idle_fps = s.idle_fps;
+    return s;
+}
+
+double paced_fps(const FrameSettings& s, bool idle) {
+    if (!idle || s.idle_fps <= 0.0) return s.max_fps;
+    return s.max_fps > 0.0 ? std::min(s.idle_fps, s.max_fps) : s.idle_fps;
+}
+
 std::optional<unsigned> parse_pixels(const std::string& text) {
     unsigned value = 0;
     std::size_t i = 0;
@@ -8856,11 +8917,17 @@ public:
     bool open_main() { return open_host(m_main, true) != nullptr; }
 
     int loop() {
-        const double fps = m_options.max_fps > 0 ? m_options.max_fps : 60.0;
         using Clock = std::chrono::steady_clock;
+        const auto seconds = [](double s) { return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(s)); };
         Clock::time_point next = Clock::now();
         bool quit = false;
         while (!quit) {
+            const FrameSettings frame = frame_settings(m_doc, m_options);
+            for (const auto& h : m_hosts) {
+                if (!h->renderer) continue;
+                if (frame.vsync && h->renderer->vsync() != *frame.vsync) h->renderer->set_vsync(*frame.vsync);
+                if (h->main) m_doc.host().frame_rate.current_vsync = h->renderer->vsync();
+            }
             std::vector<WindowHost*> snapshot;
             for (const auto& h : m_hosts) snapshot.push_back(h.get());
             for (WindowHost* h : snapshot) {
@@ -8888,8 +8955,20 @@ public:
 
             bool idle = true;
             for (const auto& h : m_hosts) idle = idle && h->view->idle();
-            const double rate = idle ? std::min(12.0, fps) : fps;
-            next += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / rate));
+            const double rate = paced_fps(frame, idle);
+            if (rate <= 0.0) {
+                next = Clock::now();
+                continue;
+            }
+            next += seconds(1.0 / rate);
+            if (idle) {
+                const double due = m_doc.events().next_timer_due();
+                if (std::isfinite(due)) {
+                    const Clock::time_point timer_at(std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(due)));
+                    const Clock::time_point soonest = frame.max_fps > 0.0 ? before + seconds(1.0 / frame.max_fps) : before;
+                    next = std::min(next, std::max(timer_at, soonest));
+                }
+            }
             const Clock::time_point now = Clock::now();
             if (next < now) next = now;
             else std::this_thread::sleep_until(next);
@@ -8991,6 +9070,7 @@ private:
             return nullptr;
         }
         host->renderer = std::make_unique<fizmo::graphics::Renderer>(*host->window);
+        if (const std::optional<bool> vsync = frame_settings(m_doc, m_options).vsync) host->renderer->set_vsync(*vsync);
         if (!host->renderer->bind()) {
             std::cerr << "grove: couldn't draw into a window\n";
             host->window->close();
@@ -9438,9 +9518,11 @@ public:
 
     int loop() {
         using Clock = std::chrono::steady_clock;
-        const double fps = m_options.max_fps > 0 ? m_options.max_fps : 60.0;
         Clock::time_point next = Clock::now();
         while (m_app.running()) {
+            const FrameSettings frame = frame_settings(m_doc, m_options);
+            if (frame.vsync && m_renderer.vsync() != *frame.vsync) m_renderer.set_vsync(*frame.vsync);
+            m_doc.host().frame_rate.current_vsync = m_renderer.vsync();
             int wait_ms = 0;
             const bool visible = m_app.visible() && m_renderer.is_bound();
             if (!visible) wait_ms = 250;
@@ -9476,8 +9558,10 @@ public:
                 m_app.surface().clear_redraw();
                 m_dirty = false;
             }
-            if (busy) {
-                next += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps));
+            if (busy && frame.max_fps <= 0.0) {
+                next = Clock::now();
+            } else if (busy) {
+                next += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / frame.max_fps));
                 const Clock::time_point now = Clock::now();
                 if (next < now) next = now;
                 else std::this_thread::sleep_until(next);

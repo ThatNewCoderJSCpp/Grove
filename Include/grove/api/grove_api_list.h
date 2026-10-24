@@ -98,6 +98,12 @@
     X(double, grove_viewport_width, (grove_document* document), (document)) \
     X(double, grove_viewport_height, (grove_document* document), (document)) \
     X(void, grove_quit, (grove_document* document), (document)) \
+    X(void, grove_set_max_fps, (grove_document* document, double fps), (document, fps)) \
+    X(double, grove_max_fps, (grove_document* document), (document)) \
+    X(void, grove_set_idle_fps, (grove_document* document, double fps), (document, fps)) \
+    X(double, grove_idle_fps, (grove_document* document), (document)) \
+    X(void, grove_set_vsync, (grove_document* document, bool enabled), (document, enabled)) \
+    X(bool, grove_vsync, (grove_document* document), (document)) \
     X(void, grove_log, (const char* message), (message)) \
     X(grove_element*, grove_main_window, (grove_document* document), (document)) \
     X(grove_element*, grove_window_of, (grove_document* document, grove_element* element), (document, element)) \

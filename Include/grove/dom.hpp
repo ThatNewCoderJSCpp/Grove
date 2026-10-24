@@ -444,6 +444,12 @@ public:
     double width() const { return grove_viewport_width(handle()); }
     double height() const { return grove_viewport_height(handle()); }
     void quit() const { grove_quit(handle()); }
+    void set_max_fps(double fps) const { grove_set_max_fps(handle(), fps); }
+    double max_fps() const { return grove_max_fps(handle()); }
+    void set_idle_fps(double fps) const { grove_set_idle_fps(handle(), fps); }
+    double idle_fps() const { return grove_idle_fps(handle()); }
+    void set_vsync(bool enabled) const { grove_set_vsync(handle(), enabled); }
+    bool vsync() const { return grove_vsync(handle()); }
     void log(const std::string& message) const { grove_log(message.c_str()); }
 
 private:

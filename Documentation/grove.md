@@ -18,6 +18,23 @@ Grove documents end in `.grove`. The syntax is HTML's: elements, attributes, tex
 
 `<!grove>` and the `<grove>` root are optional; a file can start straight at `<body>`. `<!grove>` can also say what the document is built for: `<!GROVE type=android package=com.example.recipes label="Recipe Box">` makes it an Android app (see [Android](#android)).
 
+### Frame rate
+
+Grove draws at up to 60 frames a second, and drops to 12 a second once the window has had no input for half a second (timers still fire on time while it's idle). Three `<!grove>` keys change that:
+
+| Key | Value | Default |
+|---|---|---|
+| `max-fps` | the most frames a second; `0` or `unlimited` for no cap | `60` |
+| `idle-fps` | frames a second once the window is idle; `0` to never slow down | `12` |
+| `vsync` | `on` waits for the screen's refresh when presenting; `off` doesn't | `off` |
+
+```html
+<!grove max-fps=unlimited idle-fps=0 vsync=off>
+<!grove max-fps=60 idle-fps=5>
+```
+
+The first is for a game: as many frames as the computer can draw. The second is for a tool like an editor, which only needs to be smooth while someone is using it. With `vsync` on, the screen's refresh rate is a cap of its own, so `unlimited` only goes past it while `vsync` is off. When nothing sets `vsync`, Grove leaves it at Fizmo's default, which is off. Scripts can change these while the app runs with `set_max_fps(fps)`, `set_idle_fps(fps)` and `set_vsync(on)`, and read them with `max_fps()`, `idle_fps()` and `vsync()`; a value set from a script wins over `<!grove>`, which wins over the host program's `RunOptions` (`max_fps`, `idle_fps`, `vsync`). On Android, `idle-fps` has no effect: the app already sleeps until the next input or timer.
+
 `<body>` is the app's window. Its `title`, `width` and `height` attributes, or Bark's `size` and `title` on `body`, set up the window; without them the title comes from `<title>` and the size defaults to 800×600. A document with no `<body>` draws everything in one window. Every `<window>` is a separate window of its own; see [Windows](#windows).
 
 ## Syntax
@@ -500,6 +517,7 @@ Every language gets the same calls. Walnut uses `import module.grove`, C++ uses 
 | `set_timeout(ms, fn)`, `set_interval(ms, fn)`, `clear_timer(id)` | `grove_set_timeout`, ... | timers |
 | `dispatch("my_event")` | `grove_dispatch_event` | fire an event on the document |
 | `time_ms()`, `width()`, `height()`, `quit()`, `log(s)` | `grove_time_ms`, ... | |
+| `set_max_fps(fps)`, `set_idle_fps(fps)`, `set_vsync(on)`, `max_fps()`, `idle_fps()`, `vsync()` | `grove_set_max_fps`, ... | frame rate; see [Frame rate](#frame-rate) |
 
 An `Element` has:
 

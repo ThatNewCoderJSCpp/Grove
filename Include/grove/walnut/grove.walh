@@ -151,6 +151,12 @@ extern "C++" from "<grove/dom.hpp>" {
         function width() const -> short float;
         function height() const -> short float;
         function quit() const -> void;
+        function set_max_fps(short float: fps) const -> void;
+        function max_fps() const -> short float;
+        function set_idle_fps(short float: fps) const -> void;
+        function idle_fps() const -> short float;
+        function set_vsync(bool: enabled) const -> void;
+        function vsync() const -> bool;
         function log(const string&: message) const -> void;
     } end class NativeDocument
 } end extern
@@ -955,6 +961,30 @@ public:
         raw.quit();
     } end function quit
 
+    function set_max_fps(short float: fps) const -> void {
+        raw.set_max_fps(fps);
+    } end function set_max_fps
+
+    function max_fps() const -> short float {
+        return raw.max_fps();
+    } end function max_fps
+
+    function set_idle_fps(short float: fps) const -> void {
+        raw.set_idle_fps(fps);
+    } end function set_idle_fps
+
+    function idle_fps() const -> short float {
+        return raw.idle_fps();
+    } end function idle_fps
+
+    function set_vsync(bool: enabled) const -> void {
+        raw.set_vsync(enabled);
+    } end function set_vsync
+
+    function vsync() const -> bool {
+        return raw.vsync();
+    } end function vsync
+
     function log(const string&: message) const -> void {
         raw.log(message);
     } end function log
@@ -1185,6 +1215,36 @@ function quit() -> void {
     Document: d;
     d.quit();
 } end function quit
+
+function set_max_fps(short float: fps) -> void {
+    Document: d;
+    d.set_max_fps(fps);
+} end function set_max_fps
+
+function max_fps() -> short float {
+    Document: d;
+    return d.max_fps();
+} end function max_fps
+
+function set_idle_fps(short float: fps) -> void {
+    Document: d;
+    d.set_idle_fps(fps);
+} end function set_idle_fps
+
+function idle_fps() -> short float {
+    Document: d;
+    return d.idle_fps();
+} end function idle_fps
+
+function set_vsync(bool: enabled) -> void {
+    Document: d;
+    d.set_vsync(enabled);
+} end function set_vsync
+
+function vsync() -> bool {
+    Document: d;
+    return d.vsync();
+} end function vsync
 
 function log(const string&: message) -> void {
     Document: d;

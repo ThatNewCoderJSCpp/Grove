@@ -7,6 +7,8 @@
 #include "grove/native.hpp"
 #include "grove/pages.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <array>
 #include <cstring>
@@ -526,6 +528,38 @@ double grove_viewport_height(grove_document* document) {
 
 void grove_quit(grove_document* document) {
     if (document) doc_of(document)->events().request_quit();
+}
+
+void grove_set_max_fps(grove_document* document, double fps) {
+    if (!document || std::isnan(fps)) return;
+    doc_of(document)->host().frame_rate.max_fps = std::isfinite(fps) ? std::max(0.0, fps) : 0.0;
+}
+
+double grove_max_fps(grove_document* document) {
+    if (!document) return 0.0;
+    const grove::FrameRate& f = doc_of(document)->host().frame_rate;
+    return f.max_fps ? *f.max_fps : f.current_max_fps;
+}
+
+void grove_set_idle_fps(grove_document* document, double fps) {
+    if (!document || std::isnan(fps)) return;
+    doc_of(document)->host().frame_rate.idle_fps = std::isfinite(fps) ? std::max(0.0, fps) : 0.0;
+}
+
+double grove_idle_fps(grove_document* document) {
+    if (!document) return 0.0;
+    const grove::FrameRate& f = doc_of(document)->host().frame_rate;
+    return f.idle_fps ? *f.idle_fps : f.current_idle_fps;
+}
+
+void grove_set_vsync(grove_document* document, bool enabled) {
+    if (document) doc_of(document)->host().frame_rate.vsync = enabled;
+}
+
+bool grove_vsync(grove_document* document) {
+    if (!document) return true;
+    const grove::FrameRate& f = doc_of(document)->host().frame_rate;
+    return f.vsync ? *f.vsync : f.current_vsync;
 }
 
 void grove_log(const char* message) {

@@ -92,6 +92,12 @@ double|grove_time_ms|grove_document* document
 double|grove_viewport_width|grove_document* document
 double|grove_viewport_height|grove_document* document
 void|grove_quit|grove_document* document
+void|grove_set_max_fps|grove_document* document, double fps
+double|grove_max_fps|grove_document* document
+void|grove_set_idle_fps|grove_document* document, double fps
+double|grove_idle_fps|grove_document* document
+void|grove_set_vsync|grove_document* document, bool enabled
+bool|grove_vsync|grove_document* document
 void|grove_log|const char* message
 grove_element*|grove_main_window|grove_document* document
 grove_element*|grove_window_of|grove_document* document, grove_element* element

@@ -4,6 +4,7 @@
 #include "../project.hpp"
 #include "../script/builder.hpp"
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,6 +23,8 @@ namespace runtime {
 struct RunOptions {
     std::string window_id;
     double max_fps = 60.0;
+    double idle_fps = 12.0;
+    std::optional<bool> vsync;
     bool scripts = true;
     ScriptTools tools;
     const ScriptBuild* prebuilt = nullptr;
