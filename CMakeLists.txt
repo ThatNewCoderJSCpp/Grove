@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.2.3 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.2.4 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -17,8 +17,8 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ${GROVE_DESKTOP_DEFAULT})
 set(GROVE_ANDROID_KIT_DIR "" CACHE PATH "Where grove build looks for the Android runtime kit (one folder per ABI) before its own lib/grove/android")
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.3.2" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.2.3" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.3.3" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.2.5" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
