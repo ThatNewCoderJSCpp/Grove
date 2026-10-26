@@ -65,6 +65,9 @@ The first is for a game: as many frames as the computer can draw. The second is 
 | `input_file` | a button that opens the system's file or folder picker, see [File picker](#file-picker) |
 | `input_select`, `option` | a dropdown, see [Dropdowns](#dropdowns) |
 | `input_element` (or `periodic_table`) | a periodic table to pick elements from, see [Periodic table](#periodic-table) |
+| `input_ion` (or `polyatomic_ion`) | a dropdown of ions, see [Ions](#ions) |
+| `input_acid`, `input_base` | dropdowns of acids and bases, see [Acids and bases](#acids-and-bases) |
+| `input_quantity`, `input_temperature`, `input_pressure`, `input_mass`, `input_length`, `input_time`, ... | a number with a unit dropdown and an optional slider, see [Quantities with units](#quantities-with-units) |
 | `button`, `label` | controls |
 | `img`, `br`, `hr` | images and breaks |
 | `canvas` | pixels the app draws itself, see [Canvas](#canvas) |
@@ -428,9 +431,95 @@ Cells are colored by category, with the symbol and atomic number; under the tabl
 | `cell-size` | the largest a cell may grow, in pixels (52 by default); the table shrinks to fit narrower space |
 | `placeholder` | shown under the table while nothing is picked |
 | `no-info` | leave out the line under the table |
+| `charges` | pick an ion instead of the neutral element, see below |
 | `disabled` | greyed out and not pickable |
 
-Filters combine: an element has to pass every `only-*` that's given and must not match any `disable-*`, unless it's listed in `also`. Changing a filter attribute from a script redraws the table. With the keyboard focused on it, the arrow keys move the choice to the next allowed element. `grove check` warns about symbols, categories, classes and blocks it doesn't know. From C++, `grove/input/element_table.hpp` has `element_cells()`, `element_allowed(node, z)`, `element_selection(node)`, `set_element_selection(document, node, numbers)` and `select_element(document, node, z)`.
+**Ions.** With `charges`, clicking an element that forms more than one common ion (Cu, Fe, Sn, Pb, Hg...) greys its cell and opens a small row of choices next to it (Cu⁺, Cu²⁺); clicking one picks it and closes the row, and clicking the element again closes the row without changing anything. An element with only one common ion (Na⁺, Cl⁻) is picked straight away. The value then carries the charge: `"Cu2+"`, `"Cl-"`, `"Fe3+ O2-"` with `multiple`, and `set_value_string("Fe3+")` works too. The words in `charges` choose what's offered: `positive` (or `cations`), `negative` (or `anions`), or both when neither is given; `all` adds every known oxidation state, not just the common ions; `neutral` adds the uncharged atom as a choice.
+
+```html
+<input_element id="cation" only-classes="metal" charges="positive" value="Fe3+" />
+<input_element id="anion" only-classes="nonmetal" charges="negative" />
+```
+
+Filters combine: an element has to pass every `only-*` that's given and must not match any `disable-*`, unless it's listed in `also`. Changing a filter attribute from a script redraws the table. With the keyboard focused on it, the arrow keys move the choice to the next allowed element. `grove check` warns about symbols, categories, classes and blocks it doesn't know. From C++, `grove/input/element_table.hpp` has `element_cells()`, `element_allowed(node, z)`, `element_selection(node)`, `set_element_selection(document, node, numbers)` and `select_element(document, node, z)`; for ions, `element_charge_options(node, z)`, `element_ion_selection(node)` (pairs of number and charge), `select_element_ion(document, node, z, charge)`, `element_ion_token(z, charge)` (`"Cu2+"`) and `element_ion_label(z, charge)` (`"Cu²⁺"`).
+
+### Ions
+
+`<input_ion>` (also written `<polyatomic_ion>`) is a dropdown that fills itself with Fizmo's polyatomic ions: hydronium, ammonium, mercury(I), carbonate, hydroxide, sulfate and the other 150 or so. Each option shows the formula with sub- and superscripts and the name (`CO₃²⁻   carbonate`). It works like an `<input_select>` in every other way: `value_string()` reads the choice, `set_value_string()` picks one, `input` and `change` fire, and `<option>` children you write yourself come first.
+
+```html
+<input_ion id="cation" charges="positive" monatomic />
+<input_ion id="anion" charges="negative" value="sulfate" />
+<input_ion id="oxy" charges="negative" categories="sulfur nitrogen" values="formula" />
+```
+
+| Attribute | |
+|---|---|
+| `charges` | `both` (default), `positive` or `negative` (`cations` and `anions` work too) |
+| `monatomic` | add the common monatomic ions as well (Na⁺, Fe³⁺, Cl⁻, O²⁻...) |
+| `categories` | only these groups of ions; the group names are the ones Fizmo's `polyatomic_ion_categories()` lists |
+| `values` | what the value is: `name` (default, like `sulfate`) or `formula` (like `SO4^2-`) |
+| `value`, `placeholder` | as for `<input_select>` |
+
+Cations are listed first, then anions, monatomic ions before polyatomic ones. `grove check` warns about a `charges`, `values` or category it doesn't know. From C++, `grove/input/ion_select.hpp` has `ion_choices()`, `ion_choices_for(node)` and `ion_select_options(node)`.
+
+### Acids and bases
+
+`<input_acid>` and `<input_base>` are dropdowns of Fizmo's acids and bases, so a page that needs one can only get a real one. Each option shows the formula, the name and whether it's strong or weak, and how many protons it gives or takes when that's more than one. Acids are strong and weak acids (HCl, H₂SO₄, acetic, phosphoric, citric...), cation acids like ammonium, and amphoteric anions like hydrogen carbonate; bases are the strong hydroxides (NaOH, Ca(OH)₂...), weak bases like ammonia and the amines, and anions like acetate, carbonate and phosphate (as their sodium salts). Strong ones come first. Otherwise they work like `<input_select>`.
+
+```html
+<input_acid id="flask" strength="weak" value="acetic acid" />
+<input_base id="titrant" strength="strong" value="sodium hydroxide" />
+<input_base id="molecular" ions="false" values="formula" />
+```
+
+| Attribute | |
+|---|---|
+| `strength` | `strong`, `weak` or `both` (default); changing it from a script refills the list |
+| `ions` | `true` (default), `false` to leave out the ions, or `only` for just the ions |
+| `values` | `name` (default) or `formula` (ions get a charge, like `CO3^2-`) |
+| `value`, `placeholder` | as for `<input_select>` |
+
+The names are the ones Fizmo's `find_acid_base_species()` looks up, so a script can pass the value straight to the chemistry. `grove check` warns about a `strength`, `ions` or `values` it doesn't know.
+
+### Quantities with units
+
+`<input_quantity dimension="...">` is a number with a unit dropdown and, optionally, a slider that stays in step with it. Changing the unit converts the number (25 °C becomes 77 °F), the slider follows whatever unit is showing, typing a number moves the slider, and dragging the slider changes the number. There are shorter tags for the common ones:
+
+| Tag | Dimension | Default unit |
+|---|---|---|
+| `input_temperature` | temperature | K |
+| `input_pressure` | pressure | atm |
+| `input_mass` | mass | g |
+| `input_length`, `input_distance` | length | m |
+| `input_time` | time | s |
+| `input_volume` | volume | L |
+| `input_energy` | energy | J |
+| `input_amount` | amount | mol |
+| `input_density` | density | g/cm³ |
+| `input_concentration` | concentration | M |
+
+`input_quantity` takes any dimension Fizmo's unit tables know (`molar energy`, `specific volume`, `dipole moment`, `frequency`...), or works one out from `unit`.
+
+```html
+<input_temperature id="t" value="25" unit="C" slider min="-50" max="500" />
+<input_pressure id="p" value="1" units="Pa kPa atm bar torr psi" slider log min="0.001" max="1000" />
+<input_quantity id="e" dimension="molar energy" unit="kJ/mol" value="436" />
+```
+
+| Attribute | |
+|---|---|
+| `value` | the number, in `unit` |
+| `unit` | the unit showing; any symbol, name or alias Fizmo knows (`C`, `degF`, `mmHg`, `A` for ångström) |
+| `units` | the units offered in the dropdown, separated by spaces (default: every unit of the dimension) |
+| `dimension` | for `input_quantity` |
+| `slider` | add a slider |
+| `min`, `max` | the slider's range, in `range-unit` (default: the starting `unit`); it's kept as the same physical range whatever unit is showing |
+| `step` | the slider's step while the starting unit is showing |
+| `log` | a logarithmic slider, for pressures and the like (`min` has to be above 0) |
+| `disabled` | greyed out |
+
+From a script, `value_float()` is the value in SI units (kelvin, pascals, kilograms, metres, seconds...) whatever unit is showing, and `set_value_float()` takes SI too. `value_string()` is the number and unit as shown (`"77 °F"`), and `set_value_string("100 C")` sets both. `get_attribute("value")` and `get_attribute("unit")` read the number and unit separately. `input` and `change` from the number, the dropdown or the slider bubble up to the quantity, so one listener on it hears them all. Inside, the parts are an `input_float.quantity-number`, an `input_select.quantity-unit` and an `input_slider.quantity-slider` (with ids `<id>-number`, `<id>-unit` and `<id>-slider`), so Bark can style them. `grove check` warns about a dimension or unit it doesn't know. From C++, `grove/input/quantity.hpp` has `quantity_si`, `quantity_value`, `quantity_unit`, `set_quantity_si`, `set_quantity_value` and `set_quantity_unit`.
 
 ## File picker
 

@@ -2,6 +2,7 @@
 #include "grove/api/grove_host.h"
 #include "grove/markup/node.hpp"
 #include "grove/input/input.hpp"
+#include "grove/input/quantity.hpp"
 #include "grove/dom_tools.hpp"
 #include "grove/windowing.hpp"
 #include "grove/native.hpp"
@@ -211,9 +212,11 @@ bool grove_input_bool(const grove_element* element, bool* out) {
 
 const char* grove_input_string(const grove_element* element) {
     if (!element) return nullptr;
+    if (grove::is_quantity(*node_of(element))) return keep(grove::quantity_text(*node_of(element)));
     const std::optional<grove::InputKind> kind = grove::input_kind_of(*node_of(element));
     if (!kind || !grove::is_string_input(*kind)) return nullptr;
     if (*kind == grove::InputKind::Code && !node_of(element)->has_attribute("value")) return keep(grove::code_source_text(*node_of(element)));
+    if (*kind == grove::InputKind::Select && !node_of(element)->has_attribute("value")) return keep(grove::input_string(*node_of(element)).value_or(std::string()));
     const grove::Attribute* a = node_of(element)->find_attribute("value");
     return a ? a->value.c_str() : "";
 }

@@ -1,9 +1,11 @@
 #include "grove/input/element_table.hpp"
 
+#include <fizmo/../../Source/Chemistry/nomenclature.hpp>
 #include <fizmo/../../Source/Chemistry/periodic_table.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <sstream>
 
 namespace grove {
@@ -124,6 +126,19 @@ int element_number(std::string_view text) noexcept {
         if (c != ' ') t += c;
     }
     if (t.empty()) return 0;
+    if (std::isalpha(static_cast<unsigned char>(t.front()))) {
+        std::size_t cut = t.size();
+        for (std::size_t i = 1; i < t.size(); ++i) {
+            const char c = t[i];
+            if (std::isdigit(static_cast<unsigned char>(c)) || c == '+' || c == '-' || c == '^') {
+                cut = i;
+                break;
+            }
+        }
+        bool tail_ok = true;
+        for (std::size_t i = cut; i < t.size(); ++i) tail_ok = tail_ok && (std::isdigit(static_cast<unsigned char>(t[i])) || t[i] == '+' || t[i] == '-' || t[i] == '^');
+        if (tail_ok && cut < t.size()) t.resize(cut);
+    }
     bool digits = true;
     for (char c : t) digits = digits && std::isdigit(static_cast<unsigned char>(c));
     if (digits) {
@@ -274,8 +289,138 @@ std::uint32_t element_category_color(const ElementCell& cell, std::string_view s
     return 0xb4befeFFu;
 }
 
+int element_token_charge(std::string_view text) noexcept {
+    std::string digits;
+    int sign = 0;
+    bool started = false;
+    for (char c : text) {
+        if (!started) {
+            if (std::isalpha(static_cast<unsigned char>(c)) || c == ' ') continue;
+            started = true;
+        }
+        if (std::isdigit(static_cast<unsigned char>(c))) digits += c;
+        else if (c == '+') sign = 1;
+        else if (c == '-') sign = -1;
+    }
+    if (sign == 0) return 0;
+    const int n = digits.empty() ? 1 : std::atoi(digits.c_str());
+    return sign * std::max(1, n);
+}
+
+std::string element_ion_token(int number, int charge) {
+    const ElementCell* c = element_cell(number);
+    if (!c) return std::string();
+    if (charge == 0) return c->symbol;
+    const int a = charge < 0 ? -charge : charge;
+    return c->symbol + (a == 1 ? std::string() : std::to_string(a)) + (charge > 0 ? "+" : "-");
+}
+
+std::string element_ion_label(int number, int charge) {
+    const ElementCell* c = element_cell(number);
+    if (!c) return std::string();
+    if (charge == 0) return c->symbol;
+    static const char* const sup[] = { "\xE2\x81\xB0", "\xC2\xB9", "\xC2\xB2", "\xC2\xB3", "\xE2\x81\xB4", "\xE2\x81\xB5", "\xE2\x81\xB6", "\xE2\x81\xB7", "\xE2\x81\xB8", "\xE2\x81\xB9" };
+    const int a = charge < 0 ? -charge : charge;
+    std::string out = c->symbol;
+    if (a > 1) {
+        for (char d : std::to_string(a)) out += sup[d - '0'];
+    }
+    out += charge > 0 ? "\xE2\x81\xBA" : "\xE2\x81\xBB";
+    return out;
+}
+
+bool element_has_charges(const Node& node) {
+    return node.has_attribute("charges") && node.attribute_or("charges", "") != "false";
+}
+
+std::vector<int> element_charge_options(const Node& node, int number) {
+    std::vector<int> out;
+    if (!element_has_charges(node) || !element_cell(number)) return out;
+    const std::vector<std::string> words = words_of(node.attribute_or("charges", ""));
+    const auto has = [&](const char* w) { return std::find(words.begin(), words.end(), w) != words.end(); };
+    const bool positive_only = has("positive") || has("cations");
+    const bool negative_only = has("negative") || has("anions");
+    const bool all = has("all");
+    const auto keep = [&](int q) {
+        if (q == 0) return;
+        if (positive_only && q < 0) return;
+        if (negative_only && q > 0) return;
+        if (std::find(out.begin(), out.end(), q) == out.end()) out.push_back(q);
+    };
+    static const std::vector<chem::IonDescriptor> common = [] {
+        std::vector<chem::IonDescriptor> v = chem::common_cations();
+        const std::vector<chem::IonDescriptor> a = chem::common_anions();
+        v.insert(v.end(), a.begin(), a.end());
+        return v;
+    }();
+    for (const chem::IonDescriptor& d : common) {
+        if (!d.polyatomic && d.element && d.element->atomic_number == number) keep(d.charge);
+    }
+    const chem::Element& e = chem::PeriodicTable::element(number);
+    const bool none_yet = out.empty();
+    for (const auto& s : e.oxidation_states()) {
+        if (all || (none_yet && s.common)) keep(s.state);
+    }
+    std::sort(out.begin(), out.end(), [](int a, int b) {
+        if ((a > 0) != (b > 0)) return a > 0;
+        return std::abs(a) < std::abs(b);
+    });
+    if (has("neutral")) out.insert(out.begin(), 0);
+    return out;
+}
+
+std::vector<std::pair<int, int>> element_ion_selection(const Node& node) {
+    std::vector<std::pair<int, int>> out;
+    const Attribute* a = node.find_attribute("value");
+    if (!a) return out;
+    for (const std::string& w : words_of(a->value)) {
+        const int n = element_number(w);
+        if (n <= 0) continue;
+        bool dup = false;
+        for (const auto& p : out) dup = dup || p.first == n;
+        if (!dup) out.emplace_back(n, element_token_charge(w));
+    }
+    if (!node.has_attribute("multiple") && out.size() > 1) out.resize(1);
+    return out;
+}
+
+bool select_element_ion(Document& document, Node& node, int number, int charge) {
+    if (!element_allowed(node, number)) return false;
+    std::vector<std::pair<int, int>> sel = element_ion_selection(node);
+    if (node.has_attribute("multiple")) {
+        bool replaced = false;
+        for (auto& p : sel) {
+            if (p.first == number) {
+                p.second = charge;
+                replaced = true;
+            }
+        }
+        if (!replaced) sel.emplace_back(number, charge);
+        if (const Attribute* a = node.find_attribute("max-selected")) {
+            const int limit = std::atoi(a->value.c_str());
+            if (limit > 0 && static_cast<int>(sel.size()) > limit) sel.erase(sel.begin());
+        }
+    } else {
+        sel = { { number, charge } };
+    }
+    std::string text;
+    for (const auto& p : sel) {
+        if (!text.empty()) text += ' ';
+        text += element_ion_token(p.first, p.second);
+    }
+    if (node.attribute_or("value", "") == text) return false;
+    node.set_attribute("value", text);
+    document.touch();
+    return true;
+}
+
 std::vector<std::string> element_filter_problems(const Node& node) {
     std::vector<std::string> out;
+    if (element_has_charges(node)) {
+        for (const std::string& w : words_of(node.attribute_or("charges", ""))) {
+            if (w != "positive" && w != "negative" && w != "cations" && w != "anions" && w != "both" && w != "all" && w != "common" && w != "neutral" && w != "true") out.push_back("charges: '" + w + "' should be positive, negative, both, common, all or neutral");
+        }
+    }
     static const char* const symbol_lists[] = { "value", "disable", "only", "also" };
     for (const char* name : symbol_lists) {
         const Attribute* a = node.find_attribute(name);

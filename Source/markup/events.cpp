@@ -1,5 +1,6 @@
 #include "grove/markup/events.hpp"
 #include "grove/markup/node.hpp"
+#include "grove/input/quantity.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -81,8 +82,8 @@ void EventRegistry::call(const Entry& entry, Event& event) {
 }
 
 bool EventRegistry::dispatch(Document& document, Node* target, Event& event) {
-    (void)document;
     const std::string type = normalize_event_type(event.type);
+    if (target && (type == "input" || type == "change")) quantity_event(document, *target, event);
     event.target = target;
 
     std::vector<Node*> path;

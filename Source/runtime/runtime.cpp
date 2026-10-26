@@ -7,6 +7,7 @@
 #include "grove/api/grove_api.h"
 #include "grove/input/input.hpp"
 #include "grove/input/element_table.hpp"
+#include "grove/input/quantity.hpp"
 #include "grove/input/code_buffer.hpp"
 #include "grove/input/code_find.hpp"
 #include "grove/input/keymap.hpp"
@@ -1086,6 +1087,7 @@ public:
             }
         }
         if (m_revision != document().revision()) {
+            expand_quantity_inputs(document());
             m_revision = document().revision();
             m_styles.invalidate();
             apply_zoom();
@@ -4872,6 +4874,28 @@ private:
         }
     };
 
+    struct ChargeChip {
+        int charge = 0;
+        float x = 0.0f;
+        float y = 0.0f;
+        float w = 0.0f;
+        float h = 0.0f;
+    };
+
+    std::vector<ChargeChip> charge_chips(const ElementTableGeometry& g, const ElementCell& c, const std::vector<int>& charges) const {
+        std::vector<ChargeChip> out;
+        if (charges.empty()) return out;
+        const float chip_w = std::round(g.cell * 1.2f);
+        const float pad = std::max(2.0f, std::round(g.gap));
+        const float total = charges.size() * chip_w + (charges.size() - 1) * pad;
+        float start = g.column_x(c.column) + g.cell + g.gap + pad;
+        if (start + total > g.width) start = g.column_x(c.column) - g.gap - pad - total;
+        if (start < 0.0f) start = 0.0f;
+        const float y = g.row_y(c.row);
+        for (std::size_t i = 0; i < charges.size(); ++i) out.push_back(ChargeChip{ charges[i], start + i * (chip_w + pad), y, chip_w, g.cell });
+        return out;
+    }
+
     ElementTableGeometry element_table_geometry(const Node& element, float width) {
         ElementTableGeometry g;
         float limit = 52.0f;
@@ -4921,7 +4945,12 @@ private:
             const std::uint32_t rgba = element_category_color(c, scheme);
             Color fill(static_cast<std::uint8_t>(rgba >> 24), static_cast<std::uint8_t>((rgba >> 16) & 0xFF), static_cast<std::uint8_t>((rgba >> 8) & 0xFF));
             double alpha = allowed ? 0.88 : 0.16;
-            if (c.number == hovered && allowed) fill = mix(fill, Color(255, 255, 255), 0.3f);
+            const bool chips_open = m_charge_node == &element && m_charge_number == c.number;
+            if (chips_open) {
+                fill = Color(120, 120, 132);
+                alpha = 0.55;
+            }
+            if (c.number == hovered && allowed && !chips_open) fill = mix(fill, Color(255, 255, 255), 0.3f);
             push_rect(DrawOp::Kind::Fill, cx, cy, g.cell, g.cell, with_alpha(fill, alpha * fade), 1, std::max(2.0f, g.cell * 0.12f));
             if (picked) push_rect(DrawOp::Kind::Stroke, cx - 1.0f, cy - 1.0f, g.cell + 2.0f, g.cell + 2.0f, accent, std::max(2u, static_cast<unsigned>(g.cell / 14.0f)), std::max(2.0f, g.cell * 0.14f));
             const Color text_ink = allowed ? ink : with_alpha(raw_text_color(element), 0.35 * fade);
@@ -4943,14 +4972,50 @@ private:
                 push_text(show_symbol ? cx + g.cell * 0.08f : cx + (g.cell - tw) / 2.0f, ty, g.cell, number_h, n, num);
             }
         }
+        if (m_charge_node == &element && element_cell(m_charge_number)) {
+            const ElementCell& open = *element_cell(m_charge_number);
+            const std::vector<int> charges = element_charge_options(element, open.number);
+            const std::vector<ChargeChip> chips = charge_chips(g, open, charges);
+            const std::vector<std::pair<int, int>> ions = element_ion_selection(element);
+            if (!chips.empty()) {
+                const float pad = 3.0f;
+                const float bx = x + chips.front().x - pad, by = y + chips.front().y - pad;
+                const float bw = chips.back().x + chips.back().w - chips.front().x + 2 * pad, bh = g.cell + 2 * pad;
+                push_rect(DrawOp::Kind::Fill, bx + 2.0f, by + 3.0f, bw, bh, Color(0, 0, 0, 90), 1, std::max(3.0f, g.cell * 0.16f));
+                push_rect(DrawOp::Kind::Fill, bx, by, bw, bh, with_alpha(Color(36, 36, 52), fade), 1, std::max(3.0f, g.cell * 0.16f));
+                push_rect(DrawOp::Kind::Stroke, bx, by, bw, bh, accent, 1, std::max(3.0f, g.cell * 0.16f));
+                const std::uint32_t rgba = element_category_color(open, scheme);
+                const Color base_fill(static_cast<std::uint8_t>(rgba >> 24), static_cast<std::uint8_t>((rgba >> 16) & 0xFF), static_cast<std::uint8_t>((rgba >> 8) & 0xFF));
+                for (const ChargeChip& chip : chips) {
+                    const float cx = x + chip.x, cy = y + chip.y;
+                    const bool over = m_mouse_x >= cx && m_mouse_x < cx + chip.w && m_mouse_y >= cy && m_mouse_y < cy + chip.h;
+                    bool chosen = false;
+                    for (const auto& ion : ions) chosen = chosen || (ion.first == open.number && ion.second == chip.charge);
+                    const Color chip_fill = over ? mix(base_fill, Color(255, 255, 255), 0.3f) : base_fill;
+                    push_rect(DrawOp::Kind::Fill, cx, cy, chip.w, chip.h, with_alpha(chip_fill, 0.92 * fade), 1, std::max(2.0f, g.cell * 0.12f));
+                    if (chosen) push_rect(DrawOp::Kind::Stroke, cx - 1.0f, cy - 1.0f, chip.w + 2.0f, chip.h + 2.0f, accent, std::max(2u, static_cast<unsigned>(g.cell / 14.0f)), std::max(2.0f, g.cell * 0.14f));
+                    fizmo::text::TextStyle sym = symbol_style;
+                    sym.set_fg_color(ink);
+                    const std::string label = element_ion_label(open.number, chip.charge);
+                    const float tw = text_width(r, label, sym);
+                    push_text(cx + (chip.w - tw) / 2.0f, cy + (chip.h - symbol_h) / 2.0f, chip.w + 20.0f, symbol_h, label, sym);
+                }
+            }
+        }
         const float lh = line_height(r, base);
         std::string info;
-        if (hovered) {
+        if (m_charge_node == &element && element_cell(m_charge_number)) {
+            info = "Pick a charge for " + element_cell(m_charge_number)->name + " (click it again to close)";
+        } else if (hovered) {
             const ElementCell& c = *element_cell(hovered);
             info = std::to_string(c.number) + "  " + c.symbol + "  " + c.name + " \xC2\xB7 " + c.category + " \xC2\xB7 " + format_float(std::round(c.mass * 1000.0) / 1000.0) + " g/mol";
             if (!element_allowed(element, hovered)) info += "  (not available here)";
         } else if (!selected.empty()) {
             info = "Selected: " + element_selection_text(selected);
+            if (element_has_charges(element)) {
+                info = "Selected:";
+                for (const auto& ion : element_ion_selection(element)) info += " " + element_ion_label(ion.first, ion.second);
+            }
         } else {
             info = element.attribute_or("placeholder", "");
         }
@@ -4965,11 +5030,50 @@ private:
 
     void pick_element_at(const Hit& hit, float px, float py) {
         const ElementTableGeometry g{ hit.track_x, hit.track_w, std::round(hit.track_x * 0.35f), hit.w, hit.h };
+        Node& node = mutable_node(*hit.node);
+        if (m_charge_node == hit.node && element_cell(m_charge_number)) {
+            const std::vector<ChargeChip> chips = charge_chips(g, *element_cell(m_charge_number), element_charge_options(node, m_charge_number));
+            for (const ChargeChip& chip : chips) {
+                if (px - hit.x >= chip.x && px - hit.x < chip.x + chip.w && py - hit.y >= chip.y && py - hit.y < chip.y + chip.h) {
+                    const int number = m_charge_number;
+                    m_charge_node = nullptr;
+                    m_charge_number = 0;
+                    if (select_element_ion(document(), node, number, chip.charge)) {
+                        node.mark_changed(false);
+                        fire_value(node, true);
+                    } else {
+                        document().touch();
+                    }
+                    return;
+                }
+            }
+        }
         int row = 0, column = 0;
         if (!g.cell_at(px - hit.x, py - hit.y, row, column)) return;
         const ElementCell* c = element_cell_at(row, column);
         if (!c) return;
-        Node& node = mutable_node(*hit.node);
+        if (element_has_charges(node) && element_allowed(node, c->number)) {
+            if (m_charge_node == hit.node && m_charge_number == c->number) {
+                m_charge_node = nullptr;
+                m_charge_number = 0;
+                document().touch();
+                return;
+            }
+            const std::vector<int> charges = element_charge_options(node, c->number);
+            if (charges.size() > 1) {
+                m_charge_node = hit.node;
+                m_charge_number = c->number;
+                document().touch();
+                return;
+            }
+            m_charge_node = nullptr;
+            m_charge_number = 0;
+            if (select_element_ion(document(), node, c->number, charges.empty() ? 0 : charges.front())) {
+                node.mark_changed(false);
+                fire_value(node, true);
+            }
+            return;
+        }
         if (select_element(document(), node, c->number)) {
             node.mark_changed(false);
             fire_value(node, true);
@@ -5014,7 +5118,8 @@ private:
         const bool hot = m_dragging == &element || (element.has_state(StateHover) && !element.has_attribute("disabled"));
         const float base_thumb = fs * 0.55f;
         const float thumb = hot ? base_thumb * 1.3f : base_thumb;
-        const float w = box_width(style, width);
+        const bool in_quantity = element.has_class("quantity-slider");
+        const float w = in_quantity ? std::max(1.0f, width) : box_width(style, width);
         const float track_x = x + base_thumb;
         const float track_w = std::max(1.0f, w - 2 * base_thumb);
         const InputRange range = input_range(element);
@@ -5033,7 +5138,7 @@ private:
 
         const std::string shown = input_text(element);
         const float avail = width - w - 10;
-        if (avail > 20) push_text(x + w + 10, y + (row - lh) / 2.0f, avail, lh, shown, ts);
+        if (avail > 20 && !in_quantity) push_text(x + w + 10, y + (row - lh) / 2.0f, avail, lh, shown, ts);
         if (!disabled) add_hit(Hit{ &element, InputKind::Slider, x, y, w, row, track_x, track_w });
         add_box(ElementBox{ &element, x, y, w, row });
         y += row;
@@ -8781,6 +8886,8 @@ private:
     std::chrono::steady_clock::time_point m_edit_undo_time;
     const Node* m_edit_view = nullptr;
     const Node* m_dragging = nullptr;
+    const Node* m_charge_node = nullptr;
+    int m_charge_number = 0;
     std::string m_drag_start;
     float m_drag_track_x = 0;
     float m_drag_track_w = 0;

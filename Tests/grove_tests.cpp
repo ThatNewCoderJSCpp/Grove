@@ -6,8 +6,10 @@
 #include "grove/bark_api.hpp"
 #include "grove/input/code_find.hpp"
 #include "grove/input/element_table.hpp"
+#include "grove/input/ion_select.hpp"
 #include "grove/math_input.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1423,6 +1425,121 @@ void test_zoom_and_select() {
     CHECK(grove::element_cells().size() == 118 && grove::element_cell_at(8, 2) && grove::element_cell_at(8, 2)->symbol == "La");
     CHECK(grove::element_number("iron") == 26 && grove::element_number("Fe") == 26 && grove::element_number("118") == 118 && grove::element_number("Qq") == 0);
     CHECK(grove_input_kind_of(reinterpret_cast<const grove_element*>(cov)) == GROVE_INPUT_ELEMENT);
+
+    grove::Document ions = grove::parse_markup(
+        "<body>\n"
+        "  <input_ion id=\"cat\" charges=\"positive\" />\n"
+        "  <input_ion id=\"an\" charges=\"negative\" value=\"sulfate\" />\n"
+        "  <input_ion id=\"mono\" charges=\"positive\" monatomic values=\"formula\" />\n"
+        "  <polyatomic_ion id=\"bad\" charges=\"sideways\" />\n"
+        "</body>\n",
+        "t.grove", d);
+    CHECK(d.ok());
+    grove::Diagnostics ion_checks;
+    grove::check_inputs(ions, ion_checks);
+    CHECK(ion_checks.error_count() == 0 && ion_checks.warning_count() == 1);
+    grove::Node* cat = ions.find_by_id("cat");
+    grove::Node* an = ions.find_by_id("an");
+    CHECK(cat && grove::input_kind_of(*cat) == grove::InputKind::Select && grove::is_ion_select(*cat));
+    bool all_positive = true, has_ammonium = false, has_hydronium = false, has_mercury = false;
+    for (const grove::IonChoice& c : grove::ion_choices_for(*cat)) {
+        all_positive = all_positive && c.charge > 0;
+        has_ammonium = has_ammonium || c.name == "ammonium";
+        has_hydronium = has_hydronium || c.name == "hydronium";
+        has_mercury = has_mercury || c.name == "mercury(I)";
+    }
+    CHECK(all_positive && has_ammonium && has_hydronium && has_mercury);
+    CHECK(cat && !grove::input_string(*cat).value_or("").empty());
+    CHECK(an && grove::input_string(*an).value_or("") == "sulfate" && grove::select_options(*an).size() > 50);
+    CHECK(an && grove::set_input_string(ions, *an, "carbonate") && grove::input_string(*an).value_or("") == "carbonate");
+    grove::Node* mono = ions.find_by_id("mono");
+    CHECK(mono && grove::select_options(*mono).size() > grove::select_options(*cat).size());
+
+    grove::Document acids = grove::parse_markup(
+        "<body>\n"
+        "  <input_acid id=\"sa\" strength=\"strong\" />\n"
+        "  <input_acid id=\"wa\" strength=\"weak\" value=\"acetic acid\" />\n"
+        "  <input_base id=\"wb\" strength=\"weak\" />\n"
+        "  <input_base id=\"mol\" ions=\"false\" values=\"formula\" />\n"
+        "  <input_base id=\"oops\" strength=\"medium\" />\n"
+        "</body>\n",
+        "t.grove", d);
+    CHECK(d.ok());
+    grove::Diagnostics acid_checks;
+    grove::check_inputs(acids, acid_checks);
+    CHECK(acid_checks.error_count() == 0 && acid_checks.warning_count() == 1);
+    grove::Node* sa = acids.find_by_id("sa");
+    grove::Node* wb = acids.find_by_id("wb");
+    CHECK(sa && grove::is_acid_base_select(*sa) && grove::input_kind_of(*sa) == grove::InputKind::Select);
+    bool strong_only = true, has_hcl = false;
+    for (const grove::SelectOption& o : grove::select_options(*sa)) {
+        strong_only = strong_only && o.label.find("(strong") != std::string::npos;
+        has_hcl = has_hcl || o.value == "hydrochloric acid";
+    }
+    CHECK(strong_only && has_hcl);
+    bool has_ammonia = false, has_carbonate = false, has_naoh = false;
+    for (const grove::SelectOption& o : grove::select_options(*wb)) {
+        has_ammonia = has_ammonia || o.value == "ammonia";
+        has_carbonate = has_carbonate || o.value == "carbonate";
+        has_naoh = has_naoh || o.value == "sodium hydroxide";
+    }
+    CHECK(has_ammonia && has_carbonate && !has_naoh);
+    grove::Node* wa = acids.find_by_id("wa");
+    CHECK(wa && grove::input_string(*wa).value_or("") == "acetic acid");
+    grove::Node* mol = acids.find_by_id("mol");
+    bool no_ions = true;
+    for (const grove::SelectOption& o : grove::select_options(*mol)) no_ions = no_ions && o.value.find('^') == std::string::npos;
+    CHECK(mol && no_ions && grove::select_options(*mol).size() > 10);
+
+    grove::Document charged = grove::parse_markup("<body><input_element id=\"m\" charges=\"positive\" /><input_element id=\"x\" charges=\"sideways\" /></body>", "t.grove", d);
+    CHECK(d.ok());
+    grove::Node* m = charged.find_by_id("m");
+    const std::vector<int> cu = m ? grove::element_charge_options(*m, 29) : std::vector<int>{};
+    CHECK(cu.size() >= 2 && cu[0] == 1 && cu[1] == 2);
+    CHECK(m && grove::element_charge_options(*m, 11).size() == 1 && grove::element_charge_options(*m, 11)[0] == 1);
+    CHECK(m && grove::select_element_ion(charged, *m, 29, 2) && grove::input_string(*m).value_or("") == "Cu2+");
+    CHECK(m && grove::element_selection(*m).size() == 1 && grove::element_selection(*m)[0] == 29 && grove::element_ion_selection(*m)[0].second == 2);
+    CHECK(grove::element_ion_token(17, -1) == "Cl-" && grove::element_ion_label(26, 3) == "Fe\xC2\xB3\xE2\x81\xBA" && grove::element_number("Fe3+") == 26 && grove::element_token_charge("O2-") == -2);
+    grove::Diagnostics charge_checks;
+    grove::check_inputs(charged, charge_checks);
+    CHECK(charge_checks.warning_count() == 1);
+
+    grove::Document quantities = grove::parse_markup(
+        "<body>\n"
+        "  <input_temperature id=\"t\" value=\"25\" unit=\"C\" slider min=\"-50\" max=\"500\" />\n"
+        "  <input_pressure id=\"p\" value=\"1\" units=\"Pa kPa atm\" slider log min=\"0.001\" max=\"1000\" />\n"
+        "  <input_quantity id=\"e\" dimension=\"molar energy\" unit=\"kJ/mol\" value=\"436\" />\n"
+        "  <input_quantity id=\"bad\" dimension=\"happiness\" unit=\"smiles\" />\n"
+        "</body>\n",
+        "t.grove", d);
+    CHECK(d.ok());
+    CHECK(grove::expand_quantity_inputs(quantities) == 4);
+    grove::Diagnostics q_checks;
+    grove::check_inputs(quantities, q_checks);
+    CHECK(q_checks.error_count() == 0 && q_checks.warning_count() == 2);
+    grove::Node* t = quantities.find_by_id("t");
+    CHECK(t && grove::is_quantity(*t) && grove::quantity_unit(*t) == "\xC2\xB0" "C");
+    CHECK(t && std::fabs(grove::input_float(*t).value_or(0.0) - 298.15) < 1e-9);
+    CHECK(t && grove::input_string(*t).value_or("") == "25 \xC2\xB0" "C");
+    CHECK(quantities.find_by_id("t-number") && quantities.find_by_id("t-unit") && quantities.find_by_id("t-slider"));
+    CHECK(t && grove::set_quantity_unit(quantities, *t, "F") && grove::input_string(*t).value_or("") == "77 \xC2\xB0" "F");
+    grove::Node* slider = quantities.find_by_id("t-slider");
+    CHECK(slider && slider->attribute_or("value", "") == "77" && slider->attribute_or("max", "") == "932");
+    CHECK(t && grove::set_input_float(quantities, *t, 373.15) && grove::input_string(*t).value_or("") == "212 \xC2\xB0" "F");
+    CHECK(t && grove::set_input_string(quantities, *t, "0 K") && grove::quantity_unit(*t) == "K" && grove::quantity_value(*t).value_or(1.0) == 0.0);
+    grove::Node* number = quantities.find_by_id("t-number");
+    CHECK(number && grove::set_input_float(quantities, *number, 300.0));
+    grove::Event typed;
+    typed.type = "change";
+    CHECK(number && grove::quantity_event(quantities, *number, typed) && grove::quantity_value(*t).value_or(0.0) == 300.0);
+    CHECK(slider && slider->attribute_or("value", "") == "300");
+    grove::Node* pq = quantities.find_by_id("p");
+    CHECK(pq && grove::quantity_units(*pq).size() == 3 && std::fabs(grove::input_float(*pq).value_or(0.0) - 101325.0) < 1e-6);
+    grove::Node* ps = quantities.find_by_id("p-slider");
+    CHECK(ps && ps->attribute_or("min", "") == "-3" && ps->attribute_or("max", "") == "3");
+    grove::Node* e = quantities.find_by_id("e");
+    CHECK(e && std::fabs(grove::input_float(*e).value_or(0.0) - 436000.0) < 1e-6 && !quantities.find_by_id("e-slider"));
+    CHECK(grove::format_float(70.0) == "70" && grove::format_float(1500.0) == "1500" && grove::format_float(0.25) == "0.25" && grove::format_float(1e20) == "1e+20");
 }
 
 void test_keymap() {

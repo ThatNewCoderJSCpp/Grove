@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.2.6 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.2.7 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -17,7 +17,7 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ${GROVE_DESKTOP_DEFAULT})
 set(GROVE_ANDROID_KIT_DIR "" CACHE PATH "Where grove build looks for the Android runtime kit (one folder per ABI) before its own lib/grove/android")
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.3.5" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.3.6" CACHE STRING "Fizmo git tag to fetch")
 set(GROVE_WALNUT_TAG "v0.2.8" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
@@ -108,6 +108,8 @@ add_library(grove_core STATIC
     Source/script/loader.cpp
     Source/input/input.cpp
     Source/input/element_table.cpp
+    Source/input/ion_select.cpp
+    Source/input/quantity.cpp
     Source/input/code_buffer.cpp
     Source/input/code_find.cpp
     Source/input/completion.cpp
@@ -134,8 +136,10 @@ target_include_directories(grove_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/Include"
     "${GROVE_GENERATED_DIR}")
 target_link_libraries(grove_core PUBLIC fizmo::headers ${CMAKE_DL_LIBS})
-if(TARGET fizmo::string)
-    target_link_libraries(grove_core PUBLIC fizmo::string)
+if(TARGET fizmo::string AND TARGET fizmo::chemistry)
+    target_link_libraries(grove_core PUBLIC fizmo::string fizmo::chemistry)
+elseif(TARGET fizmo::string)
+    message(FATAL_ERROR "Grove needs Fizmo's chemistry component for <input_ion> and the unit inputs; use Fizmo ${GROVE_FIZMO_TAG} or newer")
 else()
     target_link_libraries(grove_core PUBLIC fizmo::fizmo)
 endif()

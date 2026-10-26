@@ -1,5 +1,7 @@
 #include "grove/input/input.hpp"
 #include "grove/input/element_table.hpp"
+#include "grove/input/ion_select.hpp"
+#include "grove/input/quantity.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -35,6 +37,10 @@ constexpr KindName k_tags[] = {
     { "input_select",  InputKind::Select },
     { "input_element", InputKind::Element },
     { "periodic_table", InputKind::Element },
+    { "input_ion",     InputKind::Select },
+    { "polyatomic_ion", InputKind::Select },
+    { "input_acid",    InputKind::Select },
+    { "input_base",    InputKind::Select },
     { "checkbox",      InputKind::Bool },
     { "slider",        InputKind::Slider },
     { "color",         InputKind::Color },
@@ -272,7 +278,10 @@ std::optional<double> parse_float(std::string_view text) noexcept {
 
 std::string format_float(double value) {
     char buf[40];
-    for (int precision = 1; precision <= 17; ++precision) {
+    int first = 1;
+    const double mag = std::fabs(value);
+    if (std::isfinite(mag) && mag >= 1.0 && mag < 1e15) first = std::min(17, static_cast<int>(std::floor(std::log10(mag))) + 1);
+    for (int precision = first; precision <= 17; ++precision) {
         std::snprintf(buf, sizeof(buf), "%.*g", precision, value);
         if (std::strtod(buf, nullptr) == value) break;
     }
@@ -604,6 +613,7 @@ std::optional<std::int64_t> input_integer(const Node& node) {
 }
 
 std::optional<double> input_float(const Node& node) {
+    if (is_quantity(node)) return quantity_si(node);
     if (!kind_if(node, { InputKind::Float, InputKind::Slider })) return std::nullopt;
     const InputRange range = input_range(node);
     double value = range.has_min && range.min > 0.0 ? range.min : 0.0;
@@ -613,6 +623,19 @@ std::optional<double> input_float(const Node& node) {
 
 std::vector<SelectOption> select_options(const Node& node) {
     std::vector<SelectOption> out;
+    if (is_ion_select(node) || is_acid_base_select(node)) {
+        for (const auto& child : node.children()) {
+            if (!child->is_element() || child->tag() != "option") continue;
+            SelectOption o;
+            o.label = child->inner_text();
+            o.value = child->has_attribute("value") ? child->attribute_or("value", "") : o.label;
+            if (o.label.empty()) o.label = o.value;
+            o.disabled = child->has_attribute("disabled");
+            out.push_back(std::move(o));
+        }
+        for (SelectOption& o : (is_ion_select(node) ? ion_select_options(node) : acid_base_select_options(node))) out.push_back(std::move(o));
+        return out;
+    }
     for (const auto& child : node.children()) {
         if (!child->is_element() || child->tag() != "option") continue;
         SelectOption o;
@@ -663,9 +686,20 @@ bool set_select_options(Document& document, Node& node, const std::vector<Select
 }
 
 std::optional<std::string> input_string(const Node& node) {
+    if (is_quantity(node)) return quantity_text(node);
     const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select, InputKind::Element });
     if (!kind) return std::nullopt;
-    if (*kind == InputKind::Element) return element_selection_text(element_selection(node));
+    if (*kind == InputKind::Element) {
+        if (element_has_charges(node)) {
+            std::string out;
+            for (const auto& ion : element_ion_selection(node)) {
+                if (!out.empty()) out += ' ';
+                out += element_ion_token(ion.first, ion.second);
+            }
+            return out;
+        }
+        return element_selection_text(element_selection(node));
+    }
     if (*kind == InputKind::Code && !node.has_attribute("value")) return code_source_text(node);
     if (*kind == InputKind::Select && !node.has_attribute("value")) {
         const std::vector<SelectOption> options = select_options(node);
@@ -707,6 +741,7 @@ bool set_input_integer(Document& document, Node& node, std::int64_t value) {
 }
 
 bool set_input_float(Document& document, Node& node, double value) {
+    if (is_quantity(node)) return set_quantity_si(document, node, value);
     if (!kind_if(node, { InputKind::Float, InputKind::Slider })) return false;
     if (!std::isfinite(value)) return false;
     const InputRange range = input_range(node);
@@ -721,6 +756,7 @@ bool set_input_float(Document& document, Node& node, double value) {
 }
 
 bool set_input_string(Document& document, Node& node, std::string value) {
+    if (is_quantity(node)) return set_quantity_text(document, node, value);
     const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select, InputKind::Element });
     if (!kind) return false;
     if (*kind == InputKind::Element) {
@@ -890,6 +926,11 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
 
     document.root().walk([&](const Node& node) {
         if (!node.is_element()) return;
+        if (node.parent() && is_quantity(*node.parent())) return;
+        if (is_quantity(node)) {
+            for (const std::string& problem : quantity_problems(node)) diagnostics.warning(file, node.span(), "<" + node.tag() + (node.id().empty() ? std::string() : " id=\"" + node.id() + "\"") + "> " + problem);
+            return;
+        }
         const bool generic = node.tag() == "input";
         if (generic) {
             const Attribute* type = node.find_attribute("type");
@@ -906,6 +947,7 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
         if (!kind) return;
 
         for (const Attribute& a : node.attributes()) {
+            if (is_ion_select(node) && (a.name == "charges" || a.name == "values" || a.name == "monatomic" || a.name == "categories")) continue;
             if (!allowed_attribute(*kind, a.name, generic)) {
                 diagnostics.warning(file, a.span, "'" + a.name + "' has no meaning on a " + to_string(*kind) + " input");
             }
@@ -937,6 +979,8 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
                 for (const auto& child : node.children()) {
                     if (child->is_element() && child->tag() != "option") diagnostics.warning(file, child->span(), "only <option> elements belong inside <input_select>");
                 }
+                for (const std::string& problem : ion_select_problems(node)) diagnostics.warning(file, node.span(), describe(node) + " " + problem);
+                for (const std::string& problem : acid_base_select_problems(node)) diagnostics.warning(file, node.span(), describe(node) + " " + problem);
                 break;
             }
             case InputKind::Integer:

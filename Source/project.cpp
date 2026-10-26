@@ -2,6 +2,7 @@
 #include "grove/markup/parser.hpp"
 #include "grove/bark/parser.hpp"
 #include "grove/input/input.hpp"
+#include "grove/input/quantity.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -345,6 +346,7 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     apply_declaration(project);
     std::vector<std::string> chain{ std::filesystem::path(path).lexically_normal().generic_string() };
     include_pages(project, project.document.root(), chain);
+    expand_quantity_inputs(project.document);
     check_structure(project);
     project.styles.add(bark::default_stylesheet());
     load_styles(project);

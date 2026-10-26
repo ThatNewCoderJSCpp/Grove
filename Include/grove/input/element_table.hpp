@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace grove {
@@ -40,6 +41,13 @@ bool select_element(Document& document, Node& node, int number);
 bool set_element_selection(Document& document, Node& node, const std::vector<int>& numbers);
 std::uint32_t element_category_color(const ElementCell& cell, std::string_view scheme) noexcept;
 std::vector<std::string> element_filter_problems(const Node& node);
+int element_token_charge(std::string_view text) noexcept;
+std::string element_ion_token(int number, int charge);
+std::string element_ion_label(int number, int charge);
+bool element_has_charges(const Node& node);
+std::vector<int> element_charge_options(const Node& node, int number);
+std::vector<std::pair<int, int>> element_ion_selection(const Node& node);
+bool select_element_ion(Document& document, Node& node, int number, int charge);
 
 } // namespace grove
 
