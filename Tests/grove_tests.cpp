@@ -5,6 +5,7 @@
 #include "grove/bark/actions.hpp"
 #include "grove/bark_api.hpp"
 #include "grove/input/code_find.hpp"
+#include "grove/input/element_table.hpp"
 #include "grove/math_input.hpp"
 
 #include <cstdlib>
@@ -1397,6 +1398,31 @@ void test_zoom_and_select() {
     CHECK(empty && grove::set_select_options(form, *empty, picks) && grove::select_options(*empty).size() == 2);
     CHECK(grove_input_kind_of(reinterpret_cast<const grove_element*>(size)) == GROVE_INPUT_SELECT);
     CHECK(grove::input_kind_from_name("select") == grove::InputKind::Select);
+
+    grove::Document table = grove::parse_markup(
+        "<body>\n"
+        "  <input_element id=\"cov\" only-classes=\"nonmetal metalloid\" also=\"Al\" value=\"O\" />\n"
+        "  <periodic_table id=\"met\" only-classes=\"metal\" disable-groups=\"1 2\" multiple value=\"Cu Zn\" />\n"
+        "  <input_element id=\"bad\" only-categories=\"wizards\" value=\"Xx\" />\n"
+        "</body>\n",
+        "t.grove", d);
+    CHECK(d.ok());
+    grove::Diagnostics table_checks;
+    grove::check_inputs(table, table_checks);
+    CHECK(table_checks.error_count() == 0 && table_checks.warning_count() == 2);
+    grove::Node* cov = table.find_by_id("cov");
+    CHECK(cov && grove::input_kind_of(*cov) == grove::InputKind::Element && grove::input_string(*cov).value_or("") == "O");
+    CHECK(cov && grove::element_allowed(*cov, 6) && grove::element_allowed(*cov, 13) && !grove::element_allowed(*cov, 26));
+    CHECK(cov && grove::select_element(table, *cov, 7) && grove::input_string(*cov).value_or("") == "N");
+    CHECK(cov && !grove::select_element(table, *cov, 26));
+    grove::Node* met = table.find_by_id("met");
+    CHECK(met && grove::element_selection(*met).size() == 2 && !grove::element_allowed(*met, 11) && grove::element_allowed(*met, 26));
+    CHECK(met && grove::select_element(table, *met, 26) && grove::input_string(*met).value_or("") == "Cu Zn Fe");
+    CHECK(met && grove::select_element(table, *met, 29) && grove::input_string(*met).value_or("") == "Zn Fe");
+    CHECK(met && grove::set_input_string(table, *met, "Ni, Co") && grove::input_string(*met).value_or("") == "Ni Co");
+    CHECK(grove::element_cells().size() == 118 && grove::element_cell_at(8, 2) && grove::element_cell_at(8, 2)->symbol == "La");
+    CHECK(grove::element_number("iron") == 26 && grove::element_number("Fe") == 26 && grove::element_number("118") == 118 && grove::element_number("Qq") == 0);
+    CHECK(grove_input_kind_of(reinterpret_cast<const grove_element*>(cov)) == GROVE_INPUT_ELEMENT);
 }
 
 void test_keymap() {

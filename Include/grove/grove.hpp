@@ -13,6 +13,7 @@
 #include "script/script.hpp"
 #include "math/math_block.hpp"
 #include "input/input.hpp"
+#include "input/element_table.hpp"
 #include "input/code_buffer.hpp"
 #include "input/completion.hpp"
 #include "input/keymap.hpp"

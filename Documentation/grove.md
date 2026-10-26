@@ -64,6 +64,7 @@ The first is for a game: as many frames as the computer can draw. The second is 
 | `input_code` | a code editor, see [Code editor](#code-editor) |
 | `input_file` | a button that opens the system's file or folder picker, see [File picker](#file-picker) |
 | `input_select`, `option` | a dropdown, see [Dropdowns](#dropdowns) |
+| `input_element` (or `periodic_table`) | a periodic table to pick elements from, see [Periodic table](#periodic-table) |
 | `button`, `label` | controls |
 | `img`, `br`, `hr` | images and breaks |
 | `canvas` | pixels the app draws itself, see [Canvas](#canvas) |
@@ -157,6 +158,7 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `<input_code>` | `std::string` / `const char*` / `string` | everything; see [Code editor](#code-editor) |
 | `<input_file>` | `std::string` / `const char*` / `string`, the chosen path (several are separated by `\n`) | nothing; clicking opens the system picker |
 | `<input_select>` | `std::string` / `const char*` / `string`, the chosen `<option>`'s value | nothing; clicking opens the list |
+| `<input_element>` | `std::string` / `const char*` / `string`, the chosen element symbols separated by spaces | nothing; clicking picks an element, arrow keys move |
 
 ```html
 <input_integer id="count" value="3" min="0" max="99" />
@@ -393,6 +395,42 @@ Keys: while it's focused, Up and Down choose the previous or next option straigh
 C++ can read the options with `grove::select_options(node)` (value, label and disabled for each), find the chosen one with `grove::select_index(node)`, and replace them all with `grove::set_select_options(document, node, options)`. `grove check` warns about a `value` that isn't one of the options, a dropdown with no options, and anything but `<option>` inside one.
 
 `grove::runtime::font_families(kind)` lists the font names Grove knows (`"monospace"`, `"sans-serif"`, `"serif"`, `"display"`, `"handwriting"`, or `"all"`), which is handy for filling a font dropdown.
+
+### Periodic table
+
+`<input_element>` (also written `<periodic_table>`) draws the periodic table and lets the user pick elements from it. Its value is the chosen symbols, separated by spaces (`"Fe"`, or `"Cu Zn"` with `multiple`), so it reads and writes like a string input: `value_string()`, `set_value_string("Na Cl")` and `grove::input_string()` all work, and picking fires `input` and `change`.
+
+```html
+<input_element id="metal" only-classes="metal metalloid" value="Fe" />
+<input_element id="atoms" only-classes="nonmetal metalloid" also="Al" disable-groups="18" multiple />
+<input_element id="anion" only-groups="15-17" only-periods="2-5" placeholder="Pick a nonmetal" />
+```
+
+Cells are colored by category, with the symbol and atomic number; under the table a line shows the element under the mouse (number, symbol, name, category and molar mass) or what's picked. Elements that the filters rule out are faded and can't be picked.
+
+| Attribute | |
+|---|---|
+| `value` | the chosen elements, by symbol, name or number |
+| `multiple` | clicking toggles elements in and out of the selection instead of replacing it |
+| `max-selected` | with `multiple`, the most that can be picked at once (the oldest is dropped) |
+| `deselect` | clicking the chosen element again (or Escape) clears it |
+| `only`, `disable` | lists of elements that are the only ones allowed, or that are ruled out |
+| `also` | elements that are always allowed, whatever the other filters say (`only-classes="nonmetal" also="Al"`) |
+| `only-classes`, `disable-classes` | `metal`, `metalloid`, `nonmetal` |
+| `only-categories`, `disable-categories` | `alkali-metal`, `alkaline-earth-metal`, `transition-metal`, `post-transition-metal`, `metalloid`, `reactive-nonmetal`, `halogen`, `noble-gas`, `lanthanide`, `actinide` (plurals and spaces are fine) |
+| `only-groups`, `disable-groups` | group numbers or ranges, like `1 2 13-17`; `f` (or `0`) is the f-block |
+| `only-periods`, `disable-periods` | period numbers or ranges, like `2-4` |
+| `only-blocks`, `disable-blocks` | `s`, `p`, `d`, `f` |
+| `max-number`, `min-number` | allow only atomic numbers up to or from this |
+| `only-stable` | rule out elements with no stable isotope (bismuth, thorium and uranium still count) |
+| `colors` | what the colors show: `category` (default), `class`, `block` or `none` |
+| `labels` | `both` (default), `symbol` or `number` |
+| `cell-size` | the largest a cell may grow, in pixels (52 by default); the table shrinks to fit narrower space |
+| `placeholder` | shown under the table while nothing is picked |
+| `no-info` | leave out the line under the table |
+| `disabled` | greyed out and not pickable |
+
+Filters combine: an element has to pass every `only-*` that's given and must not match any `disable-*`, unless it's listed in `also`. Changing a filter attribute from a script redraws the table. With the keyboard focused on it, the arrow keys move the choice to the next allowed element. `grove check` warns about symbols, categories, classes and blocks it doesn't know. From C++, `grove/input/element_table.hpp` has `element_cells()`, `element_allowed(node, z)`, `element_selection(node)`, `set_element_selection(document, node, numbers)` and `select_element(document, node, z)`.
 
 ## File picker
 

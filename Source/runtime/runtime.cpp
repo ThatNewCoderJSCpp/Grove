@@ -6,6 +6,7 @@
 #include "grove/markup/tags.hpp"
 #include "grove/api/grove_api.h"
 #include "grove/input/input.hpp"
+#include "grove/input/element_table.hpp"
 #include "grove/input/code_buffer.hpp"
 #include "grove/input/code_find.hpp"
 #include "grove/input/keymap.hpp"
@@ -2320,6 +2321,10 @@ private:
                 return 220.0f + margins;
             }
             if (*kind == InputKind::Slider) return resolve_length(style, "width", row_width).value_or(220.0f) + 70.0f + margins;
+            if (*kind == InputKind::Element) {
+                if (const auto w = resolve_length(style, "width", row_width)) return *w + margins;
+                return -1.0f;
+            }
             const float size = std::round(static_cast<float>(font_size_of(node)) * 1.05f);
             const bool toggle = *kind == InputKind::Bool && is_switch(node, style.text("appearance"));
             const float box = toggle ? std::round(size * 1.8f) : size;
@@ -4840,6 +4845,166 @@ private:
         y += row;
     }
 
+    struct ElementTableGeometry {
+        float cell = 0.0f;
+        float gap = 0.0f;
+        float spacer = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+
+        float row_y(int row) const noexcept {
+            if (row < 7) return row * (cell + gap);
+            return 7 * (cell + gap) + spacer + (row - 8) * (cell + gap);
+        }
+        float column_x(int column) const noexcept { return column * (cell + gap); }
+        bool cell_at(float px, float py, int& row, int& column) const noexcept {
+            if (px < 0 || py < 0) return false;
+            column = static_cast<int>(px / (cell + gap));
+            if (column >= k_element_table_columns || px - column * (cell + gap) > cell) return false;
+            if (py < 7 * (cell + gap)) {
+                row = static_cast<int>(py / (cell + gap));
+                return py - row * (cell + gap) <= cell;
+            }
+            const float rest = py - 7 * (cell + gap) - spacer;
+            if (rest < 0) return false;
+            row = 8 + static_cast<int>(rest / (cell + gap));
+            return row <= 9 && rest - (row - 8) * (cell + gap) <= cell;
+        }
+    };
+
+    ElementTableGeometry element_table_geometry(const Node& element, float width) {
+        ElementTableGeometry g;
+        float limit = 52.0f;
+        if (const Attribute* a = element.find_attribute("cell-size")) {
+            if (const auto v = parse_float(a->value)) limit = std::max(10.0f, static_cast<float>(*v));
+        }
+        const float gap_ratio = 0.08f;
+        float cell = width / (k_element_table_columns + (k_element_table_columns - 1) * gap_ratio);
+        cell = std::max(10.0f, std::min(cell, limit));
+        g.cell = std::floor(cell);
+        g.gap = std::max(1.0f, std::round(g.cell * gap_ratio));
+        g.spacer = std::round(g.cell * 0.35f);
+        g.width = k_element_table_columns * g.cell + (k_element_table_columns - 1) * g.gap;
+        g.height = 9 * (g.cell + g.gap) - g.gap + g.spacer;
+        return g;
+    }
+
+    void layout_element_table(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width) {
+        const bark::ComputedStyle& style = style_of(element);
+        const float w = resolve_length(style, "width", width).value_or(width);
+        const ElementTableGeometry g = element_table_geometry(element, std::min(w, width));
+        const bool disabled = element.has_attribute("disabled");
+        const double fade = (disabled ? 0.45 : 1.0) * opacity_of(element);
+        const Color accent = with_alpha(accent_color(element), fade);
+        const Color ink = with_alpha(Color(30, 30, 46), fade);
+        const std::string scheme = element.attribute_or("colors", "category");
+        const std::string labels = element.attribute_or("labels", "both");
+        const std::vector<int> selected = element_selection(element);
+        int hovered = 0;
+        if (element.has_state(StateHover)) {
+            int row = 0, column = 0;
+            if (g.cell_at(m_mouse_x - x, m_mouse_y - y, row, column)) {
+                if (const ElementCell* c = element_cell_at(row, column)) hovered = c->number;
+            }
+        }
+        const fizmo::text::TextStyle base = text_style(element);
+        fizmo::text::TextStyle symbol_style(std::max(7.0, g.cell * 0.40), ink);
+        symbol_style.set_bold(true);
+        fizmo::text::TextStyle number_style(std::max(6.0, g.cell * 0.22), with_alpha(ink, 0.8));
+        const float symbol_h = line_height(r, symbol_style);
+        const float number_h = line_height(r, number_style);
+        for (const ElementCell& c : element_cells()) {
+            const float cx = x + g.column_x(c.column);
+            const float cy = y + g.row_y(c.row);
+            const bool allowed = !disabled && element_allowed(element, c.number);
+            const bool picked = std::find(selected.begin(), selected.end(), c.number) != selected.end();
+            const std::uint32_t rgba = element_category_color(c, scheme);
+            Color fill(static_cast<std::uint8_t>(rgba >> 24), static_cast<std::uint8_t>((rgba >> 16) & 0xFF), static_cast<std::uint8_t>((rgba >> 8) & 0xFF));
+            double alpha = allowed ? 0.88 : 0.16;
+            if (c.number == hovered && allowed) fill = mix(fill, Color(255, 255, 255), 0.3f);
+            push_rect(DrawOp::Kind::Fill, cx, cy, g.cell, g.cell, with_alpha(fill, alpha * fade), 1, std::max(2.0f, g.cell * 0.12f));
+            if (picked) push_rect(DrawOp::Kind::Stroke, cx - 1.0f, cy - 1.0f, g.cell + 2.0f, g.cell + 2.0f, accent, std::max(2u, static_cast<unsigned>(g.cell / 14.0f)), std::max(2.0f, g.cell * 0.14f));
+            const Color text_ink = allowed ? ink : with_alpha(raw_text_color(element), 0.35 * fade);
+            fizmo::text::TextStyle sym = symbol_style;
+            sym.set_fg_color(text_ink);
+            const bool show_number = (labels == "both" || labels == "number") && g.cell >= 22.0f;
+            const bool show_symbol = labels != "number";
+            if (show_symbol) {
+                const float tw = text_width(r, c.symbol, sym);
+                const float ty = show_number ? cy + g.cell * 0.30f : cy + (g.cell - symbol_h) / 2.0f;
+                push_text(cx + (g.cell - tw) / 2.0f, ty, g.cell, symbol_h, c.symbol, sym);
+            }
+            if (show_number) {
+                fizmo::text::TextStyle num = number_style;
+                num.set_fg_color(with_alpha(text_ink, 0.8));
+                const std::string n = std::to_string(c.number);
+                const float tw = text_width(r, n, num);
+                const float ty = show_symbol ? cy + g.cell * 0.04f : cy + (g.cell - number_h) / 2.0f;
+                push_text(show_symbol ? cx + g.cell * 0.08f : cx + (g.cell - tw) / 2.0f, ty, g.cell, number_h, n, num);
+            }
+        }
+        const float lh = line_height(r, base);
+        std::string info;
+        if (hovered) {
+            const ElementCell& c = *element_cell(hovered);
+            info = std::to_string(c.number) + "  " + c.symbol + "  " + c.name + " \xC2\xB7 " + c.category + " \xC2\xB7 " + format_float(std::round(c.mass * 1000.0) / 1000.0) + " g/mol";
+            if (!element_allowed(element, hovered)) info += "  (not available here)";
+        } else if (!selected.empty()) {
+            info = "Selected: " + element_selection_text(selected);
+        } else {
+            info = element.attribute_or("placeholder", "");
+        }
+        const float info_y = y + g.height + 4.0f;
+        if (!info.empty() && !element.has_attribute("no-info")) push_text(x, info_y, std::max(width, g.width), lh, info, base);
+        const float total = g.height + (element.has_attribute("no-info") ? 0.0f : lh + 6.0f);
+        if (!disabled) add_hit(Hit{ &element, InputKind::Element, x, y, g.width, g.height, g.cell, g.gap });
+        add_box(ElementBox{ &element, x, y, g.width, total });
+        if (m_focused == &element && !disabled) push_rect(DrawOp::Kind::Stroke, x - 3.0f, y - 3.0f, g.width + 6.0f, g.height + 6.0f, with_alpha(accent, 0.5), 1, 4.0f);
+        y += total;
+    }
+
+    void pick_element_at(const Hit& hit, float px, float py) {
+        const ElementTableGeometry g{ hit.track_x, hit.track_w, std::round(hit.track_x * 0.35f), hit.w, hit.h };
+        int row = 0, column = 0;
+        if (!g.cell_at(px - hit.x, py - hit.y, row, column)) return;
+        const ElementCell* c = element_cell_at(row, column);
+        if (!c) return;
+        Node& node = mutable_node(*hit.node);
+        if (select_element(document(), node, c->number)) {
+            node.mark_changed(false);
+            fire_value(node, true);
+        }
+    }
+
+    void step_element(const Node& node, int dx, int dy) {
+        const std::vector<int> sel = element_selection(node);
+        const ElementCell* from = sel.empty() ? element_cell(1) : element_cell(sel.back());
+        if (!from) return;
+        int row = from->row, column = from->column;
+        for (int tries = 0; tries < 40; ++tries) {
+            column += dx;
+            row += dy;
+            if (row == 7) row += dy;
+            if (column < 0 || column >= k_element_table_columns || row < 0 || row > 9) return;
+            const ElementCell* c = element_cell_at(row, column);
+            if (c && element_allowed(node, c->number)) {
+                Node& mnode = mutable_node(node);
+                std::vector<int> next = sel;
+                if (node.has_attribute("multiple")) {
+                    if (!next.empty()) next.back() = c->number;
+                    else next.push_back(c->number);
+                } else {
+                    next = { c->number };
+                }
+                if (set_element_selection(document(), mnode, next)) {
+                    mnode.mark_changed(false);
+                    fire_value(mnode, true);
+                }
+                return;
+            }
+        }
+    }
+
     void layout_slider(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width) {
         const bark::ComputedStyle& style = style_of(element);
         const fizmo::text::TextStyle ts = text_style(element);
@@ -5701,6 +5866,7 @@ private:
             else if (is_text_input(*kind) && element.tag() == "input_math") layout_math_field(r, element, bx, y, bw);
             else if (is_text_input(*kind)) layout_text_input(r, element, *kind, bx, y, bw);
             else if (*kind == InputKind::Slider) layout_slider(r, element, bx, y, bw);
+            else if (*kind == InputKind::Element) layout_element_table(r, element, bx, y, bw);
             else layout_check(r, element, *kind, bx, y, bw);
             y += margin.bottom;
             if (auto gap = style.length("gap")) y += static_cast<float>(*gap);
@@ -6671,6 +6837,13 @@ private:
                         set_focused(hit.node);
                         open_menu(hit.node);
                         return;
+                    case InputKind::Element:
+                        blur(true);
+                        blur_code();
+                        set_focused(hit.node);
+                        pick_element_at(hit, px, py);
+                        poke();
+                        return;
                     case InputKind::Slider:
                         blur(true);
                         blur_code();
@@ -7285,6 +7458,20 @@ private:
             } else if (key == Key::Enter || key == Key::Space) {
                 choose_option(m_menu.active);
                 close_menu();
+            }
+            return;
+        }
+        if (!m_focus && m_focused && input_kind_of(*m_focused) == InputKind::Element && !is_disabled(m_focused)) {
+            if (key == Key::Left) step_element(*m_focused, -1, 0);
+            else if (key == Key::Right) step_element(*m_focused, 1, 0);
+            else if (key == Key::Up) step_element(*m_focused, 0, -1);
+            else if (key == Key::Down) step_element(*m_focused, 0, 1);
+            else if (key == Key::Escape && m_focused->has_attribute("deselect")) {
+                Node& node = mutable_node(*m_focused);
+                if (set_element_selection(document(), node, {})) {
+                    node.mark_changed(false);
+                    fire_value(node, true);
+                }
             }
             return;
         }

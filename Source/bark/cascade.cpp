@@ -213,6 +213,7 @@ const Stylesheet& default_stylesheet() {
             "input_select { cursor: pointer; }\n"
             "button, input_file, input_bool, input_radio, input_select { user-select: none; }\n"
             "option { display: none; }\n"
+            "input_element, periodic_table { margin: 0 0 8px 0; cursor: pointer; user-select: none; font-size: 12px; }\n"
             "input_code {\n"
             "    height: 300px; margin: 0 0 8px 0; font-family: monospace; font-size: 14px; cursor: text;\n"
             "    background: rgba(0, 0, 0, 25%); border-color: rgba(255, 255, 255, 15%); border-radius: 6px;\n"

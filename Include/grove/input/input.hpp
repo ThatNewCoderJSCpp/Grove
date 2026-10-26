@@ -25,7 +25,8 @@ enum class InputKind {
     Color,
     Code,
     File,
-    Select
+    Select,
+    Element
 };
 
 const char* to_string(InputKind kind) noexcept;

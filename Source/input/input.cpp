@@ -1,4 +1,5 @@
 #include "grove/input/input.hpp"
+#include "grove/input/element_table.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -32,6 +33,8 @@ constexpr KindName k_tags[] = {
     { "input_code",    InputKind::Code },
     { "input_file",    InputKind::File },
     { "input_select",  InputKind::Select },
+    { "input_element", InputKind::Element },
+    { "periodic_table", InputKind::Element },
     { "checkbox",      InputKind::Bool },
     { "slider",        InputKind::Slider },
     { "color",         InputKind::Color },
@@ -56,6 +59,7 @@ constexpr KindName k_type_names[] = {
     { "file",     InputKind::File },
     { "select",   InputKind::Select },
     { "dropdown", InputKind::Select },
+    { "element",  InputKind::Element },
 };
 
 bool is_digit(char c) noexcept { return c >= '0' && c <= '9'; }
@@ -116,6 +120,7 @@ bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
         case InputKind::Code: return name == "value" || name == "placeholder" || name == "name";
         case InputKind::File: return name == "value" || name == "placeholder" || name == "name";
         case InputKind::Select: return name == "value" || name == "placeholder" || name == "name";
+        case InputKind::Element: return name == "value" || name == "name";
     }
     return false;
 }
@@ -134,6 +139,7 @@ const char* to_string(InputKind kind) noexcept {
         case InputKind::Code: return "code";
         case InputKind::File: return "file";
         case InputKind::Select: return "select";
+        case InputKind::Element: return "element";
     }
     return "string";
 }
@@ -150,6 +156,7 @@ const char* input_tag(InputKind kind) noexcept {
         case InputKind::Code: return "input_code";
         case InputKind::File: return "input_file";
         case InputKind::Select: return "input_select";
+        case InputKind::Element: return "input_element";
     }
     return "input_string";
 }
@@ -180,7 +187,7 @@ bool is_text_input(InputKind kind) noexcept {
 }
 
 bool is_string_input(InputKind kind) noexcept {
-    return kind == InputKind::String || kind == InputKind::Code || kind == InputKind::File || kind == InputKind::Select;
+    return kind == InputKind::String || kind == InputKind::Code || kind == InputKind::File || kind == InputKind::Select || kind == InputKind::Element;
 }
 
 std::string code_source_text(const Node& node) {
@@ -656,8 +663,9 @@ bool set_select_options(Document& document, Node& node, const std::vector<Select
 }
 
 std::optional<std::string> input_string(const Node& node) {
-    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select });
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select, InputKind::Element });
     if (!kind) return std::nullopt;
+    if (*kind == InputKind::Element) return element_selection_text(element_selection(node));
     if (*kind == InputKind::Code && !node.has_attribute("value")) return code_source_text(node);
     if (*kind == InputKind::Select && !node.has_attribute("value")) {
         const std::vector<SelectOption> options = select_options(node);
@@ -713,8 +721,23 @@ bool set_input_float(Document& document, Node& node, double value) {
 }
 
 bool set_input_string(Document& document, Node& node, std::string value) {
-    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select });
+    const std::optional<InputKind> kind = kind_if(node, { InputKind::String, InputKind::Code, InputKind::File, InputKind::Select, InputKind::Element });
     if (!kind) return false;
+    if (*kind == InputKind::Element) {
+        std::vector<int> numbers;
+        std::string word;
+        for (std::size_t i = 0; i <= value.size(); ++i) {
+            if (i == value.size() || value[i] == ' ' || value[i] == ',') {
+                if (!word.empty()) numbers.push_back(element_number(word));
+                word.clear();
+            } else {
+                word += value[i];
+            }
+        }
+        numbers.erase(std::remove(numbers.begin(), numbers.end(), 0), numbers.end());
+        set_element_selection(document, node, numbers);
+        return true;
+    }
     if (*kind != InputKind::String) {
         node.set_attribute("value", std::move(value));
         document.touch();
@@ -789,7 +812,8 @@ std::string input_text(const Node& node) {
         case InputKind::String:
         case InputKind::Code:
         case InputKind::File:
-        case InputKind::Select: return *input_string(node);
+        case InputKind::Select:
+        case InputKind::Element: return *input_string(node);
         case InputKind::Color: return format_color(*input_color(node), node.attribute_or("format", "hex"));
         case InputKind::Bool:
         case InputKind::Radio: return *input_bool(node) ? "true" : "false";
@@ -973,6 +997,10 @@ void check_inputs(const Document& document, Diagnostics& diagnostics) {
                 if (mode != "open" && mode != "save" && mode != "folder") {
                     diagnostics.error(file, node.find_attribute("mode")->span, "mode=\"" + mode + "\" should be open, save or folder");
                 }
+                break;
+            }
+            case InputKind::Element: {
+                for (const std::string& problem : element_filter_problems(node)) diagnostics.warning(file, node.span(), describe(node) + " " + problem);
                 break;
             }
             case InputKind::Bool:
