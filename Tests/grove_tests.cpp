@@ -85,6 +85,15 @@ void test_math_input_layout() {
     CHECK(placeholder);
     CHECK(glyph_at(frac, 6)->y > 0.0f && glyph_at(frac, 1)->y < 0.0f);
     CHECK(!frac.lines.empty());
+    const grove::MathInputLayout water = grove::layout_formula_input("2H2O", m);
+    CHECK(glyph_at(water, 0)->y == 0.0f && glyph_at(water, 2)->y > 0.0f && glyph_at(water, 3)->y == 0.0f);
+    CHECK(!glyph_at(water, 1)->italic);
+    const grove::MathInputLayout nitrogen = grove::layout_formula_input("N_2", m);
+    CHECK(!glyph_at(nitrogen, 1)->visible && glyph_at(nitrogen, 2)->y > 0.0f);
+    const grove::MathInputLayout iron = grove::layout_formula_input("Fe^3+", m);
+    CHECK(glyph_at(iron, 3)->y < 0.0f && glyph_at(iron, 4)->y < 0.0f);
+    const grove::MathInputLayout nitrate = grove::layout_formula_input("NO3-", m);
+    CHECK(glyph_at(nitrate, 2)->y > 0.0f && glyph_at(nitrate, 3)->y < 0.0f);
     const grove::MathInputLayout root = grove::layout_math_input("sqrt(x)", m);
     CHECK(root.lines.size() >= 3);
     for (std::size_t k = 0; k < 5; ++k) CHECK(!glyph_at(root, k)->visible);
@@ -376,6 +385,7 @@ void test_inputs() {
         "<input_radio id=\"r1\" name=\"g\" value=\"a\" checked>A</input_radio>"
         "<input_radio id=\"r2\" name=\"g\" value=\"b\">B</input_radio>"
         "<input_slider id=\"sl\" min=\"0\" max=\"1\" step=\"0.25\" />"
+        "<input_slider id=\"sl2\" min=\"0\" max=\"100\" step=\"0.1\" />"
         "<input_color id=\"c\" value=\"#ff8000\" />"
         "<input type=\"integer\" id=\"gi\" value=\"7\" />"
         "</body>",
@@ -413,6 +423,7 @@ void test_inputs() {
     CHECK(grove::set_input_value(doc, s, std::string("abcdef")) && grove::input_string(s) == std::string("abc"));
     CHECK(!grove::set_input_integer(doc, f, 3));
     CHECK(grove::set_input_float(doc, sl, 0.6) && grove::input_float(sl) == 0.5);
+    CHECK(grove::set_input_float(doc, *doc.find_by_id("sl2"), 33.3) && grove::input_text(*doc.find_by_id("sl2")) == "33.3");
     CHECK(grove::step_input(doc, i, -3) && grove::input_integer(i) == std::int64_t(7));
 
     CHECK(grove::radio_choice(doc, "g") == std::string("a"));

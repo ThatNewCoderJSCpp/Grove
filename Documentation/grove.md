@@ -60,7 +60,7 @@ The first is for a game: as many frames as the computer can draw. The second is 
 | `modal` | a dialog drawn on top of the window. See [Pages, tabs and modals](#pages-tabs-and-modals) |
 | `h1`–`h4`, `p` | headings and paragraphs |
 | `text`, `span`, `b`, `i`, `u`, `code`, `link` | inline text |
-| `input_integer`, `input_float`, `input_string`, `input_math`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
+| `input_integer`, `input_float`, `input_string`, `input_math`, `input_formula`, `input_bool`, `input_radio`, `input_slider`, `input_color` | typed inputs, see below |
 | `input_code` | a code editor, see [Code editor](#code-editor) |
 | `input_file` | a button that opens the system's file or folder picker, see [File picker](#file-picker) |
 | `input_select`, `option` | a dropdown, see [Dropdowns](#dropdowns) |
@@ -154,6 +154,7 @@ Each input is its own element, named after the type of value it holds, so the ty
 | `<input_float>` | `double` / `double` / `short float` | digits, one `.`, a leading `-` if allowed |
 | `<input_string>` | `std::string` / `const char*` / `string` | any printable text, up to `maxlength` characters |
 | `<input_math>` | `std::string` / `const char*` / `string` | the same as `input_string`, drawn as math while you type; see [Math input](#math-input) |
+| `<input_formula>` | `std::string` / `const char*` / `string` | the same as `input_string`, drawn as chemical formulas and equations while you type; see [Formula input](#formula-input) |
 | `<input_bool>Label</input_bool>` | `bool` | click to toggle; drawn as a checkbox or a switch |
 | `<input_radio name="g" value="v">Label</input_radio>` | `bool` per option, `string` per group | click to pick; one per `name` group |
 | `<input_slider>` | `double` | click or drag |
@@ -255,14 +256,35 @@ Typing builds the structure for you, the way a graphing calculator does, by addi
 
 | Typed | Text | Caret |
 |---|---|---|
-| `^`, `_` | `^{}`, `_{}` | inside the braces: everything typed stays in the power or subscript until → (or the mouse) takes the caret out |
+| `^`, `_` | `^{}`, `_{}` | inside the braces: everything typed stays in the power or subscript until →, `}`, `,` or `;` (or the mouse) takes the caret out |
+| `{` | `{}` | inside the braces; right after `^` or `_` it does nothing, so `x^{2}` typed the LaTeX way gives the same text as `x^2` |
+| `}` | | steps over the `}` after the caret; one that would close nothing is ignored |
 | `/` | `{numerator}/{}` | in the denominator. The numerator is the term before the caret, back to the nearest `+ - = < > , ; : \|`, space or opening bracket; with nothing before it, the caret goes to an empty numerator |
 | `sqrt`, `cbrt` | `sqrt()`, `cbrt()` | under the radical sign; `)` or → steps out |
 | `(` | `(` | brackets you type are always kept and drawn |
 
-An empty pair of braces is drawn as a small box so you can see where the caret goes. Backspace knows the structure too: right after a hidden `}` it moves the caret inside instead of deleting it; at the start of a power or subscript it removes the `^{` `}` and keeps what was in it (or removes it all when empty); at the start of a numerator or denominator it takes the fraction apart, leaving the numerator followed by the denominator; and at the start of a root it removes the root sign and keeps what's under it.
+An empty pair of braces is drawn as a small box so you can see where the caret goes. Backspace knows the structure too: right after a hidden `}` it moves the caret inside instead of deleting it (a `}` that closes nothing, as pasted text can leave, is deleted); at the start of a power or subscript it removes the `^{` `}` and keeps what was in it (or removes it all when empty); at the start of a numerator or denominator it takes the fraction apart, leaving the numerator followed by the denominator; and at the start of a root it removes the root sign and keeps what's under it.
 
-Every one-line text input (`input_string`, `input_math`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus.
+### Formula input
+
+`<input_formula>` is a text box for chemical formulas and equations, drawn the way they're printed while you type. As with `input_math`, the value is the plain text that was typed, so `value_string()` gives back what a chemistry parser reads:
+
+| Typed | Drawn |
+|---|---|
+| `H2O`, `Ca(OH)2`, `[Cu(NH3)4]2+` | digits right after an element or a closing bracket are subscripts; a number at the start of a formula (`2H2O`) stays full size as its coefficient |
+| `N_2`, `C_{12}H_{22}O_{11}` | `_` makes a subscript too, for when you'd rather say so |
+| `Fe^3+`, `SO4^2-`, `Cu^{2+}`, `Fe^+3`, `Na+`, `Cl-`, `Fe3+`, `NO3-` | a charge, as a superscript. Without `^`, a single digit after a one-element ion is its charge (`Fe3+`), and otherwise the digits stay in the formula (`NO3-`); write `^` when it's ambiguous |
+| `->`, `=>`, `<=>`, `<->` | `→` and `⇌`, with space around them |
+| `CuSO4*5H2O` | `CuSO₄·5H₂O`; the `5` after the dot is a count, not a subscript |
+| `(aq)`, `(s)`, `(l)`, `(g)` | kept as typed after the formula |
+
+Typing `^` or `_` adds hidden braces and puts the caret inside them, as in `input_math`, so `Cu^2+` typed key by key becomes `Cu^{2+}`; → takes the caret back out. Letters are upright, and `/` is just a slash.
+
+```html
+<input_formula id="eq" value="2H2 + O2 -> 2H2O" placeholder="reactants -> products" />
+```
+
+Every one-line text input (`input_string`, `input_math`, `input_formula`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus.
 
 ### Code editor
 

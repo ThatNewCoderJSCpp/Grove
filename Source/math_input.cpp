@@ -147,7 +147,7 @@ ItemPtr make(Kind k) {
 
 class Builder {
 public:
-    Builder(const std::string& text, const MathInputMetrics& m) : m_cps(split(text)), m_m(m) {
+    Builder(const std::string& text, const MathInputMetrics& m, bool chem = false) : m_cps(split(text)), m_m(m), m_chem(chem) {
         m_glyph_of.assign(m_cps.size(), k_none);
         m_caret_override.assign(m_cps.size(), Spot{});
     }
@@ -155,13 +155,17 @@ public:
     MathInputLayout run() {
         std::size_t i = 0;
         ItemPtr top = make(Kind::Seq);
-        while (i < m_cps.size()) {
-            std::vector<ItemPtr> part = parse_seq(i, "");
-            for (ItemPtr& p : part) top->items.push_back(std::move(p));
-            if (i < m_cps.size()) top->items.push_back(glyph(i++));
+        if (m_chem) {
+            chem_items(top->items);
+        } else {
+            while (i < m_cps.size()) {
+                std::vector<ItemPtr> part = parse_seq(i, "");
+                for (ItemPtr& p : part) top->items.push_back(std::move(p));
+                if (i < m_cps.size()) top->items.push_back(glyph(i++));
+            }
+            fraction_pass(top->items);
+            spacing_pass(top->items);
         }
-        fraction_pass(top->items);
-        spacing_pass(top->items);
         measure(*top, 1.0f);
         place(*top, 0.0f, 0.0f, 1.0f);
         for (std::size_t k = 0; k < m_cps.size(); ++k) {
@@ -796,8 +800,217 @@ private:
         if (r.has_upper && r.has_lower) m_out.regions.push_back(r);
     }
 
+
+    bool chem_space(std::size_t i) const { return at(i) == " " || at(i) == "\t"; }
+
+    bool chem_arrow(std::size_t i, std::size_t& length, std::string& shown) const {
+        if (at(i) == "-" && at(i + 1) == ">") { length = 2; shown = "\xE2\x86\x92"; return true; }
+        if (at(i) == "=" && at(i + 1) == ">") { length = 2; shown = "\xE2\x86\x92"; return true; }
+        if (at(i) == "<" && (at(i + 1) == "=" || at(i + 1) == "-") && at(i + 2) == ">") { length = 3; shown = "\xE2\x87\x8C"; return true; }
+        if (at(i) == "\xE2\x86\x92" || at(i) == "\xE2\x87\x8C" || at(i) == "\xE2\x87\x84" || at(i) == "\xE2\x86\x94") { length = 1; shown = at(i); return true; }
+        if (at(i) == "=") { length = 1; shown = "="; return true; }
+        return false;
+    }
+
+    static bool chem_sign(const std::string& c) { return c == "+" || c == "-" || c == "\xE2\x88\x92"; }
+
+    bool chem_charge_end(std::size_t i) const {
+        if (i >= m_cps.size()) return true;
+        const std::string& c = at(i);
+        return chem_space(i) || c == "}" || c == ")" || c == "," || c == ";" || chem_sign(c) || (c == "(" && (at(i + 1) == "a" || at(i + 1) == "s" || at(i + 1) == "l" || at(i + 1) == "g") );
+    }
+
+    std::size_t chem_token_end(std::size_t i) const {
+        int braces = 0;
+        std::size_t j = i;
+        while (j < m_cps.size()) {
+            const std::string& c = at(j);
+            if (c == "{") ++braces;
+            else if (c == "}") braces = std::max(0, braces - 1);
+            if (braces == 0) {
+                if (chem_space(j)) break;
+                std::size_t len = 0;
+                std::string shown;
+                if (j > i && chem_arrow(j, len, shown)) break;
+                if (c == "+" && j > i && at(j - 1) != "^" && !chem_charge_end(j + 1)) break;
+            }
+            ++j;
+        }
+        return j;
+    }
+
+    void chem_glyphs(std::size_t a, std::size_t b, std::vector<ItemPtr>& out) {
+        for (std::size_t k = a; k < b; ++k) out.push_back(glyph(k, chem_sign(at(k)) && at(k) == "-" ? std::string("\xE2\x88\x92") : std::string()));
+    }
+
+    ItemPtr chem_script_operand(std::size_t& i, std::size_t end, bool charge) {
+        if (at(i) == "{") {
+            ItemPtr g = make(Kind::Group);
+            g->hide = true;
+            g->open = i++;
+            std::vector<ItemPtr> inner;
+            while (i < end && at(i) != "}") {
+                inner.push_back(glyph(i, at(i) == "-" ? std::string("\xE2\x88\x92") : std::string()));
+                ++i;
+            }
+            g->inner = seq_of(std::move(inner));
+            if (i < end && at(i) == "}") g->close = i++;
+            return g;
+        }
+        std::vector<ItemPtr> run;
+        while (i < end && (ascii_digit(at(i)) || (charge && chem_sign(at(i))))) {
+            run.push_back(glyph(i, at(i) == "-" ? std::string("\xE2\x88\x92") : std::string()));
+            ++i;
+        }
+        return seq_of(std::move(run));
+    }
+
+    void chem_attach(std::vector<ItemPtr>& items, ItemPtr operand, std::size_t marker, bool sup) {
+        if (items.empty()) {
+            items.push_back(std::move(operand));
+            return;
+        }
+        ItemPtr last = std::move(items.back());
+        items.pop_back();
+        ItemPtr script;
+        if (last->kind == Kind::Script && ((sup && !last->sup) || (!sup && !last->sub && !last->sup))) script = std::move(last);
+        else {
+            script = make(Kind::Script);
+            script->base = std::move(last);
+        }
+        if (sup) {
+            script->sup_marker = marker;
+            script->sup = std::move(operand);
+        } else {
+            script->sub_marker = marker;
+            script->sub = std::move(operand);
+        }
+        items.push_back(std::move(script));
+    }
+
+    std::size_t chem_charge_start(std::size_t a, std::size_t b) const {
+        int depth = 0;
+        for (std::size_t k = b; k-- > a;) {
+            if (at(k) == "}") ++depth;
+            else if (at(k) == "{") --depth;
+            else if (at(k) == "^" && depth == 0) return k;
+        }
+        std::size_t e = b;
+        std::size_t signs = 0;
+        while (e > a && chem_sign(at(e - 1))) {
+            --e;
+            ++signs;
+        }
+        if (signs == 0 || e == a) return k_none;
+        std::size_t d = e;
+        while (d > a && ascii_digit(at(d - 1)) && at(d - 1) != ".") --d;
+        if (d == e || signs > 1) return e;
+        if (d > a && at(d - 1) == "]") return d;
+        int symbols = 0;
+        for (std::size_t k = a; k < d; ++k) symbols += at(k).size() == 1 && std::isupper(static_cast<unsigned char>(at(k)[0])) ? 1 : 0;
+        if (e - d == 1 && symbols == 1) return d;
+        if (e - d >= 2) return e - 1;
+        return e;
+    }
+
+    void chem_formula(std::size_t a, std::size_t b, std::vector<ItemPtr>& out) {
+        std::size_t i = a;
+        while (i < b && (ascii_digit(at(i)) || at(i) == "/")) out.push_back(glyph(i++));
+        std::size_t phase = b;
+        for (const char* tag : { "(aq)", "(s)", "(l)", "(g)", "(sc)", "(cr)" }) {
+            const std::size_t n = std::strlen(tag);
+            if (b - i < n) continue;
+            std::string tail;
+            for (std::size_t k = b - n; k < b; ++k) tail += at(k);
+            if (tail == tag) {
+                phase = b - n;
+                break;
+            }
+        }
+        const std::size_t charge = chem_charge_start(i, phase);
+        const std::size_t body_end = charge == k_none ? phase : charge;
+        std::vector<ItemPtr> items;
+        bool after_dot = false;
+        while (i < body_end) {
+            const std::string c = at(i);
+            if (c == "_") {
+                const std::size_t marker = i++;
+                if (i >= body_end) {
+                    items.push_back(glyph(marker));
+                    break;
+                }
+                chem_attach(items, chem_script_operand(i, body_end, false), marker, false);
+                continue;
+            }
+            if (ascii_digit(c) && c != "." && !items.empty() && !after_dot) {
+                const Item& prev = *items.back();
+                const bool can = (prev.kind == Kind::Glyph && (ascii_letter(prev.shown) || prev.shown == ")" || prev.shown == "]")) || prev.kind == Kind::Group || (prev.kind == Kind::Script && !prev.sub);
+                if (can) {
+                    chem_attach(items, chem_script_operand(i, body_end, false), k_none, false);
+                    continue;
+                }
+            }
+            if (c == "*" || c == "\xC2\xB7" || c == "\xE2\x80\xA2") {
+                items.push_back(glyph(i++, "\xC2\xB7"));
+                after_dot = true;
+                continue;
+            }
+            if (ascii_letter(c) || c == "(" || c == "[" || c == ")" || c == "]") after_dot = false;
+            items.push_back(glyph(i++));
+        }
+        if (charge != k_none) {
+            std::size_t k = charge;
+            if (at(k) == "^") {
+                const std::size_t marker = k++;
+                if (k >= phase) items.push_back(glyph(marker));
+                else chem_attach(items, chem_script_operand(k, phase, true), marker, true);
+                while (k < phase) items.push_back(glyph(k++));
+            } else {
+                std::vector<ItemPtr> run;
+                chem_glyphs(charge, phase, run);
+                chem_attach(items, seq_of(std::move(run)), k_none, true);
+            }
+        }
+        for (ItemPtr& it : items) out.push_back(std::move(it));
+        for (std::size_t k = phase; k < b; ++k) out.push_back(glyph(k));
+    }
+
+    void chem_items(std::vector<ItemPtr>& out) {
+        std::size_t i = 0;
+        while (i < m_cps.size()) {
+            if (chem_space(i)) {
+                out.push_back(glyph(i++));
+                continue;
+            }
+            std::size_t len = 0;
+            std::string shown;
+            if (chem_arrow(i, len, shown)) {
+                std::vector<ItemPtr> parts;
+                parts.push_back(glyph(i, shown));
+                for (std::size_t k = 1; k < len; ++k) parts.push_back(glyph(i + k, std::string(), false));
+                parts.front()->spaced = !(i > 0 && chem_space(i - 1)) || !chem_space(i + len);
+                i += len;
+                ItemPtr s = seq_of(std::move(parts));
+                s->shown = "op";
+                out.push_back(std::move(s));
+                continue;
+            }
+            if (at(i) == "+") {
+                ItemPtr g = glyph(i);
+                g->spaced = !(i > 0 && chem_space(i - 1)) || !chem_space(i + 1);
+                out.push_back(std::move(g));
+                ++i;
+                continue;
+            }
+            const std::size_t end = std::max(i + 1, chem_token_end(i));
+            chem_formula(i, end, out);
+            i = end;
+        }
+    }
+
     std::vector<CodePoint> m_cps;
     const MathInputMetrics& m_m;
+    bool m_chem = false;
     std::vector<std::size_t> m_glyph_of;
     std::vector<Spot> m_caret_override;
     MathInputLayout m_out;
@@ -807,6 +1020,11 @@ private:
 
 MathInputLayout layout_math_input(const std::string& text, const MathInputMetrics& metrics) {
     Builder b(text, metrics);
+    return b.run();
+}
+
+MathInputLayout layout_formula_input(const std::string& text, const MathInputMetrics& metrics) {
+    Builder b(text, metrics, true);
     return b.run();
 }
 

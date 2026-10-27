@@ -3026,11 +3026,13 @@ private:
         y += h;
     }
 
+    static bool rich_text_tag(const std::string& tag) { return tag == "input_math" || tag == "input_formula"; }
+
     bool math_layout_current() const {
-        return m_focus && m_focus->tag() == "input_math" && m_math_layout_text == m_edit && !m_math_layout.carets.empty();
+        return m_focus && rich_text_tag(m_focus->tag()) && m_math_layout_text == m_edit && !m_math_layout.carets.empty();
     }
 
-    MathInputLayout math_field_layout(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& ts) {
+    MathInputLayout math_field_layout(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& ts, bool formula = false) {
         const float lh = line_height(r, ts);
         const double base_size = ts.has_size() ? ts.size() : 16.0;
         MathInputMetrics m;
@@ -3042,7 +3044,7 @@ private:
             t.set_italic(italic);
             return text_width(r, s, t);
         };
-        return layout_math_input(text, m);
+        return formula ? layout_formula_input(text, m) : layout_math_input(text, m);
     }
 
     void layout_math_field(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width) {
@@ -3057,7 +3059,7 @@ private:
         const double fade = (disabled ? 0.45 : 1.0) * opacity_of(element);
         const std::string text = focused ? m_edit : input_text(element);
         const std::size_t caret = focused ? std::min(m_edit_caret, text.size()) : text.size();
-        const MathInputLayout layout = math_field_layout(r, text, ts);
+        const MathInputLayout layout = math_field_layout(r, text, ts, element.tag() == "input_formula");
         if (focused) {
             m_math_layout = layout;
             m_math_layout_text = text;
@@ -3083,6 +3085,11 @@ private:
                 fizmo::text::TextStyle muted = ts;
                 muted.set_fg_color(with_alpha(text_color(element), 0.45));
                 push_text(tx, baseline - layout.base_ascent, tw, lh, fit_text(r, element.attribute_or("placeholder", ""), muted, tw), muted);
+            }
+            if (focused && m_edit_click_x >= 0.0f) {
+                const std::size_t previous = m_edit_caret;
+                m_edit_caret = 0;
+                edit_apply_click(previous);
             }
             if (focused) push_rect(DrawOp::Kind::Fill, tx, baseline - layout.base_ascent + 2, 2, lh - 4, accent_color(element));
             if (!disabled) add_hit(Hit{ &element, InputKind::String, x, y, w, h, 0, 0 });
@@ -5968,7 +5975,7 @@ private:
                 layout_code(r, element, bx, y, bw, forced_h);
                 m_avail_h = saved;
             } else if (*kind == InputKind::Select) layout_select(r, element, bx, y, bw);
-            else if (is_text_input(*kind) && element.tag() == "input_math") layout_math_field(r, element, bx, y, bw);
+            else if (is_text_input(*kind) && rich_text_tag(element.tag())) layout_math_field(r, element, bx, y, bw);
             else if (is_text_input(*kind)) layout_text_input(r, element, *kind, bx, y, bw);
             else if (*kind == InputKind::Slider) layout_slider(r, element, bx, y, bw);
             else if (*kind == InputKind::Element) layout_element_table(r, element, bx, y, bw);
@@ -7056,6 +7063,7 @@ private:
             m_swallow_text = false;
             return;
         }
+        drop_pending_click();
         Event e;
         e.type = "text";
         e.text = text;
@@ -7083,7 +7091,7 @@ private:
             return;
         }
         if (!m_focus) return;
-        if (m_focus->tag() == "input_math" && math_type(text)) return;
+        if (rich_text_tag(m_focus->tag()) && math_type(text)) return;
         edit_insert(text);
         if (m_focus && m_focus->tag() == "input_math") math_after_type(text);
     }
@@ -7120,6 +7128,22 @@ private:
             else if ((c == '(' || c == '{' || c == '[') && --depth == 0) return i - 1;
         }
         return std::string::npos;
+    }
+
+    static std::size_t math_brace_open(const std::string& text, std::size_t close) {
+        int depth = 0;
+        for (std::size_t i = close + 1; i > 0; --i) {
+            const char c = text[i - 1];
+            if (c == '}') ++depth;
+            else if (c == '{' && --depth == 0) return i - 1;
+        }
+        return std::string::npos;
+    }
+
+    static bool math_script_end(const std::string& text, std::size_t caret) {
+        if (caret >= text.size() || text[caret] != '}') return false;
+        const std::size_t open = math_brace_open(text, caret);
+        return open != std::string::npos && open > 0 && open + 1 < caret && (text[open - 1] == '^' || text[open - 1] == '_');
     }
 
     static std::size_t math_matching_brace(const std::string& text, std::size_t open) {
@@ -7172,6 +7196,31 @@ private:
             }
             return false;
         }
+        if (text == "}") {
+            if (caret < m_edit.size() && m_edit[caret] == '}') {
+                m_edit_caret = caret + 1;
+                return true;
+            }
+            int depth = 0;
+            for (std::size_t i = 0; i < caret; ++i) {
+                if (m_edit[i] == '{') ++depth;
+                else if (m_edit[i] == '}' && depth > 0) --depth;
+            }
+            return depth == 0;
+        }
+        if (text == "{") {
+            if (caret >= 2 && caret < m_edit.size() && m_edit[caret - 1] == '{' && m_edit[caret] == '}' && (m_edit[caret - 2] == '^' || m_edit[caret - 2] == '_')) return true;
+            if (!input_accepts(*m_focus, m_edit.substr(0, caret), text)) return false;
+            edit_remember(0);
+            m_edit.insert(caret, "{}");
+            m_edit_caret = caret + 1;
+            math_changed(text);
+            return true;
+        }
+        if ((text == "," || text == ";") && math_script_end(m_edit, caret)) {
+            m_edit_caret = caret + 1;
+            return false;
+        }
         if (text == "^" || text == "_") {
             if (!input_accepts(*m_focus, m_edit.substr(0, caret), text)) return false;
             edit_remember(0);
@@ -7180,7 +7229,7 @@ private:
             math_changed(text);
             return true;
         }
-        if (text == "/") {
+        if (text == "/" && m_focus->tag() == "input_math") {
             if (!input_accepts(*m_focus, m_edit.substr(0, caret), text)) return false;
             edit_remember(0);
             const std::size_t start = math_numerator_start(caret);
@@ -7220,6 +7269,13 @@ private:
         if (caret == 0) return false;
         const char before = m_edit[caret - 1];
         if (before == '}') {
+            if (math_brace_open(m_edit, caret - 1) == std::string::npos) {
+                edit_remember(0);
+                m_edit.erase(caret - 1, 1);
+                m_edit_caret = caret - 1;
+                math_changed("");
+                return true;
+            }
             m_edit_caret = caret - 1;
             return true;
         }
@@ -7274,6 +7330,13 @@ private:
         a = std::min(c, n);
         b = std::max(c, n);
         return true;
+    }
+
+    void drop_pending_click() {
+        if (m_edit_click_x < 0.0f) return;
+        m_edit_click_x = -1.0f;
+        m_edit_click_y = -1.0f;
+        m_edit_click_extend = false;
     }
 
     void edit_apply_click(std::size_t previous) {
@@ -7459,6 +7522,12 @@ private:
 
     void key_down(const fizmo::windows::WindowEvent& e) {
         using fizmo::input::Key;
+        {
+            const Key k = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
+            const bool modifier_only = k == Key::LeftControl || k == Key::RightControl || k == Key::LeftShift || k == Key::RightShift ||
+                                       k == Key::LeftAlt || k == Key::RightAlt || k == Key::LeftMeta || k == Key::RightMeta;
+            if (!modifier_only) drop_pending_click();
+        }
         if (m_context.owner) {
             const Key k = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
             if (k == Key::Escape || k == Key::Tab) close_context_menu(true);
@@ -7697,7 +7766,7 @@ private:
                 if (was_all) {
                     m_edit.clear();
                     m_edit_caret = 0;
-                } else if (key == Key::Backspace && !by_word && m_focus->tag() == "input_math" && math_backspace()) {
+                } else if (key == Key::Backspace && !by_word && rich_text_tag(m_focus->tag()) && math_backspace()) {
                 } else if (key == Key::Backspace && m_edit_caret > 0) {
                     const std::size_t from = by_word ? word_left(m_edit, m_edit_caret) : previous_code_point(m_edit, m_edit_caret);
                     m_edit.erase(from, m_edit_caret - from);

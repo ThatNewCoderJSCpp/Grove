@@ -28,6 +28,7 @@ constexpr KindName k_tags[] = {
     { "input_float",   InputKind::Float },
     { "input_string",  InputKind::String },
     { "input_math",    InputKind::String },
+    { "input_formula", InputKind::String },
     { "input_bool",    InputKind::Bool },
     { "input_radio",   InputKind::Radio },
     { "input_slider",  InputKind::Slider },
@@ -126,7 +127,7 @@ bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
         case InputKind::Code: return name == "value" || name == "placeholder" || name == "name";
         case InputKind::File: return name == "value" || name == "placeholder" || name == "name";
         case InputKind::Select: return name == "value" || name == "placeholder" || name == "name";
-        case InputKind::Element: return name == "value" || name == "name";
+        case InputKind::Element: return name == "value" || name == "name" || name == "placeholder";
     }
     return false;
 }
@@ -749,6 +750,13 @@ bool set_input_float(Document& document, Node& node, double value) {
     if (range.step > 0.0 && input_kind_of(node) == InputKind::Slider) {
         const double base = range.has_min ? range.min : 0.0;
         value = range.clamp(base + std::round((value - base) / range.step) * range.step);
+        const std::string step_text = format_float(range.step);
+        const std::size_t dot = step_text.find('.');
+        if (dot != std::string::npos && step_text.find_first_of("eE") == std::string::npos) {
+            const double scale = std::pow(10.0, static_cast<double>(step_text.size() - dot - 1));
+            const double rounded = std::round(value * scale) / scale;
+            if (std::isfinite(rounded)) value = range.clamp(rounded);
+        }
     }
     node.set_attribute("value", format_float(value));
     document.touch();

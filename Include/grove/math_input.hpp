@@ -68,6 +68,7 @@ struct MathInputLayout {
 };
 
 MathInputLayout layout_math_input(const std::string& text, const MathInputMetrics& metrics);
+MathInputLayout layout_formula_input(const std::string& text, const MathInputMetrics& metrics);
 const MathInputCaret& math_input_caret(const MathInputLayout& layout, std::size_t offset);
 std::size_t math_input_hit(const MathInputLayout& layout, float x, float y);
 std::size_t math_input_left(const MathInputLayout& layout, std::size_t offset);
