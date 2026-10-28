@@ -71,6 +71,16 @@ void test_math_input_layout() {
     CHECK(glyph_at(paren_power, 2)->visible && glyph_at(paren_power, 4)->visible);
     const grove::MathInputLayout brace_power = grove::layout_math_input("y^{4}", m);
     CHECK(!glyph_at(brace_power, 2)->visible && !glyph_at(brace_power, 4)->visible);
+    const grove::MathInputLayout big = grove::layout_math_input("sum_{n=1}^{9}n", m);
+    CHECK(glyph_at(big, 0) && glyph_at(big, 0)->text == "\xE2\x88\x91" && glyph_at(big, 0)->scale > 1.0f && !glyph_at(big, 1)->visible && !glyph_at(big, 2)->visible);
+    CHECK(glyph_at(big, 11)->y < 0.0f && glyph_at(big, 5)->y > 0.0f && std::fabs(glyph_at(big, 11)->x - glyph_at(big, 5)->x) < 12.0f);
+    CHECK(glyph_at(big, 13) && glyph_at(big, 13)->y == 0.0f && glyph_at(big, 13)->x > glyph_at(big, 0)->x + glyph_at(big, 0)->width);
+    const grove::MathInputLayout integral = grove::layout_math_input("int_{0}^{x}t dt", m);
+    CHECK(glyph_at(integral, 0)->text == "\xE2\x88\xAB" && glyph_at(integral, 5)->y > 0.0f && glyph_at(integral, 9)->y < 0.0f);
+    CHECK(std::fabs(glyph_at(integral, 5)->x - glyph_at(integral, 9)->x) < 1.0f && glyph_at(integral, 5)->x < glyph_at(integral, 0)->x + glyph_at(integral, 0)->width);
+    CHECK(grove::layout_math_input("sum(n)", m).glyphs.front().text == "s");
+    const grove::MathInputLayout both = grove::layout_math_input("x_{1}^{}", m);
+    CHECK(grove::math_input_right(both, 4, 8) == 7);
     const grove::MathInputLayout sub = grove::layout_math_input("a_1", m);
     CHECK(glyph_at(sub, 2)->y > 0.0f && !glyph_at(sub, 1)->visible);
     const grove::MathInputLayout frac = grove::layout_math_input("(x+1)/2", m);
@@ -414,12 +424,22 @@ void test_inputs() {
     CHECK(!grove::input_accepts(f, "1.2", "."));
     CHECK(!grove::input_accepts(s, "abc", "d"));
     CHECK(!grove::input_accepts(*doc.find_by_id("c"), "#", "g"));
+    CHECK(grove::input_accepts(f, "1.5", "e") && grove::input_accepts(f, "1.5e", "-") && grove::input_accepts(f, "1.5e-", "3"));
+    CHECK(!grove::input_accepts(f, "", "e") && !grove::input_accepts(f, "1e5", "e") && !grove::input_accepts(f, "1e5", ".") && !grove::input_accepts(f, "1e", "."));
+    CHECK(!grove::input_accepts(f, "1", "-") && !grove::input_accepts(f, "1e-", "-") && grove::input_accepts(f, "2E", "+"));
+    CHECK(!grove::input_accepts(f, "", "e", "5") && grove::input_accepts(f, "2", "e", "5") && !grove::input_accepts(f, "2", ".", "e5.0"));
+    CHECK(grove::input_accepts(i, "3", "e") && grove::input_accepts(i, "3e", "6") && !grove::input_accepts(i, "3e", "."));
+    CHECK(grove::parse_float("1.5e-30") && *grove::parse_float("1.5e-30") == 1.5e-30 && *grove::parse_float("-2E+3") == -2000.0);
+    CHECK(!grove::parse_float("1e") && !grove::parse_float("e5") && !grove::parse_float("1e999") && !grove::parse_float("1e-999") && grove::parse_float("0e-999"));
+    CHECK(grove::parse_integer_number("3e6") == std::int64_t(3000000) && grove::parse_integer_number("-25e-1") == std::nullopt && grove::parse_integer_number("1200e-2") == std::int64_t(12));
+    CHECK(grove::parse_integer_number("1.5e3") == std::int64_t(1500) && !grove::parse_integer_number("9e30") && grove::parse_integer_number("0e5") == std::int64_t(0));
 
     CHECK(grove::commit_input_text(doc, i, "42"));
     CHECK(grove::input_integer(i) == std::int64_t(10));
     CHECK(!grove::commit_input_text(doc, i, ""));
     CHECK(!grove::commit_input_text(doc, i, "99999999999999999999"));
     CHECK(!grove::commit_input_text(doc, f, "1.2.3"));
+    CHECK(grove::commit_input_text(doc, f, "2.5e-3") && grove::input_float(f) && std::fabs(*grove::input_float(f) - 2.5e-3) < 1e-15);
     CHECK(grove::set_input_value(doc, s, std::string("abcdef")) && grove::input_string(s) == std::string("abc"));
     CHECK(!grove::set_input_integer(doc, f, 3));
     CHECK(grove::set_input_float(doc, sl, 0.6) && grove::input_float(sl) == 0.5);
@@ -1405,6 +1425,8 @@ void test_zoom_and_select() {
     CHECK(options.size() == 3 && options[2].value == "Large" && options[0].label == "Small");
     CHECK(size && grove::select_index(*size).value_or(9) == 1);
     CHECK(size && grove::set_input_string(form, *size, "s") && grove::select_index(*size).value_or(9) == 0);
+    CHECK(size && grove::commit_input_text(form, *size, "Medium") && grove::input_string(*size).value_or("") == "m");
+    CHECK(size && grove::commit_input_text(form, *size, "Large") && !grove::commit_input_text(form, *size, "Huge") && grove::input_string(*size).value_or("") == "Large");
     grove::Node* empty = form.find_by_id("empty");
     CHECK(empty && !grove::select_index(*empty) && grove::input_string(*empty).value_or("?").empty());
     const std::vector<grove::SelectOption> picks = { { "a", "A", false }, { "b", "B", false } };

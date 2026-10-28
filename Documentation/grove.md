@@ -150,8 +150,8 @@ Each input is its own element, named after the type of value it holds, so the ty
 
 | Element | Value type (C++ / C / Walnut) | Typing accepts |
 |---|---|---|
-| `<input_integer>` | `std::int64_t` / `int64_t` / `long int` | `0`–`9`, and a leading `-` only if `min` allows negatives |
-| `<input_float>` | `double` / `double` / `short float` | digits, one `.`, a leading `-` if allowed |
+| `<input_integer>` | `std::int64_t` / `int64_t` / `long int` | `0`–`9`, a leading `-` only if `min` allows negatives, and an exponent: `3e6` is 3000000 and `1200e-2` is 12 (one that would leave a fraction, like `25e-1`, isn't accepted) |
+| `<input_float>` | `double` / `double` / `short float` | digits, one `.`, a leading `-` if allowed, and an exponent after at least one digit: `6.02e23`, `1.5E-30`, `2e+3`. The exponent is a whole number with an optional sign; a value too big for a double or one that rounds to zero isn't accepted |
 | `<input_string>` | `std::string` / `const char*` / `string` | any printable text, up to `maxlength` characters |
 | `<input_math>` | `std::string` / `const char*` / `string` | the same as `input_string`, drawn as math while you type; see [Math input](#math-input) |
 | `<input_formula>` | `std::string` / `const char*` / `string` | the same as `input_string`, drawn as chemical formulas and equations while you type; see [Formula input](#formula-input) |
@@ -261,6 +261,7 @@ Typing builds the structure for you, the way a graphing calculator does, by addi
 | `}` | | steps over the `}` after the caret; one that would close nothing is ignored |
 | `/` | `{numerator}/{}` | in the denominator. The numerator is the term before the caret, back to the nearest `+ - = < > , ; : \|`, space or opening bracket; with nothing before it, the caret goes to an empty numerator |
 | `sqrt`, `cbrt` | `sqrt()`, `cbrt()` | under the radical sign; `)` or → steps out |
+| `sum`, `prod`, `int` | `sum_{}^{}`, `prod_{}^{}`, `int_{}^{}` | in the lower bound. They're drawn as ∑, ∏ and ∫ with the bounds right below and above the sign; → moves from the lower bound to the upper one and then out to the body. Backspace right away, while both bounds are empty, turns it back into the word |
 | `(` | `(` | brackets you type are always kept and drawn |
 
 An empty pair of braces is drawn as a small box so you can see where the caret goes. Backspace knows the structure too: right after a hidden `}` it moves the caret inside instead of deleting it (a `}` that closes nothing, as pasted text can leave, is deleted); at the start of a power or subscript it removes the `^{` `}` and keeps what was in it (or removes it all when empty); at the start of a numerator or denominator it takes the fraction apart, leaving the numerator followed by the denominator; and at the start of a root it removes the root sign and keeps what's under it.
@@ -284,7 +285,7 @@ Typing `^` or `_` adds hidden braces and puts the caret inside them, as in `inpu
 <input_formula id="eq" value="2H2 + O2 -> 2H2O" placeholder="reactants -> products" />
 ```
 
-Every one-line text input (`input_string`, `input_math`, `input_formula`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus.
+Every one-line text input (`input_string`, `input_math`, `input_formula`, the number inputs) selects with Shift+arrows, Shift+Home/End or by dragging, replaces the selection when you type, and has Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) to undo and redo while it has focus. Right-clicking any of them opens Cut / Copy / Paste / Select All; the code editor has the same menu, and selects, element pickers and sliders have Copy and Paste for their value (pasting an option's value or label, an element symbol or a number picks it).
 
 ### Code editor
 
@@ -630,7 +631,7 @@ grove::set_canvas_pixels(project.document, *plot, width, height, std::move(rgba)
 <math syntax="brace">fraction{add{"x", 2}, multiply{3, exp{4}}}</math>
 ```
 
-The default `syntax="infix"` is the human-readable form; `syntax="brace"` is the `name{arg, ...}` form. `display="block"` lays it out as display math. `grove math` prints every block in brace form, and math errors show up in `grove check` at their real line and column in the `.grove` file.
+The default `syntax="infix"` is the human-readable form; `syntax="brace"` is the `name{arg, ...}` form. `display="block"` lays it out as display math. Infix math that's wider than its box is broken onto more lines before a top-level `+` or `-`, then between the factors of a long product (the next line starts with ·), with the extra lines indented; a piece that still doesn't fit is drawn smaller. `white-space: nowrap` keeps it on one line. `grove math` prints every block in brace form, and math errors show up in `grove check` at their real line and column in the `.grove` file.
 
 ## Scripts
 

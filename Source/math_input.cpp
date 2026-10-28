@@ -95,7 +95,14 @@ bool fraction_boundary(const std::string& c) {
 
 constexpr std::size_t k_none = std::numeric_limits<std::size_t>::max();
 
-enum class Kind { Glyph, Seq, Group, Script, Fraction, Radical };
+enum class Kind { Glyph, Seq, Group, Script, Fraction, Radical, BigOp };
+
+const char* big_operator_symbol(const std::string& word) {
+    if (word == "sum") return "\xE2\x88\x91";
+    if (word == "prod") return "\xE2\x88\x8F";
+    if (word == "int") return "\xE2\x88\xAB";
+    return nullptr;
+}
 
 struct Box {
     float w = 0.0f;
@@ -135,6 +142,9 @@ struct Item {
     float sub_down = 0.0f;
     float paren_w = 0.0f;
     float root_w = 0.0f;
+    bool integral = false;
+    float drop = 0.0f;
+    bool stacked = false;
 };
 
 using ItemPtr = std::unique_ptr<Item>;
@@ -337,6 +347,18 @@ private:
             while (j < m_cps.size() && ascii_letter(at(j))) word += at(j++);
             const bool call = at(j) == "(";
             if (call && (word == "sqrt" || word == "cbrt" || word == "nthroot")) return parse_radical(i, j, word);
+            if (const char* big = big_operator_symbol(word)) {
+                if (at(j) == "_" || at(j) == "^") {
+                    ItemPtr b = make(Kind::BigOp);
+                    b->cp = i;
+                    b->shown = big;
+                    b->name_first = i;
+                    b->name_last = j - 1;
+                    b->integral = word == "int";
+                    i = j;
+                    return b;
+                }
+            }
             if (word == "gamma" && call) {
                 std::vector<ItemPtr> parts;
                 parts.push_back(glyph(i, "\xCE\x93"));
@@ -512,9 +534,37 @@ private:
                 if (it.inner->items.empty() && it.hide) b.w = std::max(b.w, width("\xE2\x96\xA1", 0.8f * s, false) + 0.1f * em(s));
                 break;
             }
+            case Kind::BigOp: {
+                const float bs = s * (it.integral ? 1.7f : 1.45f);
+                it.drop = 0.3f * em(s) * (it.integral ? 1.0f : 0.7f);
+                b.w = width(it.shown, bs, false) + 0.08f * em(s);
+                b.asc = std::max(m_m.ascent * s, m_m.ascent * bs - it.drop);
+                b.desc = std::max(m_m.descent * s, m_m.descent * bs + it.drop);
+                break;
+            }
             case Kind::Script: {
                 const Box base = measure(*it.base, s);
                 const float ss = std::max(0.42f, s * 0.7f);
+                it.stacked = it.base->kind == Kind::BigOp;
+                if (it.stacked) {
+                    const float gap = 0.08f * em(s);
+                    b = base;
+                    float w = base.w;
+                    if (it.sup) {
+                        const Box sb = measure(*it.sup, ss);
+                        it.sup_up = base.asc + gap + sb.desc;
+                        b.asc = it.sup_up + sb.asc;
+                        w = std::max(w, sb.w);
+                    }
+                    if (it.sub) {
+                        const Box sb = measure(*it.sub, ss);
+                        it.sub_down = base.desc + gap + sb.asc;
+                        b.desc = it.sub_down + sb.desc;
+                        w = std::max(w, sb.w);
+                    }
+                    b.w = w + 0.12f * em(s);
+                    break;
+                }
                 b = base;
                 float extra = 0.0f;
                 if (it.sup) {
@@ -650,6 +700,7 @@ private:
                     const float pw = width("\xE2\x96\xA1", ps, false);
                     decoration("\xE2\x96\xA1", x + 0.5f * (it.box.w - pw), y, ps);
                     cx = x + it.box.w;
+                    if (it.open < m_caret_override.size() && !m_caret_override[it.open].set) m_caret_override[it.open] = Spot{ true, cx, y, s };
                 }
                 if (it.close != k_none) {
                     if (it.hide) {
@@ -663,7 +714,35 @@ private:
                 }
                 break;
             }
+            case Kind::BigOp: {
+                const float bs = s * (it.integral ? 1.7f : 1.45f);
+                put(it.name_first, it.shown, true, false, x, y + it.drop, bs, it.box.w, 0.0f);
+                for (std::size_t k = it.name_first + 1; k <= it.name_last && k != k_none; ++k) put(k, at(k), false, false, x + it.box.w, y, s, 0.0f, 0.0f);
+                break;
+            }
             case Kind::Script: {
+                if (it.stacked) {
+                    const float inner = it.box.w - 0.12f * em(s);
+                    const float ss = std::max(0.42f, s * 0.7f);
+                    place(*it.base, x + 0.5f * (inner - it.base->box.w), y, s);
+                    record_script(it);
+                    if (it.sup) {
+                        const float sx = x + 0.5f * (inner - it.sup->box.w);
+                        put(it.sup_marker, "^", false, false, sx, y - it.sup_up, ss, 0.0f, 0.0f);
+                        if (it.sup_marker < m_caret_override.size()) {
+                            if (it.sub) m_caret_override[it.sup_marker] = Spot{ true, x + 0.5f * (inner - it.sub->box.w) + it.sub->box.w, y + it.sub_down, ss };
+                            else m_caret_override[it.sup_marker] = Spot{ true, x + inner, y, s };
+                        }
+                        place(*it.sup, sx, y - it.sup_up, ss);
+                    }
+                    if (it.sub) {
+                        const float sx = x + 0.5f * (inner - it.sub->box.w);
+                        put(it.sub_marker, "_", false, false, sx, y + it.sub_down, ss, 0.0f, 0.0f);
+                        if (it.sub_marker < m_caret_override.size()) m_caret_override[it.sub_marker] = Spot{ true, x + inner, y, s };
+                        place(*it.sub, sx, y + it.sub_down, ss);
+                    }
+                    break;
+                }
                 place(*it.base, x, y, s);
                 for (std::size_t marker : { it.sup_marker, it.sub_marker }) {
                     if (marker != k_none && marker < m_caret_override.size()) m_caret_override[marker] = Spot{ true, x + it.base->box.w, y, s };
@@ -678,6 +757,10 @@ private:
                 if (it.sub) {
                     put(it.sub_marker, "_", false, false, sx, y + it.sub_down, ss, 0.0f, 0.0f);
                     place(*it.sub, sx, y + it.sub_down, ss);
+                    if (it.sup && it.sub_marker < it.sup_marker && it.sup_marker < m_caret_override.size()) m_caret_override[it.sup_marker] = Spot{ true, sx + it.sub->box.w, y + it.sub_down, ss };
+                }
+                if (it.sup && it.sub && it.sup_marker < it.sub_marker && it.sub_marker < m_caret_override.size()) {
+                    m_caret_override[it.sub_marker] = Spot{ true, sx + it.sup->box.w, y - it.sup_up, ss };
                 }
                 break;
             }

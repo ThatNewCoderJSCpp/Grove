@@ -821,6 +821,10 @@ struct Hit {
 struct MathEntry {
     std::string key;
     fizmo::text::FancyText text;
+    std::vector<fizmo::text::FancyText> lines;
+    std::vector<bool> dots;
+    std::string wrap_key;
+    float indent = 0.0f;
 };
 
 struct ElementBox {
@@ -1245,6 +1249,10 @@ public:
                 if (m_picker.drag != PickerPart::None) picker_drag(px, py);
                 term_mouse_move(px, py);
                 if (m_edit_dragging && m_focus && document().is_attached(*m_focus)) {
+                    if (m_edit_click_x >= 0.0f && !m_edit_click_extend && m_edit_press_x < 0.0f) {
+                        m_edit_press_x = m_edit_click_x;
+                        m_edit_press_y = m_edit_click_y;
+                    }
                     m_edit_click_x = px;
                     m_edit_click_y = py;
                     m_edit_click_extend = true;
@@ -1280,7 +1288,7 @@ public:
                 else {
                     Event ev = pointer_event("mouse_down", px, py, static_cast<int>(e.button));
                     const Node* under = hit_element(px, py);
-                    if (dispatch(under, ev) && e.button == 2) field_menu(under, static_cast<float>(px), static_cast<float>(py));
+                    if (dispatch(under, ev) && e.button == 2 && !field_menu(under, static_cast<float>(px), static_cast<float>(py)) && !code_menu(static_cast<float>(px), static_cast<float>(py))) value_menu(under, static_cast<float>(px), static_cast<float>(py));
                 }
                 break;
             case WindowEventType::MouseRelease:
@@ -2833,6 +2841,30 @@ private:
         y += lh;
     }
 
+    static std::vector<std::string> math_break_pieces(const std::string& source, bool products = false) {
+        std::vector<std::string> pieces;
+        int depth = 0;
+        std::size_t from = 0;
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            const char c = source[i];
+            if (c == '(' || c == '[' || c == '{') ++depth;
+            else if (c == ')' || c == ']' || c == '}') --depth;
+            else if (products && depth == 0 && c == '*' && i > from && i + 1 < source.size()) {
+                std::string piece = source.substr(from, i - from);
+                while (!piece.empty() && piece.back() == ' ') piece.pop_back();
+                pieces.push_back(piece);
+                from = i + 1;
+                while (from < source.size() && source[from] == ' ') ++from;
+            } else if (!products && depth == 0 && c == ' ' && i + 2 < source.size() && source[i + 2] == ' ' && i > from && (source[i + 1] == '+' || source[i + 1] == '-')) {
+                pieces.push_back(source.substr(from, i - from));
+                from = i + 1;
+                ++i;
+            }
+        }
+        pieces.push_back(source.substr(from));
+        return pieces;
+    }
+
     void layout_math(const Node& element, float x, float& y, float width) {
         const bark::ComputedStyle& style = style_of(element);
         const Color color = to_color(style.color("math-color").value_or(style.color("color").value_or(bark::Rgba{ 230, 230, 230, 255 })));
@@ -2840,18 +2872,107 @@ private:
         const std::string source = math_source_of(element);
         const bool display = element.attribute_or("display", "inline") == "block";
         const bool brace = math_syntax_of(element, m_project.path, m_project.diagnostics) == MathSyntax::Brace;
+        const bool wrap = !brace && style.text("white-space").value_or("normal") != "nowrap" && width > 1.0f && width < 1e6f;
         const std::string key = source + '\x1f' + std::to_string(size) + '\x1f' + std::to_string(color.red()) + ',' + std::to_string(color.green()) + ',' + std::to_string(color.blue()) + ',' + std::to_string(color.alpha()) + (display ? "d" : "i") + (brace ? "b" : "x");
         MathEntry& entry = m_math[&element];
-        if (entry.key != key) {
-            fizmo::text::MathRenderOptions options = fizmo::text::detail::simple_math_options(size, color);
+        auto render = [&](const std::string& text, float at_size) {
+            fizmo::text::MathRenderOptions options = fizmo::text::detail::simple_math_options(at_size, color);
             options.brace_syntax = brace;
             options.layout.display = display;
-            entry.text = fizmo::text::make_fancy_math(source, options);
+            return fizmo::text::make_fancy_math(text, options);
+        };
+        if (entry.key != key) {
+            entry.text = render(source, size);
             entry.key = key;
+            entry.wrap_key.clear();
+            entry.lines.clear();
+        }
+        const bool wrapped = wrap && entry.text.width() > width;
+        if (wrapped && entry.wrap_key != std::to_string(static_cast<int>(width))) {
+            entry.wrap_key = std::to_string(static_cast<int>(width));
+            entry.lines.clear();
+            const std::vector<std::string> pieces = math_break_pieces(source);
+            const float indent = std::min(1.5f * size, 0.25f * width);
+            std::vector<std::string> rows;
+            std::string current;
+            for (const std::string& piece : pieces) {
+                if (current.empty()) {
+                    current = piece;
+                    continue;
+                }
+                const std::string joined = current + " " + piece;
+                const float room = rows.empty() ? width : width - indent;
+                if (render(joined, size).width() <= room) {
+                    current = joined;
+                } else {
+                    rows.push_back(current);
+                    current = piece;
+                }
+            }
+            rows.push_back(current);
+            const float dot_w = 0.7f * size;
+            std::vector<std::pair<std::string, bool>> split;
+            for (std::size_t i = 0; i < rows.size(); ++i) {
+                const float room = split.empty() ? width : width - indent;
+                if (render(rows[i], size).width() <= room) {
+                    split.emplace_back(rows[i], false);
+                    continue;
+                }
+                const std::vector<std::string> factors = math_break_pieces(rows[i], true);
+                std::string part;
+                bool continued = false;
+                for (const std::string& f : factors) {
+                    if (part.empty()) {
+                        part = f;
+                        continue;
+                    }
+                    const float part_room = (split.empty() ? width : width - indent) - (continued ? dot_w : 0.0f);
+                    const std::string joined = part + "*" + f;
+                    if (render(joined, size).width() <= part_room) {
+                        part = joined;
+                    } else {
+                        split.emplace_back(part, continued);
+                        part = f;
+                        continued = true;
+                    }
+                }
+                split.emplace_back(part, continued);
+            }
+            entry.dots.clear();
+            for (std::size_t i = 0; i < split.size(); ++i) {
+                const float room = (i == 0 ? width : width - indent) - (split[i].second ? dot_w : 0.0f);
+                fizmo::text::FancyText line = render(split[i].first, size);
+                if (line.width() > room && line.width() > 0.0f) {
+                    const float shrink = std::max(0.55f, room / line.width());
+                    line = render(split[i].first, size * shrink);
+                }
+                entry.lines.push_back(std::move(line));
+                entry.dots.push_back(split[i].second);
+            }
+            entry.indent = split.size() > 1 ? indent : 0.0f;
+        }
+        const std::string align = style.text("text-align").value_or("left");
+        if (wrapped && !entry.lines.empty()) {
+            for (std::size_t i = 0; i < entry.lines.size(); ++i) {
+                const fizmo::text::FancyText& ft = entry.lines[i];
+                float dx = x + (i > 0 ? entry.indent : 0.0f);
+                if (align == "center") dx = x + std::max(0.0f, (width - ft.width()) / 2.0f);
+                else if (align == "right") dx = x + std::max(0.0f, width - ft.width());
+                if (i < entry.dots.size() && entry.dots[i]) {
+                    fizmo::text::TextStyle ts = text_style(element);
+                    ts.set_fg_color(color);
+                    const float lh = 1.3f * size;
+                    push_text(dx, y + 0.5f * (ft.height() - lh), 0.7f * size, lh, "\xC2\xB7", ts);
+                    dx += 0.7f * size;
+                }
+                DrawOp& op = push(DrawOp::Kind::Math, dx, y, 0, 0, Color());
+                op.math = &ft;
+                y += ft.height() + (i + 1 < entry.lines.size() ? 0.15f * size : 0.0f);
+            }
+            return;
         }
         const fizmo::text::FancyText& ft = entry.text;
         float dx = x;
-        const std::string align = style.text("text-align").value_or("left");
         if (align == "center") dx = x + std::max(0.0f, (width - ft.width()) / 2.0f);
         else if (align == "right") dx = x + std::max(0.0f, width - ft.width());
         DrawOp& op = push(DrawOp::Kind::Math, dx, y, 0, 0, Color());
@@ -2965,20 +3086,22 @@ private:
             auto left_pad = [&] { return scroll > 0.5f ? dots_w + 2.0f : 0.0f; };
             auto right_pad = [&] { return full - scroll > tw - left_pad() + 0.5f ? dots_w + 2.0f : 0.0f; };
             if (m_edit_click_x >= 0.0f) {
-                const float local = m_edit_click_x - (tx + left_pad()) + scroll;
-                std::size_t best = 0;
-                float best_d = std::abs(local);
-                for (std::size_t at = 0; at < text.size();) {
-                    at = next_code_point(text, at);
-                    const float d = std::abs(text_width(r, text.substr(0, at), ts) - local);
-                    if (d < best_d) {
-                        best_d = d;
-                        best = at;
+                auto hit_at = [&](float click_x) {
+                    const float local = click_x - (tx + left_pad()) + scroll;
+                    std::size_t best = 0;
+                    float best_d = std::abs(local);
+                    for (std::size_t at = 0; at < text.size();) {
+                        at = next_code_point(text, at);
+                        const float d = std::abs(text_width(r, text.substr(0, at), ts) - local);
+                        if (d < best_d) {
+                            best_d = d;
+                            best = at;
+                        }
                     }
-                }
-                caret = best;
-                const std::size_t previous = m_edit_caret;
-                m_edit_caret = element.has_attribute("masked") ? [&] {
+                    return best;
+                };
+                auto to_edit = [&](std::size_t best) {
+                    if (!element.has_attribute("masked")) return best;
                     std::size_t n = best / 3;
                     std::size_t i = 0;
                     while (n > 0 && i < m_edit.size()) {
@@ -2986,7 +3109,17 @@ private:
                         --n;
                     }
                     return i;
-                }() : best;
+                };
+                if (m_edit_press_x >= 0.0f) {
+                    m_edit_caret = to_edit(hit_at(m_edit_press_x));
+                    m_edit_anchor = m_edit_caret;
+                    m_edit_press_x = -1.0f;
+                    m_edit_click_extend = true;
+                }
+                const std::size_t best = hit_at(m_edit_click_x);
+                caret = best;
+                const std::size_t previous = m_edit_caret;
+                m_edit_caret = to_edit(best);
                 edit_apply_click(previous);
             }
             const float caret_px = text_width(r, text.substr(0, caret), ts);
@@ -3104,6 +3237,12 @@ private:
         }
         float scroll = focused ? m_edit_scroll : 0.0f;
         if (focused && m_edit_click_x >= 0.0f) {
+            if (m_edit_press_x >= 0.0f) {
+                m_edit_caret = math_input_hit(layout, m_edit_press_x - tx + scroll, m_edit_press_y - baseline);
+                m_edit_anchor = m_edit_caret;
+                m_edit_press_x = -1.0f;
+                m_edit_click_extend = true;
+            }
             const std::size_t previous = m_edit_caret;
             m_edit_caret = math_input_hit(layout, m_edit_click_x - tx + scroll, m_edit_click_y - baseline);
             edit_apply_click(previous);
@@ -3334,11 +3473,32 @@ private:
         m_context = ContextMenu{};
         poke();
         if (!document().is_attached(*owner)) return;
+        if (value == "grove:value-copy") {
+            if (platform_ready()) put_text(input_text(*owner));
+            return;
+        }
+        if (value == "grove:value-paste") {
+            if (!platform_ready()) return;
+            Node& node = mutable_node(*owner);
+            if (commit_input_text(document(), node, trim_copy(one_line_paste(get_text())))) {
+                node.mark_changed(false);
+                fire_value(node, true);
+            }
+            return;
+        }
         if (value.rfind("grove:", 0) == 0 && m_focus == owner) {
             if (value == "grove:cut") edit_copy(true);
             else if (value == "grove:copy") edit_copy(false);
             else if (value == "grove:paste") edit_paste();
             else if (value == "grove:select-all") m_edit_all = !m_edit.empty();
+            return;
+        }
+        if (value.rfind("grove:code-", 0) == 0) {
+            focus_code(owner);
+            if (m_code_focus == owner && code_edit_command(owner, value.substr(11))) {
+                m_code[owner].reveal = true;
+                code_changed(owner);
+            }
             return;
         }
         Event e;
@@ -6353,6 +6513,7 @@ private:
         m_edit_caret = 0;
         m_edit_scroll = 0.0f;
         m_edit_click_x = -1.0f;
+        m_edit_press_x = -1.0f;
         m_edit_view = nullptr;
         m_invalid = false;
         m_edit_all = false;
@@ -6970,6 +7131,7 @@ private:
                         if (is_text_input(hit.kind) && hit.kind != InputKind::Color) {
                             const bool extend = (m_mods & ModifierShift) != 0 && m_focus == hit.node;
                             focus(hit.node);
+                            m_edit_press_x = -1.0f;
                             m_edit_click_x = px;
                             m_edit_click_y = py;
                             m_edit_click_extend = extend;
@@ -7242,9 +7404,31 @@ private:
         return false;
     }
 
+    static std::string math_word_before(const std::string& text, std::size_t caret, std::size_t& start) {
+        start = caret;
+        while (start > 0 && std::isalpha(static_cast<unsigned char>(text[start - 1]))) --start;
+        if (start > 0 && (std::isalnum(static_cast<unsigned char>(text[start - 1])) || text[start - 1] == '_' || text[start - 1] == '\\')) return std::string();
+        return text.substr(start, caret - start);
+    }
+
+    static bool math_big_word(const std::string& w) {
+        return w == "sum" || w == "prod" || w == "int";
+    }
+
     void math_after_type(const std::string& text) {
         if (text.empty() || !math_word_char(text.back())) return;
         const std::size_t caret = std::min(m_edit_caret, m_edit.size());
+        {
+            std::size_t start = 0;
+            const std::string word = math_word_before(m_edit, caret, start);
+            const bool free_after = caret >= m_edit.size() || !(std::isalnum(static_cast<unsigned char>(m_edit[caret])) || m_edit[caret] == '_' || m_edit[caret] == '^' || m_edit[caret] == '(');
+            if (math_big_word(word) && free_after && input_accepts(*m_focus, m_edit.substr(0, caret), "_")) {
+                m_edit.insert(caret, "_{}^{}");
+                m_edit_caret = caret + 2;
+                math_changed("_{}^{}");
+                return;
+            }
+        }
         if (math_radical_before(m_edit, caret) == std::string::npos) return;
         if (caret < m_edit.size() && (m_edit[caret] == '(' || math_word_char(m_edit[caret]))) return;
         if (!input_accepts(*m_focus, m_edit.substr(0, caret), "(")) return;
@@ -7268,6 +7452,16 @@ private:
         const std::size_t caret = std::min(m_edit_caret, m_edit.size());
         if (caret == 0) return false;
         const char before = m_edit[caret - 1];
+        if (before == '{' && caret >= 2 && m_edit[caret - 2] == '_' && m_edit.compare(caret, 4, "}^{}") == 0) {
+            std::size_t start = 0;
+            if (math_big_word(math_word_before(m_edit, caret - 2, start))) {
+                edit_remember(0);
+                m_edit.erase(caret - 2, 6);
+                m_edit_caret = caret - 2;
+                math_changed("");
+                return true;
+            }
+        }
         if (before == '}') {
             if (math_brace_open(m_edit, caret - 1) == std::string::npos) {
                 edit_remember(0);
@@ -7333,6 +7527,7 @@ private:
     }
 
     void drop_pending_click() {
+        m_edit_press_x = -1.0f;
         if (m_edit_click_x < 0.0f) return;
         m_edit_click_x = -1.0f;
         m_edit_click_y = -1.0f;
@@ -7413,12 +7608,12 @@ private:
             std::size_t a = 0;
             std::size_t b = 0;
             const std::vector<std::string> pieces = split_code_points(text);
-            if (edit_range(a, b) && !pieces.empty() && input_accepts(*m_focus, m_edit.substr(0, a), pieces.front())) changed = edit_delete_selection();
+            if (edit_range(a, b) && !pieces.empty() && input_accepts(*m_focus, m_edit.substr(0, a), pieces.front(), m_edit.substr(b))) changed = edit_delete_selection();
             edit_clear_selection();
         }
         for (const std::string& cp : split_code_points(text)) {
             m_edit_caret = std::min(m_edit_caret, m_edit.size());
-            if (input_accepts(*m_focus, m_edit.substr(0, m_edit_caret), cp)) {
+            if (input_accepts(*m_focus, m_edit.substr(0, m_edit_caret), cp, m_edit.substr(m_edit_caret))) {
                 m_edit.insert(m_edit_caret, cp);
                 m_edit_caret += cp.size();
                 m_invalid = false;
@@ -7433,6 +7628,13 @@ private:
             input.has_edit_text = true;
             dispatch(m_focus, input);
         }
+    }
+
+    static std::string trim_copy(const std::string& text) {
+        const std::size_t a = text.find_first_not_of(" \t");
+        if (a == std::string::npos) return std::string();
+        const std::size_t b = text.find_last_not_of(" \t");
+        return text.substr(a, b - a + 1);
     }
 
     static std::string one_line_paste(std::string text) {
@@ -7500,6 +7702,86 @@ private:
         items.push_back(MenuItem{ "", "", "", false, true });
         items.push_back(MenuItem{ "grove:select-all", "Select All", shortcut_label("A"), !has_text, false });
         return open_context_menu(mutable_node(*field), items, px, py);
+    }
+
+    bool value_menu(const Node* under, float px, float py) {
+        const Node* field = under;
+        while (field) {
+            const std::optional<InputKind> kind = input_kind_of(*field);
+            if (kind && (*kind == InputKind::Select || *kind == InputKind::Element || *kind == InputKind::Slider)) break;
+            field = field->parent();
+        }
+        if (!field || is_disabled(field) || m_context.owner) return false;
+        std::vector<MenuItem> items;
+        items.push_back(MenuItem{ "grove:value-copy", "Copy", std::string(), !platform_ready() || input_text(*field).empty(), false });
+        items.push_back(MenuItem{ "grove:value-paste", "Paste", std::string(), !platform_ready() || field->has_attribute("readonly"), false });
+        return open_context_menu(mutable_node(*field), items, px, py);
+    }
+
+    bool code_menu(float px, float py) {
+        const Node* node = code_node_at(px, py);
+        if (!node || m_context.owner || is_disabled(node)) return false;
+        focus_code(node);
+        const bool ro = code_read_only(*node);
+        std::vector<MenuItem> items;
+        items.push_back(MenuItem{ "grove:code-cut", "Cut", shortcut_label("X"), ro || !platform_ready(), false });
+        items.push_back(MenuItem{ "grove:code-copy", "Copy", shortcut_label("C"), !platform_ready(), false });
+        items.push_back(MenuItem{ "grove:code-paste", "Paste", shortcut_label("V"), ro || !platform_ready(), false });
+        items.push_back(MenuItem{ "", "", "", false, true });
+        items.push_back(MenuItem{ "grove:code-select-all", "Select All", shortcut_label("A"), false, false });
+        return open_context_menu(mutable_node(*node), items, px, py);
+    }
+
+    bool code_edit_command(const Node* node, const std::string& command) {
+        CodeEditor& ed = m_code[node];
+        CodeBuffer& buf = ed.buffer;
+        const bool ro = code_read_only(*node);
+        if (command == "select-all") {
+            buf.select_all();
+            return false;
+        }
+        if (command == "copy") {
+            if (!platform_ready()) return false;
+            if (buf.has_extra_cursors()) {
+                if (buf.any_selection()) put_text(buf.selected_texts());
+            } else {
+                put_text(buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
+            }
+            return false;
+        }
+        if (command == "cut") {
+            if (!platform_ready() || ro) return false;
+            if (buf.has_extra_cursors()) {
+                if (!buf.any_selection()) return false;
+                put_text(buf.selected_texts());
+                buf.delete_selection();
+                return true;
+            }
+            if (!buf.has_selection()) buf.select_line(buf.caret().line);
+            put_text(buf.selected_text());
+            buf.delete_selection();
+            return true;
+        }
+        if (command == "paste") {
+            if (!platform_ready() || ro) return false;
+            const std::string text = get_text();
+            if (text.empty()) return false;
+            if (buf.has_extra_cursors()) {
+                std::vector<std::string> pieces(1);
+                for (char c : text) {
+                    if (c == '\r') continue;
+                    if (c == '\n') pieces.emplace_back();
+                    else pieces.back() += c;
+                }
+                if (pieces.size() > 1 && pieces.back().empty()) pieces.pop_back();
+                if (pieces.size() == buf.cursor_count()) buf.insert_each(pieces);
+                else buf.insert(text);
+            } else {
+                buf.insert(text);
+            }
+            return true;
+        }
+        return false;
     }
 
     void focus_next(int direction) {
@@ -8754,50 +9036,13 @@ private:
                 break;
             case Key::A: if (ctrl) buf.select_all(); break;
             case Key::C:
-                if (ctrl && platform_ready()) {
-                    if (buf.has_extra_cursors()) {
-                        if (buf.any_selection()) put_text(buf.selected_texts());
-                    } else {
-                        put_text(buf.has_selection() ? buf.selected_text() : buf.line(buf.caret().line) + "\n");
-                    }
-                }
+                if (ctrl) code_edit_command(node, "copy");
                 break;
             case Key::X:
-                if (ctrl && platform_ready() && !ro) {
-                    if (buf.has_extra_cursors()) {
-                        if (buf.any_selection()) {
-                            put_text(buf.selected_texts());
-                            buf.delete_selection();
-                            edited = true;
-                        }
-                        break;
-                    }
-                    if (!buf.has_selection()) buf.select_line(buf.caret().line);
-                    put_text(buf.selected_text());
-                    buf.delete_selection();
-                    edited = true;
-                }
+                if (ctrl) edited = code_edit_command(node, "cut");
                 break;
             case Key::V:
-                if (ctrl && platform_ready() && !ro) {
-                    const std::string text = get_text();
-                    if (!text.empty()) {
-                        if (buf.has_extra_cursors()) {
-                            std::vector<std::string> pieces(1);
-                            for (char c : text) {
-                                if (c == '\r') continue;
-                                if (c == '\n') pieces.emplace_back();
-                                else pieces.back() += c;
-                            }
-                            if (pieces.size() > 1 && pieces.back().empty()) pieces.pop_back();
-                            if (pieces.size() == buf.cursor_count()) buf.insert_each(pieces);
-                            else buf.insert(text);
-                        } else {
-                            buf.insert(text);
-                        }
-                        edited = true;
-                    }
-                }
+                if (ctrl) edited = code_edit_command(node, "paste");
                 break;
             case Key::Slash:
                 if (ctrl && !ro) {
@@ -8946,6 +9191,8 @@ private:
     std::string m_math_layout_text;
     float m_edit_click_x = -1.0f;
     float m_edit_click_y = -1.0f;
+    float m_edit_press_x = -1.0f;
+    float m_edit_press_y = -1.0f;
     bool m_edit_click_extend = false;
     bool m_edit_dragging = false;
     std::size_t m_edit_anchor = std::string::npos;

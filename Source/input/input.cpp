@@ -253,6 +253,87 @@ std::optional<std::int64_t> parse_integer(std::string_view text) noexcept {
     return static_cast<std::int64_t>(magnitude);
 }
 
+bool partial_number(std::string_view text, bool negative_ok, bool integer) noexcept {
+    if (text.size() > 40) return false;
+    std::size_t i = 0;
+    if (i < text.size() && text[i] == '-') {
+        if (!negative_ok) return false;
+        ++i;
+    }
+    std::size_t digits = 0;
+    bool point = false;
+    while (i < text.size() && (is_digit(text[i]) || text[i] == '.')) {
+        if (text[i] == '.') {
+            if (point || integer) return false;
+            point = true;
+        } else {
+            ++digits;
+        }
+        ++i;
+    }
+    if (i == text.size()) return true;
+    if (text[i] != 'e' && text[i] != 'E') return false;
+    if (digits == 0) return false;
+    ++i;
+    if (i < text.size() && (text[i] == '-' || text[i] == '+')) ++i;
+    std::size_t exp_digits = 0;
+    while (i < text.size() && is_digit(text[i])) {
+        ++i;
+        ++exp_digits;
+    }
+    return i == text.size() && exp_digits <= 5;
+}
+
+std::optional<std::int64_t> parse_integer_number(std::string_view text) {
+    if (const auto plain = parse_integer(text)) return plain;
+    std::size_t i = 0;
+    bool negative = false;
+    if (i < text.size() && text[i] == '-') {
+        negative = true;
+        ++i;
+    }
+    std::string digits;
+    long long point = -1;
+    for (; i < text.size() && (is_digit(text[i]) || text[i] == '.'); ++i) {
+        if (text[i] == '.') {
+            if (point >= 0) return std::nullopt;
+            point = static_cast<long long>(digits.size());
+        } else {
+            digits += text[i];
+        }
+    }
+    if (digits.empty()) return std::nullopt;
+    if (point < 0) point = static_cast<long long>(digits.size());
+    long long exponent = 0;
+    if (i < text.size()) {
+        if (text[i] != 'e' && text[i] != 'E') return std::nullopt;
+        ++i;
+        bool exp_negative = false;
+        if (i < text.size() && (text[i] == '-' || text[i] == '+')) exp_negative = text[i++] == '-';
+        std::size_t exp_digits = 0;
+        for (; i < text.size() && is_digit(text[i]); ++i) {
+            if (++exp_digits > 5) return std::nullopt;
+            exponent = exponent * 10 + (text[i] - '0');
+        }
+        if (exp_digits == 0 || i != text.size()) return std::nullopt;
+        if (exp_negative) exponent = -exponent;
+    }
+    const long long whole = point + exponent;
+    if (whole < 0) {
+        if (digits.find_first_not_of('0') != std::string::npos) return std::nullopt;
+        return 0;
+    }
+    std::string integer_part;
+    for (long long k = 0; k < whole; ++k) integer_part += k < static_cast<long long>(digits.size()) ? digits[static_cast<std::size_t>(k)] : '0';
+    for (std::size_t k = static_cast<std::size_t>(std::min<long long>(whole, static_cast<long long>(digits.size()))); k < digits.size(); ++k) {
+        if (digits[k] != '0') return std::nullopt;
+    }
+    const std::size_t first = integer_part.find_first_not_of('0');
+    integer_part = first == std::string::npos ? std::string("0") : integer_part.substr(first);
+    if (integer_part.size() > 20) return std::nullopt;
+    return parse_integer((negative ? "-" : "") + integer_part);
+}
+
 std::optional<double> parse_float(std::string_view text) noexcept {
     std::size_t i = 0;
     if (i < text.size() && text[i] == '-') ++i;
@@ -274,6 +355,7 @@ std::optional<double> parse_float(std::string_view text) noexcept {
     const std::string s(text);
     const double v = std::strtod(s.c_str(), nullptr);
     if (!std::isfinite(v)) return std::nullopt;
+    if (v == 0.0 && s.find_first_of("123456789") < s.find_first_of("eE")) return std::nullopt;
     return v;
 }
 
@@ -866,21 +948,22 @@ std::string input_text(const Node& node) {
 }
 
 bool input_accepts(const Node& node, std::string_view current, std::string_view ch) {
+    return input_accepts(node, current, ch, std::string_view());
+}
+
+bool input_accepts(const Node& node, std::string_view current, std::string_view ch, std::string_view after) {
     const std::optional<InputKind> kind = input_kind_of(node);
     if (!kind || ch.empty()) return false;
     const char c = ch.front();
     switch (*kind) {
-        case InputKind::Integer: {
-            if (ch.size() != 1) return false;
-            if (is_digit(c)) return current.size() < 20;
-            return c == '-' && current.empty() && input_range(node).allows_negative();
-        }
+        case InputKind::Integer:
         case InputKind::Float: {
             if (ch.size() != 1) return false;
-            if (is_digit(c)) return current.size() < 32;
-            if (c == '-') return current.empty() && input_range(node).allows_negative();
-            if (c == '.') return current.find('.') == std::string_view::npos;
-            return false;
+            if (!is_digit(c) && c != '-' && c != '+' && c != '.' && c != 'e' && c != 'E') return false;
+            std::string whole(current);
+            whole += c;
+            whole += std::string(after);
+            return partial_number(whole, input_range(node).allows_negative(), *kind == InputKind::Integer);
         }
         case InputKind::Color: {
             if (ch.size() != 1) return false;
@@ -908,7 +991,7 @@ bool commit_input_text(Document& document, Node& node, std::string_view text) {
     if (!kind) return false;
     switch (*kind) {
         case InputKind::Integer: {
-            const auto v = parse_integer(text);
+            const auto v = parse_integer_number(text);
             return v && set_input_integer(document, node, *v);
         }
         case InputKind::Float: {
@@ -923,6 +1006,30 @@ bool commit_input_text(Document& document, Node& node, std::string_view text) {
         case InputKind::Color: {
             const auto c = parse_color_text(text);
             return c && set_input_color(document, node, *c);
+        }
+        case InputKind::Slider: {
+            const auto v = parse_float(text);
+            return v && set_input_float(document, node, *v);
+        }
+        case InputKind::Select: {
+            for (const SelectOption& o : select_options(node)) {
+                if (o.disabled) continue;
+                if (o.value == text || o.label == text) return set_input_string(document, node, o.value);
+            }
+            return false;
+        }
+        case InputKind::Element: {
+            if (text.empty()) return false;
+            std::string word;
+            for (std::size_t i = 0; i <= text.size(); ++i) {
+                if (i == text.size() || text[i] == ' ' || text[i] == ',') {
+                    if (!word.empty() && element_number(word) == 0) return false;
+                    word.clear();
+                } else {
+                    word += text[i];
+                }
+            }
+            return set_input_string(document, node, std::string(text));
         }
         default: return false;
     }

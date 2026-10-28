@@ -40,6 +40,8 @@ std::string code_source_text(const Node& node);
 bool is_switch(const Node& node, const std::optional<std::string>& appearance = std::nullopt) noexcept;
 
 std::optional<std::int64_t> parse_integer(std::string_view text) noexcept;
+std::optional<std::int64_t> parse_integer_number(std::string_view text);
+bool partial_number(std::string_view text, bool negative_ok, bool integer) noexcept;
 std::optional<double> parse_float(std::string_view text) noexcept;
 std::string format_float(double value);
 std::string format_color(const bark::Rgba& color);
@@ -110,6 +112,7 @@ bool step_input(Document& document, Node& node, int steps);
 
 std::string input_text(const Node& node);
 bool input_accepts(const Node& node, std::string_view current, std::string_view utf8_char);
+bool input_accepts(const Node& node, std::string_view before, std::string_view utf8_char, std::string_view after);
 bool commit_input_text(Document& document, Node& node, std::string_view text);
 
 void check_inputs(const Document& document, Diagnostics& diagnostics);
