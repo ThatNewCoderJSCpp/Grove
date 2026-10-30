@@ -229,6 +229,34 @@ inline void simple_release(void* user) {
     delete static_cast<SimpleHandler*>(user);
 }
 
+struct Function {
+    std::function<std::string(BarkCall&)> with_call;
+    std::function<std::string()> simple;
+    std::string last;
+};
+
+inline const char* function_trampoline(grove_bark_call* call, void* user) {
+    auto* fn = static_cast<Function*>(user);
+    CallScope scope(call);
+    BarkCall c(call);
+    try {
+        if (fn->with_call) fn->last = fn->with_call(c);
+        else if (fn->simple) fn->last = fn->simple();
+        else fn->last.clear();
+    } catch (const std::exception& e) {
+        grove_bark_call_fail(call, e.what());
+        fn->last.clear();
+    } catch (...) {
+        grove_bark_call_fail(call, "the function threw an exception");
+        fn->last.clear();
+    }
+    return fn->last.c_str();
+}
+
+inline void function_release(void* user) {
+    delete static_cast<Function*>(user);
+}
+
 } // namespace bark_detail
 
 class BarkActions {
@@ -246,6 +274,31 @@ public:
     }
     void setting(const std::string& name) { setting(name, 1, 1); }
     void setting(const std::string& name, std::int64_t min_values, std::int64_t max_values) { grove_bark_actions_setting(handle(), name.c_str(), count(min_values, 0), count(max_values, GROVE_BARK_ANY)); }
+
+    void add_function(const std::string& name, std::function<std::string(BarkCall&)> fn) { add_function(name, 0, -1, std::move(fn)); }
+    void add_function(const std::string& name, std::int64_t min_values, std::int64_t max_values, std::function<std::string(BarkCall&)> fn) {
+        auto* boxed = new bark_detail::Function{ std::move(fn), {}, std::string() };
+        grove_bark_actions_add_function(handle(), name.c_str(), count(min_values, 0), count(max_values, GROVE_BARK_ANY), 0u, &bark_detail::function_trampoline, boxed, &bark_detail::function_release);
+    }
+    void add_function_raw(const std::string& name, std::int64_t min_values, std::int64_t max_values, std::function<std::string(BarkCall&)> fn) {
+        auto* boxed = new bark_detail::Function{ std::move(fn), {}, std::string() };
+        grove_bark_actions_add_function(handle(), name.c_str(), count(min_values, 0), count(max_values, GROVE_BARK_ANY), GROVE_BARK_RAW, &bark_detail::function_trampoline, boxed, &bark_detail::function_release);
+    }
+    void add_function_simple(const std::string& name, std::int64_t min_values, std::int64_t max_values, bool raw, std::function<std::string()> fn) {
+        auto* boxed = new bark_detail::Function{ {}, std::move(fn), std::string() };
+        grove_bark_actions_add_function(handle(), name.c_str(), count(min_values, 0), count(max_values, GROVE_BARK_ANY), raw ? GROVE_BARK_RAW : 0u, &bark_detail::function_trampoline, boxed, &bark_detail::function_release);
+    }
+    void add_standard_functions() { grove_bark_actions_add_standard_functions(handle()); }
+    bool has_function(const std::string& name) const { return grove_bark_actions_has_function(handle(), name.c_str()); }
+    bool remove_function(const std::string& name) { return grove_bark_actions_remove_function(handle(), name.c_str()); }
+
+    std::string evaluate_setting(const BarkFile& file, std::int64_t rule, const std::string& name, const BarkValues& values) const {
+        return rule < 0 ? std::string() : bark_detail::str(grove_bark_evaluate_setting(handle(), file.handle(), static_cast<size_t>(rule), name.c_str(), values.handle()));
+    }
+    std::string evaluate_value(const BarkFile& file, std::int64_t rule, std::int64_t property, std::int64_t index, const BarkValues& values) const {
+        return rule < 0 || property < 0 || index < 0 ? std::string() : bark_detail::str(grove_bark_evaluate_value(handle(), file.handle(), static_cast<size_t>(rule), static_cast<size_t>(property), static_cast<size_t>(index), values.handle()));
+    }
+    static std::string evaluate_error() { return bark_detail::str(grove_bark_evaluate_error()); }
     void add_standard() { grove_bark_actions_add_standard(handle()); }
     bool has(const std::string& name) const { return grove_bark_actions_has(handle(), name.c_str()); }
     bool remove(const std::string& name) { return grove_bark_actions_remove(handle(), name.c_str()); }
@@ -308,6 +361,118 @@ private:
     BarkActions m_actions;
     std::shared_ptr<BarkValues> m_parent;
     std::shared_ptr<grove_bark_runner> m_runner;
+};
+
+class BarkScript {
+public:
+    BarkScript() : BarkScript(BarkFile::parse("", "")) {}
+    explicit BarkScript(BarkFile file) : m_file(std::move(file)) {
+        m_actions.add_standard();
+        m_actions.add_standard_functions();
+        m_file.add_variables_to(m_values);
+    }
+
+    static BarkScript parse(const std::string& source) { return BarkScript(BarkFile::parse(source, "")); }
+    static BarkScript parse_named(const std::string& source, const std::string& path) { return BarkScript(BarkFile::parse(source, path)); }
+    static BarkScript load(const std::string& path) { return BarkScript(BarkFile::load(path)); }
+
+    bool loaded() const { return m_file.loaded(); }
+    bool ok() const { return m_file.ok(); }
+    std::int64_t error_count() const { return m_file.error_count(); }
+    std::string error_at(std::int64_t index) const { return m_file.error_at(index); }
+
+    void on(const std::string& name, std::function<void(BarkCall&)> fn) { on_counted(name, 0, -1, std::move(fn)); }
+    void on_counted(const std::string& name, std::int64_t min_values, std::int64_t max_values, std::function<void(BarkCall&)> fn) {
+        m_actions.add(name, min_values, max_values, [fn = std::move(fn)](BarkCall& call) -> std::int64_t {
+            if (fn) fn(call);
+            return bark_detail::current_flow();
+        });
+    }
+    void on_raw(const std::string& name, std::int64_t min_values, std::int64_t max_values, std::function<void(BarkCall&)> fn) {
+        m_actions.add_raw(name, min_values, max_values, [fn = std::move(fn)](BarkCall& call) -> std::int64_t {
+            if (fn) fn(call);
+            return bark_detail::current_flow();
+        });
+    }
+    void on_simple(const std::string& name, std::int64_t min_values, std::int64_t max_values, bool raw, std::function<void()> fn) { m_actions.add_simple(name, min_values, max_values, raw, std::move(fn)); }
+
+    void func(const std::string& name, std::function<std::string(BarkCall&)> fn) { m_actions.add_function(name, std::move(fn)); }
+    void func_counted(const std::string& name, std::int64_t min_values, std::int64_t max_values, std::function<std::string(BarkCall&)> fn) { m_actions.add_function(name, min_values, max_values, std::move(fn)); }
+    void func_raw(const std::string& name, std::int64_t min_values, std::int64_t max_values, std::function<std::string(BarkCall&)> fn) { m_actions.add_function_raw(name, min_values, max_values, std::move(fn)); }
+    void func_simple(const std::string& name, std::int64_t min_values, std::int64_t max_values, bool raw, std::function<std::string()> fn) { m_actions.add_function_simple(name, min_values, max_values, raw, std::move(fn)); }
+
+    void setting(const std::string& name) { m_actions.setting(name); }
+    void setting_counted(const std::string& name, std::int64_t min_values, std::int64_t max_values) { m_actions.setting(name, min_values, max_values); }
+    bool has(const std::string& name) const { return m_actions.has(name) || m_actions.has_function(name); }
+    bool remove(const std::string& name) {
+        const bool a = m_actions.remove(name);
+        const bool f = m_actions.remove_function(name);
+        return a || f;
+    }
+
+    void set(const std::string& name, const std::string& value) { m_values.set(name, value); }
+    void provide(const std::string& name, std::function<std::string()> fn) { m_values.provide(name, std::move(fn)); }
+    std::string get(const std::string& name) const {
+        if (m_runner && m_runner->exists()) {
+            BarkValues v = m_runner->values();
+            if (v.has(name)) return v.get(name);
+        }
+        return m_values.get(name);
+    }
+
+    std::int64_t rule_count() const { return m_file.rule_count(); }
+    std::string rule_name(std::int64_t index) const { return m_file.rule_name(index); }
+    bool has_rule(const std::string& rule) const { return m_file.has_rule(rule); }
+    std::string read(const std::string& rule, const std::string& name) const { return m_actions.evaluate_setting(m_file, m_file.find_rule(rule), name, m_values); }
+    std::int64_t problem_count(const std::string& rule) const { return m_actions.check_count(m_file, m_file.find_rule(rule)); }
+    std::string problem_at(const std::string& rule, std::int64_t index) const { return m_actions.check_at(m_file, m_file.find_rule(rule), index); }
+
+    bool run(const std::string& rule) {
+        m_rule = rule;
+        m_runner = std::make_shared<BarkRunner>(m_actions, m_file, rule, m_values);
+        if (!m_runner->exists()) {
+            m_missing = "there is no rule '" + rule + "'";
+            return false;
+        }
+        m_missing.clear();
+        m_runner->run();
+        return !m_runner->failed();
+    }
+    bool answer(const std::string& name, const std::string& value) {
+        if (!m_runner || !m_runner->exists()) return false;
+        m_runner->answer(name, value);
+        return !m_runner->failed();
+    }
+    bool resume() {
+        if (!m_runner || !m_runner->exists()) return false;
+        m_runner->resume();
+        return !m_runner->failed();
+    }
+    void stop() { if (m_runner) m_runner->stop(); }
+
+    bool running() const { return m_runner && m_runner->exists() && !m_runner->finished(); }
+    bool waiting() const { return m_runner && m_runner->waiting(); }
+    bool done() const { return m_runner && m_runner->done(); }
+    bool stopped() const { return m_runner && m_runner->stopped(); }
+    bool failed() const { return !m_missing.empty() || (m_runner && m_runner->failed()); }
+    bool finished() const { return !m_missing.empty() || (m_runner && m_runner->finished()); }
+    std::string error() const {
+        if (!m_missing.empty()) return m_missing;
+        return m_runner && m_runner->failed() ? m_runner->error() : std::string();
+    }
+    std::string current_rule() const { return m_rule; }
+
+    BarkFile& file() { return m_file; }
+    BarkActions& actions() { return m_actions; }
+    BarkValues& values() { return m_values; }
+
+private:
+    BarkFile m_file;
+    BarkActions m_actions;
+    BarkValues m_values;
+    std::shared_ptr<BarkRunner> m_runner;
+    std::string m_rule;
+    std::string m_missing;
 };
 
 } // namespace grove

@@ -1,5 +1,6 @@
 #include "grove/grove.hpp"
 #include "grove/terminal.hpp"
+#include "grove/canvas.hpp"
 #include "grove/api/grove_api.h"
 #include "grove/bark/properties.hpp"
 #include "grove/bark/actions.hpp"
@@ -2255,6 +2256,120 @@ void test_bark_c_api() {
     CHECK(!grove::BarkFile::load("/no/such/file.bark").loaded());
 }
 
+void test_bark_functions() {
+    grove::Diagnostics d;
+    grove::bark::Stylesheet sheet = grove::bark::parse_stylesheet(
+        "$who = \"world\";\n"
+        "greet {\n"
+        "    label: upper(\"hi {who}\");\n"
+        "    say: dice(6) \"rolled\";\n"
+        "    say: join(\", \", a, b, upper(c));\n"
+        "    say: unknown(1, 2);\n"
+        "}\n"
+        "bad {\n"
+        "    say: dice();\n"
+        "}\n", "f.bark", d);
+    CHECK(d.ok());
+    grove::bark::Actions actions;
+    actions.add_standard();
+    actions.add_standard_functions();
+    actions.setting("label");
+    std::vector<std::string> said;
+    actions.add("say", 1, 3, [&](grove::bark::ActionCall& call) {
+        said.push_back(call.rest(0));
+        return grove::bark::Flow::Next;
+    });
+    actions.function("dice", 1, 1, [](grove::bark::FunctionCall& call) {
+        return "d" + call.arg(0);
+    });
+    grove::bark::Values program;
+    program.add_variables(sheet.variables());
+    const grove::bark::Rule* greet = grove::bark::find_rule(sheet, "greet");
+    CHECK(greet != nullptr);
+    if (greet) {
+        CHECK(actions.check(*greet).empty());
+        grove::bark::Runner runner(actions, *greet, &program);
+        CHECK(runner.run() == grove::bark::Runner::State::Done);
+        CHECK(said.size() == 3);
+        if (said.size() == 3) {
+            CHECK(said[0] == "d6 rolled");
+            CHECK(said[1] == "a, b, C");
+            CHECK(said[2].find("unknown") == 0);
+        }
+        CHECK(actions.setting(*greet, "label", program) == std::optional<std::string>("HI WORLD"));
+    }
+    const grove::bark::Rule* bad = grove::bark::find_rule(sheet, "bad");
+    CHECK(bad != nullptr);
+    if (bad) {
+        CHECK(actions.check(*bad).size() == 1);
+        grove::bark::Runner runner(actions, *bad, &program);
+        CHECK(runner.run() == grove::bark::Runner::State::Failed);
+        CHECK(runner.error().find("dice()") != std::string::npos);
+    }
+    actions.function("boom", [](grove::bark::FunctionCall& call) { return call.fail("no luck"); });
+    grove::bark::Values scratch;
+    std::string why;
+    grove::bark::Value boom;
+    boom.kind = grove::bark::ValueKind::Function;
+    boom.text = "boom";
+    CHECK(!actions.evaluate(boom, scratch, why).has_value() && why == "no luck");
+    CHECK(actions.has_function("dice") && actions.remove_function("dice") && !actions.has_function("dice"));
+
+    grove::BarkScript script = grove::BarkScript::parse(
+        "$app = \"Grove\";\n"
+        "greet {\n"
+        "    title: shout(\"{app}\");\n"
+        "    ask: mood \"How are you?\";\n"
+        "    say: \"{app} feels {mood}\" twice(ok);\n"
+        "}\n");
+    CHECK(script.ok() && script.has_rule("greet"));
+    std::vector<std::string> heard;
+    script.setting("title");
+    script.on_counted("ask", 1, 2, [](grove::BarkCall& call) { call.wait(); });
+    script.on("say", [&heard](grove::BarkCall& call) { heard.push_back(call.rest(0)); });
+    script.func("shout", [](grove::BarkCall& call) { return call.arg(0) + "!"; });
+    script.func_counted("twice", 1, 1, [](grove::BarkCall& call) { return call.arg(0) + call.arg(0); });
+    CHECK(script.problem_count("greet") == 0);
+    CHECK(script.read("greet", "title") == "Grove!");
+    CHECK(script.run("greet") && script.waiting());
+    CHECK(script.answer("mood", "great") && script.done());
+    CHECK(heard == std::vector<std::string>({ "Grove feels great okok" }));
+    CHECK(script.get("mood") == "great" && script.get("app") == "Grove");
+    CHECK(!script.run("missing") && script.failed() && script.error().find("missing") != std::string::npos);
+    grove::BarkScript other = grove::BarkScript::parse("x { explode; }");
+    other.on("explode", [](grove::BarkCall& call) { call.fail("bang"); });
+    CHECK(!other.run("x") && other.error() == "bang");
+}
+
+void test_gpu_canvas() {
+    grove::Project project = grove::load_project_from_source(
+        "<body><gpu_canvas id=\"a\"></gpu_canvas><canvas id=\"b\" gpu animate></canvas><canvas id=\"c\"></canvas><p id=\"d\">x</p></body>", "g.grove", ".");
+    CHECK(project.diagnostics.ok());
+    grove::Document& doc = project.document;
+    grove::Node* a = doc.find_by_id("a");
+    grove::Node* b = doc.find_by_id("b");
+    grove::Node* c = doc.find_by_id("c");
+    grove::Node* p = doc.find_by_id("d");
+    CHECK(a && b && c && p);
+    if (!a || !b || !c || !p) return;
+    CHECK(grove::is_canvas(*a) && grove::is_canvas(*b) && grove::is_canvas(*c) && !grove::is_canvas(*p));
+    CHECK(grove::is_gpu_canvas(*a) && grove::is_gpu_canvas(*b) && !grove::is_gpu_canvas(*c));
+    CHECK(!grove::has_canvas_draw(doc, *a));
+    const std::uint64_t before = doc.revision();
+    int calls = 0;
+    CHECK(grove::set_canvas_draw(doc, *a, [&calls](grove::GpuCanvasFrame&) { ++calls; }));
+    CHECK(grove::has_canvas_draw(doc, *a) && doc.revision() != before);
+    CHECK(!grove::set_canvas_draw(doc, *p, [](grove::GpuCanvasFrame&) {}));
+    CHECK(grove::canvas_animating(doc, *b) && !grove::canvas_animating(doc, *a));
+    CHECK(grove::set_canvas_animating(doc, *a, true) && grove::canvas_animating(doc, *a));
+    CHECK(grove::set_canvas_animating(doc, *a, false) && !grove::canvas_animating(doc, *a));
+    const std::string frame = a->attribute_or("canvas-frame", "");
+    CHECK(grove::redraw_canvas(doc, *a) && a->attribute_or("canvas-frame", "") != frame);
+    CHECK(grove::clear_canvas_draw(doc, *a) && !grove::has_canvas_draw(doc, *a));
+    CHECK(grove::set_canvas_pixels(doc, *a, 1, 1, std::vector<std::uint8_t>{ 1, 2, 3, 4 }));
+    CHECK(calls == 0);
+}
+
 int main() {
     test_markup();
     test_markup_errors();
@@ -2262,6 +2377,8 @@ int main() {
     test_bark_errors();
     test_bark_actions();
     test_bark_c_api();
+    test_bark_functions();
+    test_gpu_canvas();
     test_math();
     test_scripts();
     test_api();

@@ -111,6 +111,59 @@ on_prompt_answered = [&](std::string text) { runner.answer("jobs", text); };
 
 `bark::text_of`, `texts_of` and `joined_text` turn values into plain text (strings without quotes, `8` as `8`), and `setting_of(rule, "label", values)` reads a setting with its placeholders filled in.
 
+**Functions after the colon.** A property can also use values that are worked out when the step runs: `roll: dice(6);`, `say: upper("{name}");`, `run: join(" ", make, -j, cores());`. `actions.function(name, handler)` (or with a minimum and maximum number of values) registers one; the handler gets a `FunctionCall` with the values as text (placeholders filled in, and functions inside it already worked out, so `upper(join("-", a, b))` works) and returns the text to put in its place, or `call.fail("why")` to stop the rule with an error. A function nothing registered is left as it was written (`rgb(...)`, `calc(...)` and the other style functions keep working). `add_standard_functions()` adds `upper`, `lower`, `trim`, `join(separator, ...)`, `concat`, `replace(text, from, to)`, `length`, `env(NAME, fallback)` and `or(a, b, ...)` (the first one that isn't empty). `check(rule)` also reports functions given the wrong number of values, `actions.setting(rule, name, values)` reads a setting with its functions worked out, and `evaluate(value, values, error)` works out any single value.
+
+```cpp
+actions.function("dice", 1, 1, [](grove::bark::FunctionCall& call) {
+    return std::to_string(1 + std::rand() % std::stoi(call.arg(0)));
+});
+```
+
+### The easy way: `BarkScript`
+
+`grove::BarkScript` puts the file, the actions, the program's values and the run together, so a new property or function is one line. It already has `add_standard()` and `add_standard_functions()`, and the file's `$variables` are usable as `{name}`.
+
+```walnut
+import module.grove
+
+grove::BarkScript: steps = grove::BarkScript::load("steps.bark");
+steps.set("app", "Grove");
+steps.setting("label");
+steps.on("say", [&](grove::BarkCall&: call) -> void {
+    grove::log(call.rest(0));
+});
+steps.on_counted("ask", 1, 3, [&](grove::BarkCall&: call) -> void {
+    call.wait();
+});
+steps.func("dice", [&](grove::BarkCall&: call) -> string {
+    return "4";
+});
+
+grove::log(steps.read("greet", "label"));
+steps.run("greet");
+if (steps.waiting()) then {
+    grove::prompt_string("Greeting", "How are you?", "fine", [&](string: answer) -> void {
+        steps.answer("mood", answer);
+    });
+}
+```
+
+```bark
+greet {
+    label: upper("hello from {app}");
+    ask: mood "How are you?";
+    say: "{app} feels {mood} and rolled" dice(6);
+}
+```
+
+- Making one: `BarkScript::load(path)`, `BarkScript::parse(source)` or `parse_named(source, path)`; `loaded()`, `ok()`, `error_count()`, `error_at(i)`.
+- Properties (before the colon): `on(name, fn)` takes any number of values, `on_counted(name, min, max, fn)` checks how many, `on_raw` passes them without filling in placeholders, and `setting(name)` (or `setting_counted`) marks a property that's read, not run. An action carries on to the next step unless it calls `call.wait()`, `call.stop()` or `call.fail("why")`.
+- Functions (after the colon): `func(name, fn)`, `func_counted(name, min, max, fn)` and `func_raw`; `fn` returns the text to use. `has(name)` and `remove(name)` work on both.
+- Values: `set(name, value)`, `provide(name, fn)` and `get(name)` (the current run's value first, then the program's).
+- Running: `run(rule)` starts a rule from the top (and returns `false` if it failed or isn't there), then `waiting()`, `answer(name, value)`, `resume()`, `stop()`, `running()`, `done()`, `stopped()`, `failed()`, `finished()`, `error()` and `current_rule()`.
+- Reading: `rule_count()`, `rule_name(i)`, `has_rule(rule)`, `read(rule, setting)` (placeholders and functions worked out), and `problem_count(rule)`/`problem_at(rule, i)` for unknown properties and wrong numbers of values.
+- C++ scripts and host programs use the same class from `#include <grove/bark_api.hpp>`, with `std::function` handlers. `file()`, `actions()` and `values()` give the parts underneath when you need more.
+
 ### From Walnut
 
 Scripts get the same thing through `import module.grove`: `grove::BarkFile`, `grove::BarkValues`, `grove::BarkActions`, `grove::BarkRunner` and `grove::BarkCall`. An action is a function that takes the call; it carries on to the next step unless it calls `call.wait()`, `call.stop()` or `call.fail("why")`. `Examples/bark` has the whole thing, with the answer to an `ask:` coming from a popup:
@@ -143,6 +196,7 @@ if (runner.waiting()) then {
 - `BarkFile::parse(source, path)` or `BarkFile::load(path)`; `ok()`, `error_count()`/`error_at(i)`, `rule_count()`, `rule_name(i)`, `find_rule(name)` (`-1` when it isn't there), `property_count(rule)`, `property_name(rule, i)`, `property_line`, `property_text`, `value_count`, `value_at(rule, i, n)`, `setting(rule, name)`, `setting_with(rule, name, values)`, the `$variables` (`variable_count`, `variable_name`, `variable_value`) and `add_variables_to(values)`.
 - `BarkValues`: `set`, `set_default`, `has`, `get`, `get_or`, `erase`, `provide(name, function)`, `set_parent`, `interpolate(source)`, `unknown_count(source)`/`unknown_at(source, i)` for the placeholders nothing sets, and `BarkValues::escape_braces(source)`.
 - `BarkActions`: `add(name, fn)`, `add_counted(name, min, max, fn)` (`-1` for no maximum), `add_raw` (the values come without placeholders filled in), `setting(name)`, `add_standard()`, `has`, `remove`, `check_count(file, rule)`/`check_at(file, rule, i)`.
+- `BarkActions` functions: `add_function(name, fn)`, `add_function_counted(name, min, max, fn)`, `add_function_raw`, `add_standard_functions()`, `has_function`, `remove_function`, `evaluate_setting(file, rule, name, values)`, `evaluate_value(file, rule, property, index, values)` and `BarkActions::evaluate_error()` for why the last one came back empty.
 - `BarkRunner(actions, file, rule)` or with a parent `BarkValues`: `run`, `step`, `resume`, `answer(name, value)`, `stop`, `waiting`, `done`, `stopped`, `failed`, `finished`, `error`, `position`, `size` and `values()`.
 - `BarkCall`: `name`, `arg_count`, `arg(i)`, `arg_or(i, fallback)`, `rest(first)`, `line`, `values()`, and `wait`, `stop`, `fail`.
 
@@ -176,6 +230,7 @@ static int say(grove_bark_call* call, void* user_data) {
 ```
 
 - Handles: `grove_bark_values` (`_new`, `_free`, `_set`, `_set_default`, `_has`, `_get` (`NULL` when unset), `_erase`, `_provide`, `_set_parent`, `_count`, `_name`), `grove_bark_file` (`grove_bark_parse`, `grove_bark_load` (`NULL` when the file can't be read), `grove_bark_file_free`, errors, rules, properties, values, settings and variables), `grove_bark_actions` (`_new`, `_free`, `_add`, `_setting`, `_add_standard`, `_has`, `_remove`, and `grove_bark_check_count`/`grove_bark_check`) and `grove_bark_runner` (`_new`, `_free`, `_run`, `_step`, `_resume`, `_answer`, `_stop`, `_state`, `_error`, `_values`, `_position`, `_size`).
+- Functions: `grove_bark_actions_add_function(actions, name, min, max, flags, fn, user_data, release)` with `const char* fn(grove_bark_call* call, void* user_data)` returning the text (copied right away) or failing with `grove_bark_call_fail`; the `grove_bark_call_*` readers work on it the same way. Also `grove_bark_actions_add_standard_functions`, `_has_function`, `_remove_function`, `grove_bark_evaluate_setting`, `grove_bark_evaluate_value` and `grove_bark_evaluate_error`.
 - An action returns `GROVE_BARK_NEXT`, `GROVE_BARK_WAIT`, `GROVE_BARK_STOP` or `GROVE_BARK_FAIL` (`return grove_bark_call_fail(call, "why");` sets the message too), and reads its call with `grove_bark_call_name`, `_arg_count`, `_arg`, `_rest`, `_line`, `_values` and `_runner`. `GROVE_BARK_ANY` as the maximum allows any number of values, and the `GROVE_BARK_RAW` flag passes them without filling in placeholders.
 - The runner's state is `GROVE_BARK_READY`, `GROVE_BARK_WAITING`, `GROVE_BARK_DONE`, `GROVE_BARK_STOPPED` or `GROVE_BARK_FAILED`.
 - `grove_bark_interpolate(text, values)`, `grove_bark_unknown_count`/`grove_bark_unknown` and `grove_bark_escape_braces` work on any text.

@@ -27,6 +27,7 @@ constexpr TagInfo k_tags[] = {
     { "pre",      TagContent::Normal, TagRole::Block },
     { "terminal", TagContent::Void,   TagRole::Block },
     { "canvas",   TagContent::Void,   TagRole::Block },
+    { "gpu_canvas", TagContent::Void, TagRole::Block },
     { "item",     TagContent::Normal, TagRole::Block },
     { "text",     TagContent::Normal, TagRole::Inline },
     { "span",     TagContent::Normal, TagRole::Inline },

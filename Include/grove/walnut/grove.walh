@@ -259,6 +259,36 @@ extern "C++" from "<grove/bark_api.hpp>" {
         function remove(const string&: name) -> bool;
         function check_count(const BarkFile&: file, long int: rule) const -> long int;
         function check_at(const BarkFile&: file, long int: rule, long int: index) const -> string;
+
+        function add_function_simple(const string&: name, long int: min_values, long int: max_values, bool: raw, function() -> string: fn) -> void;
+
+        function add_function(const string&: name, function(BarkCall&) -> string: fn) -> void {
+            add_function_simple(name, 0, -1, false, [fn]() -> string {
+                BarkCall: call = BarkCall::current();
+                return fn(call);
+            });
+        } end function add_function
+
+        function add_function_counted(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> string: fn) -> void {
+            add_function_simple(name, min_values, max_values, false, [fn]() -> string {
+                BarkCall: call = BarkCall::current();
+                return fn(call);
+            });
+        } end function add_function_counted
+
+        function add_function_raw(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> string: fn) -> void {
+            add_function_simple(name, min_values, max_values, true, [fn]() -> string {
+                BarkCall: call = BarkCall::current();
+                return fn(call);
+            });
+        } end function add_function_raw
+
+        function add_standard_functions() -> void;
+        function has_function(const string&: name) const -> bool;
+        function remove_function(const string&: name) -> bool;
+        function evaluate_setting(const BarkFile&: file, long int: rule, const string&: name, const BarkValues&: values) const -> string;
+        function evaluate_value(const BarkFile&: file, long int: rule, long int: property, long int: index, const BarkValues&: values) const -> string;
+        static function evaluate_error() -> string;
     } end class BarkActions
 
     class BarkRunner as "grove::BarkRunner" {
@@ -282,6 +312,89 @@ extern "C++" from "<grove/bark_api.hpp>" {
         function size() const -> long int;
         function values() const -> BarkValues;
     } end class BarkRunner
+
+    class BarkScript as "grove::BarkScript" {
+    public:
+        constructor();
+        static function parse(const string&: source) -> BarkScript;
+        static function parse_named(const string&: source, const string&: path) -> BarkScript;
+        static function load(const string&: path) -> BarkScript;
+        function loaded() const -> bool;
+        function ok() const -> bool;
+        function error_count() const -> long int;
+        function error_at(long int: index) const -> string;
+
+        function on_simple(const string&: name, long int: min_values, long int: max_values, bool: raw, function() -> void: fn) -> void;
+        function func_simple(const string&: name, long int: min_values, long int: max_values, bool: raw, function() -> string: fn) -> void;
+
+        function on(const string&: name, function(BarkCall&) -> void: fn) -> void {
+            on_simple(name, 0, -1, false, [fn]() -> void {
+                BarkCall: call = BarkCall::current();
+                fn(call);
+            });
+        } end function on
+
+        function on_counted(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> void: fn) -> void {
+            on_simple(name, min_values, max_values, false, [fn]() -> void {
+                BarkCall: call = BarkCall::current();
+                fn(call);
+            });
+        } end function on_counted
+
+        function on_raw(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> void: fn) -> void {
+            on_simple(name, min_values, max_values, true, [fn]() -> void {
+                BarkCall: call = BarkCall::current();
+                fn(call);
+            });
+        } end function on_raw
+
+        function func(const string&: name, function(BarkCall&) -> string: fn) -> void {
+            func_simple(name, 0, -1, false, [fn]() -> string {
+                BarkCall: call = BarkCall::current();
+                return fn(call);
+            });
+        } end function func
+
+        function func_counted(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> string: fn) -> void {
+            func_simple(name, min_values, max_values, false, [fn]() -> string {
+                BarkCall: call = BarkCall::current();
+                return fn(call);
+            });
+        } end function func_counted
+
+        function func_raw(const string&: name, long int: min_values, long int: max_values, function(BarkCall&) -> string: fn) -> void {
+            func_simple(name, min_values, max_values, true, [fn]() -> string {
+                BarkCall: call = BarkCall::current();
+                return fn(call);
+            });
+        } end function func_raw
+
+        function setting(const string&: name) -> void;
+        function setting_counted(const string&: name, long int: min_values, long int: max_values) -> void;
+        function has(const string&: name) const -> bool;
+        function remove(const string&: name) -> bool;
+        function set(const string&: name, const string&: value) -> void;
+        function provide(const string&: name, function() -> string: fn) -> void;
+        function get(const string&: name) const -> string;
+        function rule_count() const -> long int;
+        function rule_name(long int: index) const -> string;
+        function has_rule(const string&: rule) const -> bool;
+        function read(const string&: rule, const string&: name) const -> string;
+        function problem_count(const string&: rule) const -> long int;
+        function problem_at(const string&: rule, long int: index) const -> string;
+        function run(const string&: rule) -> bool;
+        function answer(const string&: name, const string&: value) -> bool;
+        function resume() -> bool;
+        function stop() -> void;
+        function running() const -> bool;
+        function waiting() const -> bool;
+        function done() const -> bool;
+        function stopped() const -> bool;
+        function failed() const -> bool;
+        function finished() const -> bool;
+        function error() const -> string;
+        function current_rule() const -> string;
+    } end class BarkScript
 
 } end extern
 

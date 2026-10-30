@@ -32,6 +32,7 @@ struct grove_bark_runner {
 
 struct grove_bark_call {
     grove::bark::ActionCall* call = nullptr;
+    grove::bark::FunctionCall* fcall = nullptr;
     grove_bark_values view;
     grove_bark_runner* runner = nullptr;
 };
@@ -107,6 +108,7 @@ int state_of(grove::bark::Runner::State state) {
 }
 
 thread_local grove_bark_runner* g_running = nullptr;
+thread_local std::string g_evaluate_error;
 
 struct RunningScope {
     grove_bark_runner* before;
@@ -376,23 +378,28 @@ const char* grove_bark_check(const grove_bark_actions* actions, const grove_bark
 }
 
 const char* grove_bark_call_name(const grove_bark_call* call) {
+    if (call && call->fcall) return call->fcall->name.c_str();
     return call && call->call ? call->call->name.c_str() : nullptr;
 }
 
 size_t grove_bark_call_arg_count(const grove_bark_call* call) {
+    if (call && call->fcall) return call->fcall->args.size();
     return call && call->call ? call->call->args.size() : 0;
 }
 
 const char* grove_bark_call_arg(const grove_bark_call* call, size_t index) {
+    if (call && call->fcall) return index < call->fcall->args.size() ? call->fcall->args[index].c_str() : nullptr;
     if (!call || !call->call || index >= call->call->args.size()) return nullptr;
     return call->call->args[index].c_str();
 }
 
 const char* grove_bark_call_rest(const grove_bark_call* call, size_t from) {
+    if (call && call->fcall) return keep(call->fcall->rest(from));
     return call && call->call ? keep(call->call->rest(from)) : nullptr;
 }
 
 size_t grove_bark_call_line(const grove_bark_call* call) {
+    if (call && call->fcall) return call->fcall->value ? static_cast<size_t>(call->fcall->value->span.begin.line) : 0;
     return call && call->call && call->call->declaration ? static_cast<size_t>(call->call->declaration->span.begin.line) : 0;
 }
 
@@ -405,8 +412,75 @@ grove_bark_runner* grove_bark_call_runner(grove_bark_call* call) {
 }
 
 int grove_bark_call_fail(grove_bark_call* call, const char* message) {
-    if (call && call->call) call->call->error = text(message);
+    if (call && call->fcall) call->fcall->fail(text(message));
+    else if (call && call->call) call->call->error = text(message);
     return GROVE_BARK_FAIL;
+}
+
+void grove_bark_actions_add_function(grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values, unsigned flags, grove_bark_function_fn fn, void* user_data, grove_release_fn release) {
+    auto guard = std::make_shared<Release>();
+    guard->user_data = user_data;
+    guard->release = release;
+    if (!actions || !name || !fn) return;
+    grove::bark::FunctionInfo info;
+    info.name = name;
+    info.min_args = min_values;
+    info.max_args = max_values;
+    info.interpolate = (flags & GROVE_BARK_RAW) == 0;
+    actions->actions->function(info, [fn, guard](grove::bark::FunctionCall& call) {
+        grove_bark_call c;
+        c.fcall = &call;
+        c.view.use = call.values;
+        c.runner = g_running;
+        const char* result = fn(&c, guard->user_data);
+        return result ? std::string(result) : std::string();
+    });
+}
+
+void grove_bark_actions_add_standard_functions(grove_bark_actions* actions) {
+    if (actions) actions->actions->add_standard_functions();
+}
+
+bool grove_bark_actions_has_function(const grove_bark_actions* actions, const char* name) {
+    return actions && name && actions->actions->has_function(name);
+}
+
+bool grove_bark_actions_remove_function(grove_bark_actions* actions, const char* name) {
+    return actions && name && actions->actions->remove_function(name);
+}
+
+const char* grove_bark_evaluate_setting(const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const char* name, grove_bark_values* values) {
+    g_evaluate_error.clear();
+    const grove::bark::Rule* r = rule_of(file, rule);
+    if (!actions || !r || !name) return nullptr;
+    grove::bark::Values scratch;
+    grove::bark::Values* v = values_of(values);
+    std::string why;
+    const std::optional<std::string> out = actions->actions->setting(*r, name, v ? *v : scratch, &why);
+    if (!out) {
+        g_evaluate_error = why;
+        return nullptr;
+    }
+    return keep(*out);
+}
+
+const char* grove_bark_evaluate_value(const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, size_t property, size_t index, grove_bark_values* values) {
+    g_evaluate_error.clear();
+    const grove::bark::Declaration* d = declaration_of(file, rule, property);
+    if (!actions || !d || index >= d->values.size()) return nullptr;
+    grove::bark::Values scratch;
+    grove::bark::Values* v = values_of(values);
+    std::string why;
+    const std::optional<std::string> out = actions->actions->evaluate(d->values[index], v ? *v : scratch, why);
+    if (!out) {
+        g_evaluate_error = why;
+        return nullptr;
+    }
+    return keep(*out);
+}
+
+const char* grove_bark_evaluate_error(void) {
+    return g_evaluate_error.c_str();
 }
 
 grove_bark_runner* grove_bark_runner_new(const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const grove_bark_values* parent) {

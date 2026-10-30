@@ -71,6 +71,7 @@ The first is for a game: as many frames as the computer can draw. The second is 
 | `button`, `label` | controls |
 | `img`, `br`, `hr` | images and breaks |
 | `canvas` | pixels the app draws itself, see [Canvas](#canvas) |
+| `gpu_canvas` | a canvas the app draws into with Fizmo's renderer every frame, on the GPU when there is one; see [GPU canvas](#gpu-canvas) |
 | `math` | MathText, see below |
 | `style` | Bark, inline or `src="file.bark"` |
 | `script` | Walnut, C++ or C, inline or `src="..."` |
@@ -621,6 +622,33 @@ grove::set_canvas_pixels(project.document, *plot, width, height, std::move(rgba)
 - `canvas_rect(document, canvas)` is where the canvas is in its window after the last frame, in the same coordinates as mouse events (`x`, `y`, `width`, `height` and `shown`), so `e.x - rect.x` is the mouse's position inside it. `canvas_size(document, canvas, w, h)` gives the size rounded to whole pixels.
 - `canvas_resize` is sent to the canvas (it doesn't bubble) whenever its size changes, with the new size in `x` and `y`. Draw again then.
 - Mouse events (`mouse_down`, `mouse_move`, `mouse_up`, `wheel`, `double_click`, `click`) reach the canvas like any element, and `tabindex="0"` lets it take keys.
+
+### GPU canvas
+
+`<gpu_canvas>` (or `<canvas gpu>`) is a canvas the host draws into with Fizmo's renderer during Grove's own frame, instead of handing over pixels. It can use everything `fizmo::graphics::Renderer` has: 2D shapes, text, textures, and 3D meshes, lines and lighting with `begin_3d`. On a GPU backend (Vulkan or OpenGL) that all runs on the GPU and nothing is copied back to the CPU; on the software backend the same calls still draw, just more slowly. It's laid out like `<canvas>` and gets the same mouse events, `canvas_resize`, `canvas_rect` and `canvas_size`.
+
+```cpp
+#define FIZMO
+#define FIZMO_GRAPHICS
+#include <fizmo/includes.hpp>
+#include <grove/canvas.hpp>
+
+grove::Node* view = project.document.find_by_id("view");
+grove::set_canvas_draw(project.document, *view, [&](grove::GpuCanvasFrame& f) {
+    f.renderer.draw_rect(0, 0, static_cast<unsigned>(f.width), static_cast<unsigned>(f.height), fizmo::graphics::Paint::fill(sky));
+    camera.set_viewport(f.viewport_width, f.viewport_height);
+    if (f.renderer.begin_3d(camera, f.viewport_x, f.viewport_y, f.viewport_width, f.viewport_height)) {
+        f.renderer.draw_mesh(cube, model, fizmo::graphics::Material3D::plastic());
+        f.renderer.end_3d();
+    }
+});
+```
+
+- The function is called every time Grove draws the window while the canvas is on screen. 2D drawing is already moved so `(0, 0)` is the canvas's top-left corner, and it's clipped to the canvas. `begin_3d` takes window pixels, which is what `viewport_x`, `viewport_y`, `viewport_width` and `viewport_height` are.
+- `GpuCanvasFrame` also has `width` and `height` (the canvas's size), `canvas` (its element), `dt` (seconds since the last frame), `frame` (how many times this canvas has been drawn) and `gpu` (whether the renderer is on the GPU).
+- Grove only draws the window when something changed. Call `grove::redraw_canvas(document, canvas)` after changing what the canvas shows, or let it draw every frame with the `animate` attribute (`<gpu_canvas animate>`) or `grove::set_canvas_animating(document, canvas, true)`. An animating canvas only keeps the window busy while it's shown, and the window's `max-fps` still caps it.
+- `clear_canvas_draw` removes the function, and `has_canvas_draw` says whether there is one. A plain `<canvas>` can have a draw function too: it's drawn over the canvas's pixels, if it has any.
+- 3D left open by the function is closed for it, and the transform, clip and blend mode are put back afterwards. An exception thrown by the function is printed and the frame carries on.
 
 ## Math
 

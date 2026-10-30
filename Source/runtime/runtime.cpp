@@ -586,7 +586,7 @@ std::shared_ptr<fizmo::images::BitmapImage> load_bitmap(const std::string& path)
 }
 
 struct DrawOp {
-    enum class Kind { Fill, Stroke, Circle, CircleStroke, Text, Math, ClipPush, ClipPop, Image, Line } kind = Kind::Fill;
+    enum class Kind { Fill, Stroke, Circle, CircleStroke, Text, Math, ClipPush, ClipPop, Image, Line, Custom } kind = Kind::Fill;
     float x = 0;
     float y = 0;
     float w = 0;
@@ -599,6 +599,7 @@ struct DrawOp {
     const fizmo::text::FancyText* math = nullptr;
     const fizmo::graphics::Texture* texture = nullptr;
     float alpha = 1.0f;
+    const Node* node = nullptr;
 };
 
 struct FrameStatsLog {
@@ -1176,6 +1177,18 @@ public:
                 if (clips.empty()) reset_view_clip(r);
                 else apply(clips.back());
                 last_kind = -1;
+            } else if (op.kind == DrawOp::Kind::Custom) {
+                Rect c{ op.x, op.y, op.w, op.h };
+                if (!clips.empty()) c = c.intersect(clips.back());
+                apply(c);
+                draw_custom(r, op);
+                if (clips.empty()) reset_view_clip(r);
+                else apply(clips.back());
+                last_kind = -1;
+                if (stats.enabled) {
+                    ++batches;
+                    ++drawn;
+                }
             } else {
                 if (stats.enabled) {
                     const int kind = op.kind == DrawOp::Kind::Text || op.kind == DrawOp::Kind::Math ? 1 : op.kind == DrawOp::Kind::Image ? 2 : 0;
@@ -1517,6 +1530,7 @@ private:
             case DrawOp::Kind::Text: return 1;
             case DrawOp::Kind::Image: return 2;
             case DrawOp::Kind::Math: return 3;
+            case DrawOp::Kind::Custom: return 4;
             default: return 0;
         }
     }
@@ -1669,6 +1683,12 @@ private:
         std::vector<const DrawOp*> segment;
         for (std::size_t index = 0; index < m_ops.size(); ++index) {
             const DrawOp& op = m_ops[index];
+            if (op.kind == DrawOp::Kind::Custom) {
+                if (!clips.empty() && !op_visible(op, clips.back())) continue;
+                batch_segment(segment);
+                m_draw_list.push_back(&op);
+                continue;
+            }
             if (op.kind == DrawOp::Kind::ClipPush || op.kind == DrawOp::Kind::ClipPop) {
                 if (m_batching && m_redundant_clip[index]) continue;
                 batch_segment(segment);
@@ -1731,7 +1751,8 @@ private:
             case DrawOp::Kind::Image: if (op.texture) r.draw_texture(*op.texture, x, y, w, h, op.alpha); break;
             case DrawOp::Kind::Line: r.draw_line(x, y, static_cast<int>(std::lround(op.x + op.w)), static_cast<int>(std::lround(op.y + op.h)), fizmo::graphics::Paint::stroke(op.color, op.stroke)); break;
             case DrawOp::Kind::ClipPush:
-            case DrawOp::Kind::ClipPop: break;
+            case DrawOp::Kind::ClipPop:
+            case DrawOp::Kind::Custom: break;
         }
     }
 
@@ -5752,7 +5773,42 @@ private:
             op.texture = tex;
             op.alpha = static_cast<float>(opacity_of(element));
         }
+        if (has_canvas_draw(document(), element)) {
+            DrawOp& op = push(DrawOp::Kind::Custom, x, y, width, h, Color());
+            op.node = &element;
+        }
         y += h;
+    }
+
+    void draw_custom(fizmo::graphics::Renderer& r, const DrawOp& op) {
+        if (!op.node || !document().is_attached(*op.node)) return;
+        const std::shared_ptr<CanvasPixels> c = canvas_of(document(), *op.node);
+        if (!c->draw || op.w <= 0.0f || op.h <= 0.0f) return;
+        const float ox = m_framed ? m_frame_x : 0.0f;
+        const float oy = m_framed ? m_frame_y : 0.0f;
+        GpuCanvasFrame frame{ r, *op.node };
+        frame.width = op.w;
+        frame.height = op.h;
+        frame.viewport_x = static_cast<int>(std::lround(op.x + ox));
+        frame.viewport_y = static_cast<int>(std::lround(op.y + oy));
+        frame.viewport_width = static_cast<unsigned>(std::max(1.0f, std::round(op.w)));
+        frame.viewport_height = static_cast<unsigned>(std::max(1.0f, std::round(op.h)));
+        frame.dt = m_dt;
+        frame.frame = ++c->frames;
+        frame.gpu = r.is_gpu();
+        const fizmo::graphics::BlendMode blend = r.blend_mode();
+        r.push_transform();
+        r.translate(op.x, op.y);
+        try {
+            c->draw(frame);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "grove: canvas draw failed: %s\n", e.what());
+        } catch (...) {
+            std::fprintf(stderr, "grove: canvas draw failed\n");
+        }
+        if (r.in_3d()) r.end_3d();
+        r.pop_transform();
+        r.set_blend_mode(blend);
     }
 
     bool in_this_window(const Node& node) const {
@@ -5768,7 +5824,7 @@ private:
         if (all.empty()) return;
         std::set<const Node*> seen;
         for (const ElementBox& b : m_boxes) {
-            if (!b.node || b.node->tag() != "canvas") continue;
+            if (!b.node || !is_canvas(*b.node)) continue;
             auto it = all.find(b.node);
             if (it == all.end()) it = all.emplace(b.node, std::make_shared<CanvasPixels>()).first;
             if (!seen.insert(b.node).second) continue;
@@ -5894,7 +5950,7 @@ private:
         if (m_hits.size() != from.hits || m_scrollers.size() != from.scrollers || m_swatches.size() != from.swatches || m_code_laid.size() != from.codes || m_term_views.size() != from.terms) return false;
         for (std::size_t i = from.ops; i < m_ops.size(); ++i) {
             const DrawOp::Kind k = m_ops[i].kind;
-            if (k == DrawOp::Kind::ClipPush || k == DrawOp::Kind::ClipPop || k == DrawOp::Kind::Math || k == DrawOp::Kind::Image) return false;
+            if (k == DrawOp::Kind::ClipPush || k == DrawOp::Kind::ClipPop || k == DrawOp::Kind::Math || k == DrawOp::Kind::Image || k == DrawOp::Kind::Custom) return false;
         }
         return true;
     }
@@ -6213,7 +6269,7 @@ private:
         if (element.tag() == "math") layout_math(element, content_x, cy, content_w);
         else if (element.tag() == "img") layout_image(element, content_x, cy, content_w);
         else if (element.tag() == "terminal") layout_terminal(r, element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
-        else if (element.tag() == "canvas") layout_canvas(element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
+        else if (is_canvas(element)) layout_canvas(element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
         else if (element.tag() == "br") cy += static_cast<float>(font_size_of(element));
         else if (element.tag() == "hr") {
             push_rect(DrawOp::Kind::Fill, content_x, cy + 4, content_w, 1, to_color(style.color("color").value_or(bark::Rgba{ 120, 120, 120, 255 })));
@@ -9254,6 +9310,12 @@ public:
             if (pos != target) m_last_activity = now;
         }
         if (m_dragging || m_pressed || m_code_drag || !m_dialogs_pending.empty()) m_last_activity = now;
+        for (const auto& [node, c] : document().host().canvases) {
+            if (c->rect.shown && document().is_attached(*node) && in_this_window(*node) && canvas_animating(document(), *node)) {
+                m_last_activity = now;
+                break;
+            }
+        }
         return std::chrono::duration<double>(now - m_last_activity).count() > 0.5;
     }
 

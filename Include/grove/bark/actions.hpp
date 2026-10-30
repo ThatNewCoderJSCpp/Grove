@@ -89,6 +89,30 @@ struct ActionCall {
 
 using ActionHandler = std::function<Flow(ActionCall&)>;
 
+struct FunctionCall {
+    std::string name;
+    std::vector<std::string> args;
+    const Value* value = nullptr;
+    Values* values = nullptr;
+    Runner* runner = nullptr;
+    std::string error;
+    bool failed = false;
+
+    std::string arg(std::size_t i, const std::string& fallback = {}) const { return i < args.size() ? args[i] : fallback; }
+    std::string rest(std::size_t from) const;
+    std::string fail(std::string message) { error = std::move(message); failed = true; return {}; }
+};
+
+using FunctionHandler = std::function<std::string(FunctionCall&)>;
+
+struct FunctionInfo {
+    std::string name;
+    std::string summary;
+    std::size_t min_args = 0;
+    std::size_t max_args = std::numeric_limits<std::size_t>::max();
+    bool interpolate = true;
+};
+
 struct ActionInfo {
     std::string name;
     std::string summary;
@@ -123,12 +147,31 @@ public:
     std::vector<ActionProblem> check(const Rule& rule) const;
     std::vector<ActionProblem> check(const std::vector<Declaration>& declarations) const;
 
+    Actions& function(FunctionInfo info, FunctionHandler handler);
+    Actions& function(const std::string& name, FunctionHandler handler);
+    Actions& function(const std::string& name, std::size_t min_args, std::size_t max_args, FunctionHandler handler);
+    Actions& add_standard_functions();
+    bool remove_function(const std::string& name);
+    bool has_function(const std::string& name) const;
+    const FunctionInfo* function_info(const std::string& name) const;
+    std::vector<std::string> function_names() const;
+
+    std::optional<std::string> evaluate(const Value& value, Values& values, std::string& error, Runner* runner = nullptr, bool interpolate_text = true) const;
+    std::optional<std::vector<std::string>> evaluate_all(const ValueList& values, Values& names, std::string& error, Runner* runner = nullptr, bool interpolate_text = true) const;
+    std::optional<std::string> setting(const Rule& rule, const std::string& name, Values& values, std::string* error = nullptr) const;
+
 private:
     struct Entry {
         ActionInfo info;
         ActionHandler handler;
     };
+    struct FunctionEntry {
+        FunctionInfo info;
+        FunctionHandler handler;
+    };
+    void check_functions(const ValueList& values, const Declaration& d, std::vector<ActionProblem>& out) const;
     std::map<std::string, Entry> m_entries;
+    std::map<std::string, FunctionEntry> m_functions;
 };
 
 std::optional<std::string> setting_of(const Rule& rule, const std::string& name);

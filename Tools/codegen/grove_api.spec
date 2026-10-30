@@ -172,6 +172,13 @@ size_t|grove_bark_call_line|const grove_bark_call* call
 grove_bark_values*|grove_bark_call_values|grove_bark_call* call
 grove_bark_runner*|grove_bark_call_runner|grove_bark_call* call
 int|grove_bark_call_fail|grove_bark_call* call, const char* message
+void|grove_bark_actions_add_function|grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values, unsigned flags, grove_bark_function_fn fn, void* user_data, grove_release_fn release
+void|grove_bark_actions_add_standard_functions|grove_bark_actions* actions
+bool|grove_bark_actions_has_function|const grove_bark_actions* actions, const char* name
+bool|grove_bark_actions_remove_function|grove_bark_actions* actions, const char* name
+const char*|grove_bark_evaluate_setting|const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const char* name, grove_bark_values* values
+const char*|grove_bark_evaluate_value|const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, size_t property, size_t index, grove_bark_values* values
+const char*|grove_bark_evaluate_error|void
 grove_bark_runner*|grove_bark_runner_new|const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const grove_bark_values* parent
 void|grove_bark_runner_free|grove_bark_runner* runner
 int|grove_bark_runner_run|grove_bark_runner* runner

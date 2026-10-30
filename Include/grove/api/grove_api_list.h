@@ -178,6 +178,13 @@
     X(grove_bark_values*, grove_bark_call_values, (grove_bark_call* call), (call)) \
     X(grove_bark_runner*, grove_bark_call_runner, (grove_bark_call* call), (call)) \
     X(int, grove_bark_call_fail, (grove_bark_call* call, const char* message), (call, message)) \
+    X(void, grove_bark_actions_add_function, (grove_bark_actions* actions, const char* name, size_t min_values, size_t max_values, unsigned flags, grove_bark_function_fn fn, void* user_data, grove_release_fn release), (actions, name, min_values, max_values, flags, fn, user_data, release)) \
+    X(void, grove_bark_actions_add_standard_functions, (grove_bark_actions* actions), (actions)) \
+    X(bool, grove_bark_actions_has_function, (const grove_bark_actions* actions, const char* name), (actions, name)) \
+    X(bool, grove_bark_actions_remove_function, (grove_bark_actions* actions, const char* name), (actions, name)) \
+    X(const char*, grove_bark_evaluate_setting, (const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const char* name, grove_bark_values* values), (actions, file, rule, name, values)) \
+    X(const char*, grove_bark_evaluate_value, (const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, size_t property, size_t index, grove_bark_values* values), (actions, file, rule, property, index, values)) \
+    X(const char*, grove_bark_evaluate_error, (void), ()) \
     X(grove_bark_runner*, grove_bark_runner_new, (const grove_bark_actions* actions, const grove_bark_file* file, size_t rule, const grove_bark_values* parent), (actions, file, rule, parent)) \
     X(void, grove_bark_runner_free, (grove_bark_runner* runner), (runner)) \
     X(int, grove_bark_runner_run, (grove_bark_runner* runner), (runner)) \
