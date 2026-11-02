@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    if [ "$(readlink /usr/bin/grove 2>/dev/null)" = "/opt/grove/bin/grove" ]; then
+        rm -f /usr/bin/grove
+    fi
+fi
+exit 0

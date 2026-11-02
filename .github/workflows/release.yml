@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config \
+          sudo apt-get install -y ninja-build pkg-config rpm dpkg-dev file xz-utils \
             libx11-dev libxft-dev libxrender-dev libfontconfig1-dev libfreetype-dev \
             libssl-dev libpango1.0-dev libcairo2-dev zlib1g-dev libjpeg-dev \
             libvulkan-dev libgl-dev
@@ -83,10 +83,33 @@ jobs:
           smoke/Grove-*/bin/grove version
           smoke/Grove-*/bin/grove check smoke/Grove-*/examples/hello/hello.grove
 
+      - name: Test the .deb
+        run: |
+          sudo apt-get install -y ./build/Grove-*.deb
+          test -x /opt/grove/bin/grove
+          test -L /usr/bin/grove
+          grove version
+          grove check /opt/grove/examples/hello/hello.grove
+          sudo apt-get remove -y grove
+          test ! -e /usr/bin/grove
+          test ! -e /opt/grove/bin/grove
+
+      - name: Check the .rpm
+        run: |
+          rpm -qpi build/Grove-*.rpm
+          rpm -qpl build/Grove-*.rpm | grep -x /opt/grove/bin/grove
+          rpm -qp --scripts build/Grove-*.rpm | grep -q "/usr/bin/grove"
+
       - uses: actions/upload-artifact@v4
         with:
           name: grove-linux-${{ matrix.arch }}
-          path: build/Grove-*.tar.gz
+          path: |
+            build/Grove-*.tar.gz
+            build/Grove-*.tar.xz
+            build/Grove-*.zip
+            build/Grove-*.deb
+            build/Grove-*.rpm
+          compression-level: 0
           if-no-files-found: error
 
   linux-i686:
@@ -100,7 +123,7 @@ jobs:
         run: |
           docker run --rm --platform linux/386 -v "$PWD:/src" -w /src i386/debian:bookworm bash -euo pipefail -c '
             apt-get update
-            apt-get install -y --no-install-recommends ca-certificates git g++ cmake ninja-build pkg-config file binutils \
+            apt-get install -y --no-install-recommends ca-certificates git g++ cmake ninja-build pkg-config file binutils rpm dpkg-dev xz-utils zip unzip \
               libx11-dev libxft-dev libxrender-dev libfontconfig-dev libfreetype-dev \
               libssl-dev libpango1.0-dev libcairo2-dev zlib1g-dev libjpeg-dev \
               libvulkan-dev libgl-dev
@@ -121,12 +144,24 @@ jobs:
             tar -xzf build/Grove-*.tar.gz -C smoke
             smoke/Grove-*/bin/grove version
             smoke/Grove-*/bin/grove check smoke/Grove-*/examples/hello/hello.grove
+            apt-get install -y ./build/Grove-*.deb
+            test -L /usr/bin/grove
+            grove version
+            apt-get remove -y grove
+            test ! -e /usr/bin/grove
+            rpm -qpl build/Grove-*.rpm | grep -x /opt/grove/bin/grove
           '
 
       - uses: actions/upload-artifact@v4
         with:
           name: grove-linux-i686
-          path: build/Grove-*.tar.gz
+          path: |
+            build/Grove-*.tar.gz
+            build/Grove-*.tar.xz
+            build/Grove-*.zip
+            build/Grove-*.deb
+            build/Grove-*.rpm
+          compression-level: 0
           if-no-files-found: error
 
   windows:
@@ -159,7 +194,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build nsis p7zip-full zip unzip
           if [ "${{ matrix.wine }}" = "true" ]; then sudo apt-get install -y wine64; fi
 
       - name: Cache llvm-mingw
@@ -229,10 +264,19 @@ jobs:
           wine smoke/Grove-*/bin/grove.exe version
           wine smoke/Grove-*/bin/grove.exe check smoke/Grove-*/examples/hello/hello.grove
 
+      - name: Check the 7z and the installer
+        run: |
+          ls -l build/Grove-*.zip build/Grove-*.7z build/Grove-*.exe
+          7z l build/Grove-*.7z | grep -i "grove.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: grove-${{ matrix.platform }}
-          path: build/Grove-*.zip
+          path: |
+            build/Grove-*.zip
+            build/Grove-*.7z
+            build/Grove-*.exe
+          compression-level: 0
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -290,6 +334,100 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$($root.FullName)/bin/grove.exe" check "$($root.FullName)/examples/hello/hello.grove"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install and uninstall with the installer
+        run: |
+          $exe = Get-ChildItem package/Grove-*.exe | Select-Object -First 1
+          $dir = "$env:RUNNER_TEMP\GroveInstall"
+          Start-Process -FilePath $exe.FullName -ArgumentList "/S", "/D=$dir" -Wait
+          if (-not (Test-Path "$dir\bin\grove.exe")) { Write-Error "the installer didn't put grove.exe in $dir\bin"; exit 1 }
+          & "$dir\bin\grove.exe" version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Start-Process -FilePath "$dir\Uninstall.exe" -ArgumentList "/S", "_?=$dir" -Wait
+          if (Test-Path "$dir\bin\grove.exe") { Write-Error "the uninstaller left grove.exe behind"; exit 1 }
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        if: matrix.arch == 'arm64'
+        run: |
+          brew update
+          brew install ninja pkg-config fontconfig freetype harfbuzz openssl@3 jpeg-turbo zlib vulkan-headers
+          echo "FIZMO_VULKAN_INC=$(brew --prefix vulkan-headers)/include" >> "$GITHUB_ENV"
+
+      - name: Install dependencies (Intel)
+        if: matrix.arch == 'x86_64'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_UPGRADE: 1
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        run: |
+          brew list --versions ninja pkgconf fontconfig freetype harfbuzz openssl@3 jpeg-turbo
+          git clone --depth 1 --branch v1.4.363 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+          echo "FIZMO_VULKAN_INC=$RUNNER_TEMP/vulkan-headers/include" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          prefix=$(brew --prefix)
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGROVE_PACKAGE=ON -DGROVE_WITH_WALNUT=OFF -DFIZMO_TUNE=OFF \
+            -DGROVE_PACKAGE_PLATFORM=macos-${{ matrix.arch }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
+            -DFIZMO_VULKAN_INCLUDE_DIR="$FIZMO_VULKAN_INC" \
+            -DCMAKE_PREFIX_PATH="$prefix;$(brew --prefix jpeg-turbo);$(brew --prefix zlib)"
+
+      - name: Build
+        timeout-minutes: 120
+        run: cmake --build build -j 4
+
+      - name: Test
+        timeout-minutes: 20
+        working-directory: build
+        run: ctest --output-on-failure --timeout 600
+
+      - name: Package
+        working-directory: build
+        run: cpack
+
+      - name: Test the archive
+        run: |
+          mkdir -p smoke
+          tar -xzf build/Grove-*.tar.gz -C smoke
+          app=$(echo smoke/Grove-*)
+          otool -L $app/bin/grove
+          $app/bin/grove version
+          $app/bin/grove check $app/examples/hello/hello.grove
+          homebrew="/opt/homebrew|/usr/local/(opt|Cellar|lib)/"
+          for f in $app/bin/grove $(ls $app/bin/lib/*.dylib 2>/dev/null); do
+            if otool -L "$f" | tail -n +2 | grep -E "$homebrew"; then
+              echo "::error::$f still links to Homebrew's copy of a library"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grove-macos-${{ matrix.arch }}
+          path: |
+            build/Grove-*.tar.gz
+            build/Grove-*.tar.xz
+            build/Grove-*.zip
+          compression-level: 0
+          if-no-files-found: error
 
   android:
     name: Android kit ${{ matrix.abi }}
@@ -352,15 +490,41 @@ jobs:
   publish:
     name: Attach Grove to the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, linux-i686, windows, windows-native, android-kit]
+    needs: [linux, linux-i686, windows, windows-native, macos, android-kit]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: grove-linux-*
           path: packages
           merge-multiple: true
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grove-windows-*
+          path: packages
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: grove-macos-*
+          path: packages
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: grove-android-kit
+          path: packages
+
+      - name: List the packages
+        run: |
+          ls -l packages
+          if ! ls packages/Grove-*-macos-* > /dev/null 2>&1; then
+            echo "::warning::the macOS builds failed, so this release has no macOS packages"
+          fi
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: packages/*
+          files: packages/Grove-*
           fail_on_unmatched_files: true
