@@ -156,15 +156,9 @@ std::vector<Chord> parse_chords(std::string_view text) {
 std::string chord_text(const Chord& c) {
     if (c.key.empty()) return std::string();
     std::string out;
-#if defined(__APPLE__)
-    if (c.ctrl) out += "Cmd+";
-    if (c.shift) out += "Shift+";
-    if (c.alt) out += "Option+";
-#else
     if (c.ctrl) out += "Ctrl+";
     if (c.shift) out += "Shift+";
     if (c.alt) out += "Alt+";
-#endif
     return out + c.key;
 }
 
@@ -173,6 +167,28 @@ std::string chords_text(const std::vector<Chord>& chords) {
     for (const Chord& c : chords) {
         if (!out.empty()) out += ", ";
         out += chord_text(c);
+    }
+    return out;
+}
+
+std::string chord_display_text(const Chord& c) {
+#if defined(__APPLE__)
+    if (c.key.empty()) return std::string();
+    std::string out;
+    if (c.ctrl) out += "Cmd+";
+    if (c.shift) out += "Shift+";
+    if (c.alt) out += "Option+";
+    return out + c.key;
+#else
+    return chord_text(c);
+#endif // defined(__APPLE__)
+}
+
+std::string chords_display_text(const std::vector<Chord>& chords) {
+    std::string out;
+    for (const Chord& c : chords) {
+        if (!out.empty()) out += ", ";
+        out += chord_display_text(c);
     }
     return out;
 }

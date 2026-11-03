@@ -1594,6 +1594,12 @@ void test_keymap() {
     CHECK(grove::code_action_for(map, *grove::parse_chord("Ctrl+Alt+Click")).value_or("") == "add-caret");
     CHECK(grove::code_action_for({}, *grove::parse_chord("Ctrl+Click")).value_or("") == "go-to-definition");
     CHECK(grove::keymap_text(map) == "add-caret=Ctrl+Alt+Click; copy=Ctrl+Shift+C; redo=none");
+    CHECK(grove::parse_chord(grove::chord_display_text(*c)) == c);
+#if defined(__APPLE__)
+    CHECK(grove::chord_display_text(*c) == "Cmd+Shift+M" && grove::chords_display_text(many) == "Cmd+Y, Cmd+Shift+Z, Cmd+,");
+#else
+    CHECK(grove::chord_display_text(*c) == "Ctrl+Shift+M" && grove::chords_display_text(many) == "Ctrl+Y, Ctrl+Shift+Z, Ctrl+,");
+#endif // defined(__APPLE__)
 }
 
 void test_dump_options() {

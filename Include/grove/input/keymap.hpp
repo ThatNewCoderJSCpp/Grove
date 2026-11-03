@@ -29,6 +29,8 @@ std::optional<Chord> parse_chord(std::string_view text);
 std::vector<Chord> parse_chords(std::string_view text);
 std::string chord_text(const Chord& chord);
 std::string chords_text(const std::vector<Chord>& chords);
+std::string chord_display_text(const Chord& chord);
+std::string chords_display_text(const std::vector<Chord>& chords);
 Chord chord_of(std::string_view key_name, unsigned modifiers);
 bool is_modifier_key(std::string_view key_name);
 
