@@ -71,6 +71,10 @@ jobs:
             echo "::error::grove links to a library users may not have"
             exit 1
           fi
+          if readelf -d build/grove | grep NEEDED | grep -E "libpulse|libasound"; then
+            echo "::error::grove links to PulseAudio or ALSA; fizmo::audio should only load them when something plays"
+            exit 1
+          fi
 
       - name: Package
         working-directory: build
@@ -82,6 +86,12 @@ jobs:
           tar -xzf build/Grove-*.tar.gz -C smoke
           smoke/Grove-*/bin/grove version
           smoke/Grove-*/bin/grove check smoke/Grove-*/examples/hello/hello.grove
+          printf '<body><audio id="song" src="missing.ogg" controls /><audio_meter for="song" /></body>\n' > smoke/audio.grove
+          smoke/Grove-*/bin/grove check smoke/audio.grove 2>&1 | tee smoke/audio.txt
+          grep -q "can't find the audio file 'missing.ogg'" smoke/audio.txt
+          printf '<body><video id="clip" src="missing.mp4" controls /></body>\n' > smoke/video.grove
+          smoke/Grove-*/bin/grove check smoke/video.grove 2>&1 | tee smoke/video.txt
+          grep -q "can't find the video file 'missing.mp4'" smoke/video.txt
 
       - name: Test the .deb
         run: |
@@ -263,6 +273,12 @@ jobs:
           unzip -q build/Grove-*.zip -d smoke
           wine smoke/Grove-*/bin/grove.exe version
           wine smoke/Grove-*/bin/grove.exe check smoke/Grove-*/examples/hello/hello.grove
+          printf '<body><audio id="song" src="missing.ogg" controls /><audio_meter for="song" /></body>\n' > smoke/audio.grove
+          wine smoke/Grove-*/bin/grove.exe check smoke/audio.grove 2>&1 | tee smoke/audio.txt
+          grep -q "can't find the audio file 'missing.ogg'" smoke/audio.txt
+          printf '<body><video id="clip" src="missing.mp4" controls /></body>\n' > smoke/video.grove
+          wine smoke/Grove-*/bin/grove.exe check smoke/video.grove 2>&1 | tee smoke/video.txt
+          grep -q "can't find the video file 'missing.mp4'" smoke/video.txt
 
       - name: Check the 7z and the installer
         run: |

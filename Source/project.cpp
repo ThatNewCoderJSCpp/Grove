@@ -3,6 +3,7 @@
 #include "grove/bark/parser.hpp"
 #include "grove/input/input.hpp"
 #include "grove/input/quantity.hpp"
+#include "grove/media.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -183,6 +184,14 @@ bool path_exists(const std::string& path) {
     return std::filesystem::exists(path, ec);
 }
 
+bool is_virtual_file(const std::string& path) {
+    return !virtual_files().empty() && virtual_files().count(virtual_file_key(path)) != 0;
+}
+
+bool has_file_read_observer() {
+    return static_cast<bool>(file_read_observer());
+}
+
 void set_file_read_observer(FileReadObserver observer) {
     file_read_observer() = std::move(observer);
 }
@@ -271,7 +280,7 @@ bool all_digits(const std::string& s) {
 void apply_declaration(Project& project) {
     const Document& doc = project.document;
     const Span span = doc.declaration_span();
-    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on", "storage", "max-fps", "idle-fps", "vsync" };
+    static const char* const known[] = { "type", "package", "label", "version", "version-code", "icon", "orientation", "min-sdk", "target-sdk", "abi", "fullscreen", "keep-screen-on", "storage", "max-fps", "idle-fps", "vsync", "microphone" };
     for (const auto& entry : doc.declarations()) {
         const std::string& key = entry.first;
         bool listed = false;
@@ -284,7 +293,7 @@ void apply_declaration(Project& project) {
         else project.diagnostics.error(project.path, span, "<!GROVE type=\"" + type + "\"> isn't a target; use desktop or android");
     }
     if (!project.android()) {
-        for (const char* key : { "package", "version-code", "orientation", "min-sdk", "target-sdk", "abi", "storage" }) {
+        for (const char* key : { "package", "version-code", "orientation", "min-sdk", "target-sdk", "abi", "storage", "microphone" }) {
             if (doc.has_declaration(key)) project.diagnostics.warning(project.path, span, std::string("'") + key + "' only matters with <!GROVE type=android>");
         }
         return;
@@ -306,6 +315,8 @@ void apply_declaration(Project& project) {
     }
     const std::string storage = doc.declaration("storage");
     if (!storage.empty() && storage != "app" && storage != "all") project.diagnostics.error(project.path, span, "storage \"" + storage + "\" isn't app or all");
+    const std::string microphone = doc.declaration("microphone");
+    if (!microphone.empty() && microphone != "yes" && microphone != "no" && microphone != "true" && microphone != "false" && microphone != "auto") project.diagnostics.error(project.path, span, "microphone \"" + microphone + "\" isn't yes, no or auto");
     const std::string icon = doc.declaration("icon");
     if (!icon.empty() && !read_file(resolve_path(project.base_dir, icon))) project.diagnostics.warning(project.path, span, "can't find the app icon '" + icon + "'");
 }
@@ -320,6 +331,11 @@ void check_android(Project& project) {
             else if (mode == "save") project.diagnostics.warning(project.path, n.span(), "<input_file mode=\"save\"> can only save outside the app's own storage on Android with <!GROVE storage=all>");
         }
     });
+    const std::string microphone = project.document.declaration("microphone");
+    if (microphone == "no" || microphone == "false") {
+        const std::string use = microphone_use(project);
+        if (!use.empty()) project.diagnostics.warning(project.path, project.document.declaration_span(), "the document uses the microphone (" + use + "), but <!GROVE microphone=no> leaves the RECORD_AUDIO permission out, so recording fails on Android");
+    }
 }
 
 void check_assets(Project& project) {
@@ -332,6 +348,14 @@ void check_assets(Project& project) {
         if (n.tag() == "img" && n.has_attribute("src")) paths.push_back(n.attribute_or("src", ""));
         for (const std::string& p : paths) {
             if (!read_file(resolve_path(project.base_dir, p))) project.diagnostics.warning(project.path, n.span(), "can't find image '" + p + "'");
+        }
+        if (is_media(n) || is_audio_meter(n)) {
+            const std::string what = "<" + n.tag() + (n.id().empty() ? std::string() : " id=\"" + n.id() + "\"") + "> ";
+            for (const std::string& problem : media_problems(project.document, n)) project.diagnostics.warning(project.path, n.span(), what + problem);
+            const std::string src = n.attribute_or("src", "");
+            if (is_media(n) && !src.empty() && has_file_read_observer()) read_file(media_path(project.document, src));
+            const std::string poster = n.attribute_or("poster", "");
+            if (is_video(n) && !poster.empty() && has_file_read_observer()) read_file(media_path(project.document, poster));
         }
     });
 }
@@ -347,6 +371,7 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     std::vector<std::string> chain{ std::filesystem::path(path).lexically_normal().generic_string() };
     include_pages(project, project.document.root(), chain);
     expand_quantity_inputs(project.document);
+    expand_media_elements(project.document);
     check_structure(project);
     project.styles.add(bark::default_stylesheet());
     load_styles(project);
@@ -357,6 +382,43 @@ Project load_project_from_source(std::string_view source, const std::string& pat
     check_assets(project);
     if (project.android()) check_android(project);
     return project;
+}
+
+namespace {
+
+std::string script_text(const ScriptBlock& script) {
+    if (script.inline_code || script.source_path.empty()) return script.code;
+    if (is_virtual_file(script.source_path)) return read_file(script.source_path).value_or(std::string());
+    std::ifstream in(script.source_path, std::ios::binary);
+    if (!in) return std::string();
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+} // namespace
+
+std::string microphone_use(const Project& project) {
+    std::string found;
+    project.document.root().walk([&found](const Node& n) {
+        if (!found.empty() || !is_audio_meter(n)) return;
+        const std::string target = n.attribute_or("for", "");
+        if (target.rfind("monitor:", 0) == 0 || target.rfind("monitor-input:", 0) == 0) found = "<audio_meter for=\"" + target + "\">";
+    });
+    if (!found.empty()) return found;
+    for (const ScriptBlock& script : project.scripts) {
+        const std::string text = script_text(script);
+        for (const char* call : { "start_monitor", "grove_monitor_start" }) {
+            if (text.find(call) == std::string::npos) continue;
+            const std::string where = script.inline_code || script.source_path.empty() ? std::string("a <script>") : std::filesystem::path(script.source_path).filename().generic_string();
+            return std::string(call) + " in " + where;
+        }
+    }
+    return std::string();
+}
+
+bool uses_microphone(const Project& project) {
+    return !microphone_use(project).empty();
 }
 
 const char* target_name(Target target) noexcept {

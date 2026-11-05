@@ -1,0 +1,70 @@
+import module.grove
+
+grove::Element: beep = grove::get_by_id("beep");
+grove::Element: state = grove::get_by_id("state");
+
+beep.on("play", [&](grove::Event&: e) -> void {
+    state.set_inner_text("playing");
+});
+
+beep.on("ended", [&](grove::Event&: e) -> void {
+    state.set_inner_text("ended at " + beep.position().to_string());
+});
+
+beep.on("error", [&](grove::Event&: e) -> void {
+    state.set_inner_text("error: " + e.input_text());
+});
+
+function walnut_audio_checks() -> string {
+    long int: fx = grove::create_effect("pitch_shifter");
+    bool: set = grove::set_effect(fx, "semitones", 3.0);
+    short float: semis = grove::effect_value(fx, "semitones");
+    long int: chain = grove::create_effect("chain");
+    bool: added = grove::chain_add(chain, fx);
+    long int: count = grove::effect_param_count(fx);
+    string: first = grove::effect_param_name(fx, 0l);
+    long int: sound = grove::preload_sound("beep.wav");
+    long int: outputs = grove::audio_device_count(false);
+    string: out_id = grove::audio_device_id(false, 0l);
+    string: out_name = grove::audio_device_name(false, 0l);
+    grove::set_master_volume(0.9);
+    short float: master = grove::master_volume();
+    short float: level = grove::master_level();
+    bool: device = grove::set_output_device("");
+    string: current = grove::output_device();
+    string: err = grove::audio_error();
+    bool: loaded = grove::sound_loaded(sound);
+    long int: id = grove::play_sound("beep.wav", 0.5, 0.0, false);
+    long int: id2 = grove::play_sound(sound, 0.5, -0.25, false);
+    bool: vol = grove::set_sound_volume(id2, 0.25);
+    bool: playing = grove::sound_playing(id2);
+    bool: stopped = grove::stop_sound(id);
+    grove::stop_all_sounds();
+    bool: enabled = grove::set_effect_enabled(fx, true);
+    bool: removed = grove::chain_remove(chain, 0l);
+    long int: monitor = grove::start_monitor("", "", chain);
+    bool: mon_fx = grove::set_monitor_effect(monitor, fx);
+    short float: mic_in = grove::monitor_input_level(monitor);
+    short float: mic_out = grove::monitor_output_level(monitor);
+    bool: mon_stop = grove::stop_monitor(monitor);
+    bool: freed = grove::free_effect(fx);
+    bool: unloaded = grove::unload_sound(sound);
+    beep.set_volume(0.75);
+    beep.set_muted(false);
+    beep.set_loop(false);
+    beep.set_rate(1.0);
+    short float: v = beep.volume();
+    bool: m = beep.muted();
+    bool: l = beep.loops();
+    short float: r = beep.rate();
+    short float: d = beep.duration();
+    bool: p = beep.is_playing();
+    string: media_err = beep.media_error();
+    short float: lvl = grove::get_by_id("beep-meter").level();
+    if (set && added && semis > 2.5 && count > 0l && first != "" && outputs > 0l && mon_stop && freed && v > 0.7 && !m && !l && r > 0.9) then {
+        return "walnut ok";
+    }
+    return "walnut failed";
+} end function walnut_audio_checks
+
+grove::get_by_id("walnut").set_inner_text(walnut_audio_checks());

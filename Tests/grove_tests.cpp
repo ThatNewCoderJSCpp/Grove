@@ -9,6 +9,7 @@
 #include "grove/input/element_table.hpp"
 #include "grove/input/ion_select.hpp"
 #include "grove/math_input.hpp"
+#include "grove/android_package.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -1372,6 +1373,33 @@ void test_natives() {
         return std::vector<std::string>{ "/picked/" + req.mode, "/second" };
     };
     CHECK(std::string(grove_file_dialog(handle, "folder", "Pick", "", true)) == "/picked/folder\n/second");
+    doc.host().file_dialog = [](const grove::FileDialogRequest&) {
+        return std::vector<std::string>{ "/a/photo.PNG", "/a/notes.txt", "/a/tool.exe" };
+    };
+    CHECK(std::string(grove_file_dialog(handle, "open", "Pick", "Images: *.png *.jpg", true)) == "/a/photo.PNG\n/a/notes.txt\n/a/tool.exe");
+    CHECK(std::string(grove_file_dialog_checked(handle, "open", "Pick", "Images: *.png *.jpg", "", true, true)) == "/a/photo.PNG");
+    CHECK(std::string(grove_file_dialog_checked(handle, "open", "Pick", "", "*.exe *.dll", false, true)) == "/a/photo.PNG\n/a/notes.txt");
+    CHECK(std::string(grove_file_dialog_checked(handle, "open", "Pick", "Images: *.png; All files: *", "*.exe", true, true)) == "/a/photo.PNG\n/a/notes.txt");
+    CHECK(std::string(grove_file_dialog_checked(handle, "open", "Pick", "*.png", "*.exe", false, true)) == "/a/photo.PNG\n/a/notes.txt");
+    grove::FileDialogRequest checked;
+    checked.filter = "Images: *.png, *.jp?g; Text: *.txt";
+    checked.reject = "secret*";
+    checked.enforce = true;
+    std::vector<std::string> rejected;
+    const std::vector<std::string> kept = grove::run_file_dialog(doc, checked, rejected);
+    CHECK(kept.size() == 2 && kept[0] == "/a/photo.PNG" && kept[1] == "/a/notes.txt" && rejected.size() == 1 && rejected[0] == "/a/tool.exe");
+    CHECK(grove::file_patterns("Images: *.png, *.jp?g; Text: *.txt").size() == 3);
+    CHECK(grove::file_pattern_matches("*.jp?g", "Cat.JPEG") && grove::file_pattern_matches("*.jp?g", "c.jpeg") && !grove::file_pattern_matches("*.jp?g", "c.jpg"));
+    CHECK(grove::file_pattern_matches("a*b*c", "aXXbYc") && !grove::file_pattern_matches("a*b*c", "aXXbY") && grove::file_pattern_matches("*", ""));
+    CHECK(!grove::file_allowed(checked, "C:\\keys\\secret.txt") && grove::file_allowed(checked, "C:\\docs\\plan.txt") && !grove::file_allowed(checked, "/a/Makefile"));
+    checked.mode = "folder";
+    CHECK(grove::file_allowed(checked, "/home/me/projects/") && !grove::file_allowed(checked, "/home/me/secrets/"));
+    checked.mode = "open";
+    checked.filter = "*.*";
+    CHECK(grove::file_allowed(checked, "/a/Makefile"));
+    checked.enforce = false;
+    checked.filter = "*.png";
+    CHECK(grove::file_allowed(checked, "/a/notes.txt") && !grove::file_allowed(checked, "/a/secret.png"));
     CHECK(grove::unregister_native(doc, "add") && !grove::has_native(doc, "add"));
 }
 
@@ -2376,8 +2404,96 @@ void test_gpu_canvas() {
     CHECK(calls == 0);
 }
 
+bool has_message(const grove::Diagnostics& diagnostics, grove::Severity severity, const std::string& part) {
+    for (const grove::Diagnostic& d : diagnostics.items()) {
+        if (d.severity == severity && d.message.find(part) != std::string::npos) return true;
+    }
+    return false;
+}
+
+void test_android_microphone() {
+    const std::string record = "android.permission.RECORD_AUDIO";
+    grove::AndroidManifestInfo info;
+    info.package = "org.grove.mic";
+    info.label = "Mic";
+    CHECK(!info.microphone);
+    CHECK(grove::android_manifest_xml(info).find(record) == std::string::npos);
+    info.microphone = true;
+    const std::string with_mic = grove::android_manifest_xml(info);
+    CHECK(with_mic.find("<uses-permission android:name=\"" + record + "\"/>") != std::string::npos);
+    CHECK(with_mic.find("android.hardware.microphone\" android:required=\"false\"") != std::string::npos);
+    CHECK(with_mic.find("android.permission.INTERNET") != std::string::npos);
+
+    auto manifest_for = [&](const grove::Project& project, const std::map<std::string, std::string>& overrides = {}) {
+        grove::AndroidManifestInfo m;
+        m.package = "org.grove.mic";
+        m.label = "Mic";
+        m.microphone = grove::android_microphone_wanted(project, overrides);
+        return grove::android_manifest_xml(m);
+    };
+    const std::string meter_body = "<body><audio_meter id=\"m\" for=\"monitor-input:1\" /></body>";
+    const std::string script_body = "<body><p>hi</p><script>long int: mic = grove::start_monitor(\"\", \"\", 0);</script></body>";
+    const std::string plain_body = "<body><audio_meter id=\"m\" /></body>";
+
+    grove::Project meter = grove::load_project_from_source("<!GROVE type=android>" + meter_body, "mic.grove", ".");
+    CHECK(meter.diagnostics.ok() && meter.diagnostics.warning_count() == 0);
+    CHECK(grove::uses_microphone(meter));
+    CHECK(grove::microphone_use(meter).find("monitor-input:1") != std::string::npos);
+    CHECK(manifest_for(meter).find(record) != std::string::npos);
+
+    grove::Project script = grove::load_project_from_source("<!GROVE type=android microphone=auto>" + script_body, "mic.grove", ".");
+    CHECK(script.diagnostics.ok() && script.diagnostics.warning_count() == 0);
+    CHECK(grove::uses_microphone(script));
+    CHECK(grove::microphone_use(script).find("start_monitor") != std::string::npos);
+    CHECK(manifest_for(script).find(record) != std::string::npos);
+
+    grove::Project plain = grove::load_project_from_source("<!GROVE type=android>" + plain_body, "mic.grove", ".");
+    CHECK(plain.diagnostics.ok() && plain.diagnostics.warning_count() == 0);
+    CHECK(!grove::uses_microphone(plain));
+    CHECK(manifest_for(plain).find(record) == std::string::npos);
+    CHECK(manifest_for(plain, { { "microphone", "yes" } }).find(record) != std::string::npos);
+
+    grove::Project forced = grove::load_project_from_source("<!GROVE type=android microphone=yes>" + plain_body, "mic.grove", ".");
+    CHECK(forced.diagnostics.ok() && forced.diagnostics.warning_count() == 0);
+    CHECK(manifest_for(forced).find(record) != std::string::npos);
+    grove::Project bare = grove::load_project_from_source("<!GROVE type=android microphone>" + plain_body, "mic.grove", ".");
+    CHECK(bare.diagnostics.ok() && bare.diagnostics.warning_count() == 0);
+    CHECK(manifest_for(bare).find(record) != std::string::npos);
+
+    grove::Project off = grove::load_project_from_source("<!GROVE type=android microphone=no>" + meter_body, "mic.grove", ".");
+    CHECK(off.diagnostics.ok() && off.diagnostics.warning_count() == 1);
+    CHECK(has_message(off.diagnostics, grove::Severity::Warning, "microphone=no"));
+    CHECK(has_message(off.diagnostics, grove::Severity::Warning, "RECORD_AUDIO"));
+    CHECK(manifest_for(off).find(record) == std::string::npos);
+    CHECK(manifest_for(off, { { "microphone", "auto" } }).find(record) != std::string::npos);
+
+    grove::Project off_script = grove::load_project_from_source("<!GROVE type=android microphone=false>" + script_body, "mic.grove", ".");
+    CHECK(off_script.diagnostics.warning_count() == 1 && has_message(off_script.diagnostics, grove::Severity::Warning, "start_monitor"));
+    CHECK(manifest_for(off_script).find(record) == std::string::npos);
+
+    grove::Project off_unused = grove::load_project_from_source("<!GROVE type=android microphone=no>" + plain_body, "mic.grove", ".");
+    CHECK(off_unused.diagnostics.ok() && off_unused.diagnostics.warning_count() == 0);
+
+    grove::Project wrong = grove::load_project_from_source("<!GROVE type=android microphone=maybe>" + plain_body, "mic.grove", ".");
+    CHECK(!wrong.diagnostics.ok() && has_message(wrong.diagnostics, grove::Severity::Error, "microphone \"maybe\""));
+
+    grove::Project desktop = grove::load_project_from_source("<!GROVE microphone=no>" + meter_body, "mic.grove", ".");
+    CHECK(desktop.diagnostics.ok() && desktop.diagnostics.warning_count() == 1);
+    CHECK(has_message(desktop.diagnostics, grove::Severity::Warning, "'microphone' only matters with <!GROVE type=android>"));
+
+    grove::set_virtual_files({ { "/virtual-mic/app.grove", "" }, { "/virtual-mic/mic.c", "#include <grove/grove_api.h>\nvoid go(void) { grove_monitor_start(\"\", \"\", 0); }\n" } });
+    grove::Project file_script = grove::load_project_from_source("<!GROVE type=android microphone=no><body><script src=\"mic.c\"></script></body>", "/virtual-mic/app.grove", "/virtual-mic");
+    grove::set_virtual_files({});
+    CHECK(file_script.diagnostics.warning_count() == 1 && has_message(file_script.diagnostics, grove::Severity::Warning, "grove_monitor_start in mic.c"));
+
+    CHECK(grove::audio::update_monitors().empty());
+    CHECK(!grove::audio::monitor_waiting(12345));
+    CHECK(grove::audio::monitor_error(12345).empty());
+}
+
 int main() {
     test_markup();
+    test_android_microphone();
     test_markup_errors();
     test_bark();
     test_bark_errors();

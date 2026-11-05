@@ -721,6 +721,10 @@ std::string android_manifest_xml(const AndroidManifestInfo& info) {
         x += "    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\"/>\n";
         x += "    <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\"/>\n";
     }
+    if (info.microphone) {
+        x += "    <uses-permission android:name=\"android.permission.RECORD_AUDIO\"/>\n";
+        x += "    <uses-feature android:name=\"android.hardware.microphone\" android:required=\"false\"/>\n";
+    }
     x += "    <application android:label=\"" + label + "\" android:hasCode=\"" + std::string(info.has_code ? "true" : "false") + "\" android:extractNativeLibs=\"true\"";
     if (info.all_files && (info.platform_api == 0 || info.platform_api >= 29)) x += " android:requestLegacyExternalStorage=\"true\"";
     if (info.icon) x += " android:icon=\"@mipmap/ic_launcher\"";
@@ -742,6 +746,15 @@ std::string android_manifest_xml(const AndroidManifestInfo& info) {
     x += "    </application>\n";
     x += "</manifest>\n";
     return x;
+}
+
+bool android_microphone_wanted(const Project& project, const std::map<std::string, std::string>& declarations) {
+    const auto given = declarations.find("microphone");
+    const bool declared = given != declarations.end() || project.document.has_declaration("microphone");
+    const std::string value = given != declarations.end() ? given->second : project.document.declaration("microphone");
+    if (value == "yes" || value == "true" || (declared && value.empty())) return true;
+    if (value == "no" || value == "false") return false;
+    return uses_microphone(project);
 }
 
 namespace {
@@ -984,6 +997,7 @@ bool package_apk(Project& project, const std::string& document_path, const Andro
     info.all_files = decl("storage") == "all";
     info.lib_name = lib_name;
     info.platform_api = platform.api;
+    info.microphone = android_microphone_wanted(project, options.declarations);
 
     const fs::path res = work / "res";
     fs::remove_all(res, ec);

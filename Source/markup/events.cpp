@@ -1,6 +1,7 @@
 #include "grove/markup/events.hpp"
 #include "grove/markup/node.hpp"
 #include "grove/input/quantity.hpp"
+#include "grove/media.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -115,6 +116,7 @@ bool EventRegistry::dispatch(Document& document, Node* target, Event& event) {
     }
     event.current_target = nullptr;
     m_stack.pop_back();
+    if (target && !event.default_prevented) media_event(document, *target, event);
     return !event.default_prevented;
 }
 
@@ -145,6 +147,13 @@ bool EventRegistry::clear_timer(std::uint64_t id) {
         if (it->id != id) continue;
         m_timers.erase(it);
         return true;
+    }
+    return false;
+}
+
+bool EventRegistry::has_timer(std::uint64_t id) const noexcept {
+    for (const Timer& t : m_timers) {
+        if (t.id == id) return true;
     }
     return false;
 }

@@ -1,0 +1,17 @@
+<grove>
+    <head>
+        <title>Audio API</title>
+        <script lang="walnut" src="audio_api.wal"></script>
+        <script lang="c++" src="audio_api.cpp"></script>
+        <script lang="c" src="audio_api.c" entry="audio_c_start"></script>
+    </head>
+    <body>
+        <audio id="beep" src="beep.wav" controls volume="0.8" />
+        <audio_meter id="beep-meter" for="beep" />
+        <audio_meter id="master-meter" />
+        <p id="state">idle</p>
+        <p id="walnut">-</p>
+        <p id="cpp">-</p>
+        <p id="c">-</p>
+    </body>
+</grove>

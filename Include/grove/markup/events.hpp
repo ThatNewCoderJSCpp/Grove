@@ -65,6 +65,7 @@ public:
     bool clear_timer(std::uint64_t id);
     std::size_t run_due_timers();
     std::size_t timer_count() const noexcept { return m_timers.size(); }
+    bool has_timer(std::uint64_t id) const noexcept;
     double next_timer_due() const;
 
     double now() const { return m_clock(); }

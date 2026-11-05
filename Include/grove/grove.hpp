@@ -27,6 +27,8 @@
 #include "pages.hpp"
 #include "bundle.hpp"
 #include "app.hpp"
+#include "media.hpp"
+#include "audio.hpp"
 #include <grove/version.hpp>
 
 #endif // GROVE_GROVE_HPP

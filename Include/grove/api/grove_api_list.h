@@ -196,6 +196,59 @@
     X(const char*, grove_bark_runner_error, (const grove_bark_runner* runner), (runner)) \
     X(grove_bark_values*, grove_bark_runner_values, (grove_bark_runner* runner), (runner)) \
     X(size_t, grove_bark_runner_position, (const grove_bark_runner* runner), (runner)) \
-    X(size_t, grove_bark_runner_size, (const grove_bark_runner* runner), (runner))
+    X(size_t, grove_bark_runner_size, (const grove_bark_runner* runner), (runner)) \
+    X(const char*, grove_file_dialog_checked, (grove_document* document, const char* mode, const char* title, const char* filter, const char* reject, bool enforce, bool multiple), (document, mode, title, filter, reject, enforce, multiple)) \
+    X(bool, grove_media_play, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_media_pause, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_media_stop, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_media_seek, (grove_document* document, grove_element* element, double seconds), (document, element, seconds)) \
+    X(double, grove_media_position, (grove_document* document, grove_element* element), (document, element)) \
+    X(double, grove_media_duration, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_media_is_playing, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_media_set_volume, (grove_document* document, grove_element* element, double volume), (document, element, volume)) \
+    X(bool, grove_media_set_muted, (grove_document* document, grove_element* element, bool muted), (document, element, muted)) \
+    X(bool, grove_media_set_loop, (grove_document* document, grove_element* element, bool loop), (document, element, loop)) \
+    X(bool, grove_media_set_rate, (grove_document* document, grove_element* element, double rate), (document, element, rate)) \
+    X(bool, grove_media_set_src, (grove_document* document, grove_element* element, const char* src), (document, element, src)) \
+    X(const char*, grove_media_error, (grove_document* document, grove_element* element), (document, element)) \
+    X(double, grove_media_level, (grove_document* document, grove_element* element), (document, element)) \
+    X(int64_t, grove_sound_preload, (grove_document* document, const char* path), (document, path)) \
+    X(bool, grove_sound_loaded, (int64_t sound), (sound)) \
+    X(bool, grove_sound_unload, (int64_t sound), (sound)) \
+    X(int64_t, grove_sound_play, (grove_document* document, const char* path, double volume, double pan, bool loop), (document, path, volume, pan, loop)) \
+    X(int64_t, grove_sound_play_preloaded, (int64_t sound, double volume, double pan, bool loop), (sound, volume, pan, loop)) \
+    X(bool, grove_sound_stop, (int64_t id), (id)) \
+    X(bool, grove_sound_set_volume, (int64_t id, double volume), (id, volume)) \
+    X(bool, grove_sound_is_playing, (int64_t id), (id)) \
+    X(void, grove_sound_stop_all, (void), ()) \
+    X(void, grove_audio_set_master_volume, (double volume), (volume)) \
+    X(double, grove_audio_master_volume, (void), ()) \
+    X(double, grove_audio_master_level, (void), ()) \
+    X(size_t, grove_audio_device_count, (bool input), (input)) \
+    X(const char*, grove_audio_device_id, (bool input, size_t index), (input, index)) \
+    X(const char*, grove_audio_device_name, (bool input, size_t index), (input, index)) \
+    X(bool, grove_audio_set_output_device, (const char* id), (id)) \
+    X(const char*, grove_audio_output_device, (void), ()) \
+    X(const char*, grove_audio_error, (void), ()) \
+    X(int64_t, grove_effect_create, (const char* type), (type)) \
+    X(bool, grove_effect_free, (int64_t effect), (effect)) \
+    X(bool, grove_effect_set, (int64_t effect, const char* name, double value), (effect, name, value)) \
+    X(double, grove_effect_get, (int64_t effect, const char* name), (effect, name)) \
+    X(size_t, grove_effect_param_count, (int64_t effect), (effect)) \
+    X(const char*, grove_effect_param_name, (int64_t effect, size_t index), (effect, index)) \
+    X(bool, grove_effect_set_enabled, (int64_t effect, bool enabled), (effect, enabled)) \
+    X(bool, grove_effect_chain_add, (int64_t chain, int64_t effect), (chain, effect)) \
+    X(bool, grove_effect_chain_remove, (int64_t chain, size_t index), (chain, index)) \
+    X(int64_t, grove_monitor_start, (const char* input_device, const char* output_device, int64_t effect), (input_device, output_device, effect)) \
+    X(bool, grove_monitor_stop, (int64_t monitor), (monitor)) \
+    X(bool, grove_monitor_set_effect, (int64_t monitor, int64_t effect), (monitor, effect)) \
+    X(double, grove_monitor_input_level, (int64_t monitor), (monitor)) \
+    X(double, grove_monitor_output_level, (int64_t monitor), (monitor)) \
+    X(double, grove_video_width, (grove_document* document, grove_element* element), (document, element)) \
+    X(double, grove_video_height, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_video_set_fullscreen, (grove_document* document, grove_element* element, bool fullscreen), (document, element, fullscreen)) \
+    X(bool, grove_video_is_fullscreen, (grove_document* document, grove_element* element), (document, element)) \
+    X(size_t, grove_video_snapshot, (grove_document* document, grove_element* element, uint8_t* rgba, size_t capacity, uint32_t* width, uint32_t* height), (document, element, rgba, capacity, width, height)) \
+    X(bool, grove_video_snapshot_to_canvas, (grove_document* document, grove_element* element, grove_element* canvas), (document, element, canvas))
 
 #endif // GROVE_API_LIST_H

@@ -7,6 +7,8 @@
 #include "grove/windowing.hpp"
 #include "grove/native.hpp"
 #include "grove/pages.hpp"
+#include "grove/media.hpp"
+#include "grove/audio.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -680,6 +682,24 @@ const char* grove_file_dialog(grove_document* document, const char* mode, const 
     return keep(joined);
 }
 
+const char* grove_file_dialog_checked(grove_document* document, const char* mode, const char* title, const char* filter, const char* reject, bool enforce, bool multiple) {
+    if (!document) return "";
+    grove::FileDialogRequest request;
+    request.mode = mode && *mode ? mode : "open";
+    request.title = title ? title : "";
+    request.filter = filter ? filter : "";
+    request.reject = reject ? reject : "";
+    request.enforce = enforce;
+    request.multiple = multiple;
+    const std::vector<std::string> paths = grove::run_file_dialog(*doc_of(document), request);
+    std::string joined;
+    for (const std::string& p : paths) {
+        if (!joined.empty()) joined += '\n';
+        joined += p;
+    }
+    return keep(joined);
+}
+
 bool grove_show_page(grove_document* document, grove_element* page) {
     return document && page && grove::show_page(*doc_of(document), *node_of(page));
 }
@@ -702,6 +722,239 @@ bool grove_navigate(grove_document* document, const char* target) {
 
 bool grove_is_current(const grove_element* element) {
     return element && grove::is_navigation_current(*node_of(element));
+}
+
+bool grove_media_play(grove_document* document, grove_element* element) {
+    return document && element && grove::media_play(*doc_of(document), *node_of(element));
+}
+
+bool grove_media_pause(grove_document* document, grove_element* element) {
+    return document && element && grove::media_pause(*doc_of(document), *node_of(element));
+}
+
+bool grove_media_stop(grove_document* document, grove_element* element) {
+    return document && element && grove::media_stop(*doc_of(document), *node_of(element));
+}
+
+bool grove_media_seek(grove_document* document, grove_element* element, double seconds) {
+    return document && element && grove::media_seek(*doc_of(document), *node_of(element), seconds);
+}
+
+double grove_media_position(grove_document* document, grove_element* element) {
+    return document && element ? grove::media_position(*doc_of(document), *node_of(element)) : 0.0;
+}
+
+double grove_media_duration(grove_document* document, grove_element* element) {
+    return document && element ? grove::media_duration(*doc_of(document), *node_of(element)) : 0.0;
+}
+
+bool grove_media_is_playing(grove_document* document, grove_element* element) {
+    return document && element && grove::media_is_playing(*doc_of(document), *node_of(element));
+}
+
+bool grove_media_set_volume(grove_document* document, grove_element* element, double volume) {
+    return document && element && grove::media_set_volume(*doc_of(document), *node_of(element), volume);
+}
+
+bool grove_media_set_muted(grove_document* document, grove_element* element, bool muted) {
+    return document && element && grove::media_set_muted(*doc_of(document), *node_of(element), muted);
+}
+
+bool grove_media_set_loop(grove_document* document, grove_element* element, bool loop) {
+    return document && element && grove::media_set_loop(*doc_of(document), *node_of(element), loop);
+}
+
+bool grove_media_set_rate(grove_document* document, grove_element* element, double rate) {
+    return document && element && grove::media_set_rate(*doc_of(document), *node_of(element), rate);
+}
+
+bool grove_media_set_src(grove_document* document, grove_element* element, const char* src) {
+    return document && element && grove::media_set_src(*doc_of(document), *node_of(element), src ? src : "");
+}
+
+const char* grove_media_error(grove_document* document, grove_element* element) {
+    if (!document || !element) return "";
+    return keep(grove::media_error(*doc_of(document), *node_of(element)));
+}
+
+double grove_media_level(grove_document* document, grove_element* element) {
+    if (!document) return 0.0;
+    if (!element) return grove::audio::master_level();
+    return grove::media_level(*doc_of(document), *node_of(element));
+}
+
+double grove_video_width(grove_document* document, grove_element* element) {
+    double w = 0.0;
+    double h = 0.0;
+    return document && element && grove::media_video_size(*doc_of(document), *node_of(element), w, h) ? w : 0.0;
+}
+
+double grove_video_height(grove_document* document, grove_element* element) {
+    double w = 0.0;
+    double h = 0.0;
+    return document && element && grove::media_video_size(*doc_of(document), *node_of(element), w, h) ? h : 0.0;
+}
+
+bool grove_video_set_fullscreen(grove_document* document, grove_element* element, bool fullscreen) {
+    return document && element && grove::media_set_fullscreen(*doc_of(document), *node_of(element), fullscreen);
+}
+
+bool grove_video_is_fullscreen(grove_document* document, grove_element* element) {
+    return document && element && grove::media_is_fullscreen(*node_of(element));
+}
+
+size_t grove_video_snapshot(grove_document* document, grove_element* element, uint8_t* rgba, size_t capacity, uint32_t* width, uint32_t* height) {
+    if (width) *width = 0;
+    if (height) *height = 0;
+    if (!document || !element) return 0;
+    grove::MediaFrame frame;
+    if (!grove::media_frame(*doc_of(document), *node_of(element), frame) || !frame.rgba) return 0;
+    unsigned w = 0;
+    unsigned h = 0;
+    grove::media_frame_size(frame, w, h);
+    const size_t need = static_cast<size_t>(w) * h * 4u;
+    if (width) *width = w;
+    if (height) *height = h;
+    if (rgba && capacity >= need) grove::copy_media_frame(frame, rgba);
+    return need;
+}
+
+bool grove_video_snapshot_to_canvas(grove_document* document, grove_element* element, grove_element* canvas) {
+    return document && element && canvas && grove::media_snapshot_to_canvas(*doc_of(document), *node_of(element), *node_of(canvas));
+}
+
+int64_t grove_sound_preload(grove_document* document, const char* path) {
+    if (!path || !*path) return 0;
+    const std::string full = document ? grove::media_path(*doc_of(document), path) : std::string(path);
+    return static_cast<int64_t>(grove::audio::preload_sound(full));
+}
+
+bool grove_sound_loaded(int64_t sound) {
+    return grove::audio::sound_loaded(sound);
+}
+
+bool grove_sound_unload(int64_t sound) {
+    return grove::audio::unload_sound(sound);
+}
+
+int64_t grove_sound_play(grove_document* document, const char* path, double volume, double pan, bool loop) {
+    const int64_t sound = grove_sound_preload(document, path);
+    return sound ? static_cast<int64_t>(grove::audio::play_sound(sound, volume, pan, loop)) : 0;
+}
+
+int64_t grove_sound_play_preloaded(int64_t sound, double volume, double pan, bool loop) {
+    return static_cast<int64_t>(grove::audio::play_sound(static_cast<std::int64_t>(sound), volume, pan, loop));
+}
+
+bool grove_sound_stop(int64_t id) {
+    return grove::audio::stop_sound(id);
+}
+
+bool grove_sound_set_volume(int64_t id, double volume) {
+    return grove::audio::set_sound_volume(id, volume);
+}
+
+bool grove_sound_is_playing(int64_t id) {
+    return grove::audio::sound_playing(id);
+}
+
+void grove_sound_stop_all(void) {
+    grove::audio::stop_all_sounds();
+}
+
+void grove_audio_set_master_volume(double volume) {
+    grove::audio::set_master_volume(volume);
+}
+
+double grove_audio_master_volume(void) {
+    return grove::audio::master_volume();
+}
+
+double grove_audio_master_level(void) {
+    return grove::audio::master_level();
+}
+
+size_t grove_audio_device_count(bool input) {
+    return (input ? grove::audio::input_devices() : grove::audio::output_devices()).size();
+}
+
+const char* grove_audio_device_id(bool input, size_t index) {
+    const std::vector<grove::audio::Device> list = input ? grove::audio::input_devices() : grove::audio::output_devices();
+    return index < list.size() ? keep(list[index].id) : "";
+}
+
+const char* grove_audio_device_name(bool input, size_t index) {
+    const std::vector<grove::audio::Device> list = input ? grove::audio::input_devices() : grove::audio::output_devices();
+    return index < list.size() ? keep(list[index].name) : "";
+}
+
+bool grove_audio_set_output_device(const char* id) {
+    return grove::audio::set_output_device(id ? id : "");
+}
+
+const char* grove_audio_output_device(void) {
+    return keep(grove::audio::output_device());
+}
+
+const char* grove_audio_error(void) {
+    return keep(grove::audio::last_error());
+}
+
+int64_t grove_effect_create(const char* type) {
+    return type ? static_cast<int64_t>(grove::audio::create_effect(type)) : 0;
+}
+
+bool grove_effect_free(int64_t effect) {
+    return grove::audio::free_effect(effect);
+}
+
+bool grove_effect_set(int64_t effect, const char* name, double value) {
+    return name && grove::audio::set_effect_param(effect, name, value);
+}
+
+double grove_effect_get(int64_t effect, const char* name) {
+    return name ? grove::audio::effect_param(effect, name) : 0.0;
+}
+
+size_t grove_effect_param_count(int64_t effect) {
+    return grove::audio::effect_params(effect).size();
+}
+
+const char* grove_effect_param_name(int64_t effect, size_t index) {
+    const std::vector<std::string> names = grove::audio::effect_params(effect);
+    return index < names.size() ? keep(names[index]) : "";
+}
+
+bool grove_effect_set_enabled(int64_t effect, bool enabled) {
+    return grove::audio::set_effect_enabled(effect, enabled);
+}
+
+bool grove_effect_chain_add(int64_t chain, int64_t effect) {
+    return grove::audio::chain_add(chain, effect);
+}
+
+bool grove_effect_chain_remove(int64_t chain, size_t index) {
+    return grove::audio::chain_remove(chain, index);
+}
+
+int64_t grove_monitor_start(const char* input_device, const char* output_device, int64_t effect) {
+    return static_cast<int64_t>(grove::audio::start_monitor(input_device ? input_device : "", output_device ? output_device : "", effect));
+}
+
+bool grove_monitor_stop(int64_t monitor) {
+    return grove::audio::stop_monitor(monitor);
+}
+
+bool grove_monitor_set_effect(int64_t monitor, int64_t effect) {
+    return grove::audio::set_monitor_effect(monitor, effect);
+}
+
+double grove_monitor_input_level(int64_t monitor) {
+    return grove::audio::monitor_input_level(monitor);
+}
+
+double grove_monitor_output_level(int64_t monitor) {
+    return grove::audio::monitor_output_level(monitor);
 }
 
 const grove_host_api* grove_host_table(void) {

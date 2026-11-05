@@ -69,6 +69,30 @@ extern "C++" from "<grove/dom.hpp>" {
         function open_modal() -> bool;
         function close_modal() -> bool;
         function is_current() const -> bool;
+        function play() -> bool;
+        function pause() -> bool;
+        function stop() -> bool;
+        function seek(short float: seconds) -> bool;
+        function position() const -> short float;
+        function duration() const -> short float;
+        function is_playing() const -> bool;
+        function set_volume(short float: volume) -> bool;
+        function volume() const -> short float;
+        function set_muted(bool: muted) -> bool;
+        function muted() const -> bool;
+        function set_loop(bool: loop) -> bool;
+        function loops() const -> bool;
+        function set_rate(short float: rate) -> bool;
+        function rate() const -> short float;
+        function set_src(const string&: src) -> bool;
+        function media_error() const -> string;
+        function level() const -> short float;
+        function video_width() const -> short float;
+        function video_height() const -> short float;
+        function set_fullscreen(bool: fullscreen) -> bool;
+        function is_fullscreen() const -> bool;
+        function toggle_fullscreen() -> bool;
+        function snapshot_to_canvas(const NativeElement&: canvas) const -> bool;
     } end class NativeElement
 
     class NativeElementList as "grove::ElementList" {
@@ -130,6 +154,7 @@ extern "C++" from "<grove/dom.hpp>" {
         function has_native(const string&: name) const -> bool;
         function call(const string&: name, const string&: argument) const -> string;
         function choose_file(const string&: mode, const string&: title, const string&: filter) const -> string;
+        function choose_file(const string&: mode, const string&: title, const string&: filter, const string&: reject, bool: enforce) const -> string;
         function navigate(const string&: target) const -> bool;
         function go_back() const -> bool;
         function popup(const string&: kind, const string&: title, const string&: message, const string&: input, const string&: value, const string&: options) const -> NativeElement;
@@ -158,6 +183,38 @@ extern "C++" from "<grove/dom.hpp>" {
         function set_vsync(bool: enabled) const -> void;
         function vsync() const -> bool;
         function log(const string&: message) const -> void;
+        function preload_sound(const string&: path) const -> long int;
+        function sound_loaded(long int: sound) const -> bool;
+        function unload_sound(long int: sound) const -> bool;
+        function play_sound(const string&: path, short float: volume, short float: pan, bool: loop) const -> long int;
+        function play_sound(long int: sound, short float: volume, short float: pan, bool: loop) const -> long int;
+        function stop_sound(long int: id) const -> bool;
+        function set_sound_volume(long int: id, short float: volume) const -> bool;
+        function sound_playing(long int: id) const -> bool;
+        function stop_all_sounds() const -> void;
+        function set_master_volume(short float: volume) const -> void;
+        function master_volume() const -> short float;
+        function master_level() const -> short float;
+        function audio_device_count(bool: input) const -> long int;
+        function audio_device_id(bool: input, long int: index) const -> string;
+        function audio_device_name(bool: input, long int: index) const -> string;
+        function set_output_device(const string&: id) const -> bool;
+        function output_device() const -> string;
+        function audio_error() const -> string;
+        function create_effect(const string&: type) const -> long int;
+        function free_effect(long int: effect) const -> bool;
+        function set_effect(long int: effect, const string&: name, short float: value) const -> bool;
+        function effect_value(long int: effect, const string&: name) const -> short float;
+        function effect_param_count(long int: effect) const -> long int;
+        function effect_param_name(long int: effect, long int: index) const -> string;
+        function set_effect_enabled(long int: effect, bool: enabled) const -> bool;
+        function chain_add(long int: chain, long int: effect) const -> bool;
+        function chain_remove(long int: chain, long int: index) const -> bool;
+        function start_monitor(const string&: input_device, const string&: output_device, long int: effect) const -> long int;
+        function stop_monitor(long int: monitor) const -> bool;
+        function set_monitor_effect(long int: monitor, long int: effect) const -> bool;
+        function monitor_input_level(long int: monitor) const -> short float;
+        function monitor_output_level(long int: monitor) const -> short float;
     } end class NativeDocument
 } end extern
 
@@ -694,6 +751,102 @@ public:
         return raw.is_current();
     } end function is_current
 
+    function play() -> bool {
+        return raw.play();
+    } end function play
+
+    function pause() -> bool {
+        return raw.pause();
+    } end function pause
+
+    function stop() -> bool {
+        return raw.stop();
+    } end function stop
+
+    function seek(short float: seconds) -> bool {
+        return raw.seek(seconds);
+    } end function seek
+
+    function position() const -> short float {
+        return raw.position();
+    } end function position
+
+    function duration() const -> short float {
+        return raw.duration();
+    } end function duration
+
+    function is_playing() const -> bool {
+        return raw.is_playing();
+    } end function is_playing
+
+    function set_volume(short float: volume) -> bool {
+        return raw.set_volume(volume);
+    } end function set_volume
+
+    function volume() const -> short float {
+        return raw.volume();
+    } end function volume
+
+    function set_muted(bool: muted) -> bool {
+        return raw.set_muted(muted);
+    } end function set_muted
+
+    function muted() const -> bool {
+        return raw.muted();
+    } end function muted
+
+    function set_loop(bool: loop) -> bool {
+        return raw.set_loop(loop);
+    } end function set_loop
+
+    function loops() const -> bool {
+        return raw.loops();
+    } end function loops
+
+    function set_rate(short float: rate) -> bool {
+        return raw.set_rate(rate);
+    } end function set_rate
+
+    function rate() const -> short float {
+        return raw.rate();
+    } end function rate
+
+    function set_src(const string&: src) -> bool {
+        return raw.set_src(src);
+    } end function set_src
+
+    function media_error() const -> string {
+        return raw.media_error();
+    } end function media_error
+
+    function level() const -> short float {
+        return raw.level();
+    } end function level
+
+    function video_width() const -> short float {
+        return raw.video_width();
+    } end function video_width
+
+    function video_height() const -> short float {
+        return raw.video_height();
+    } end function video_height
+
+    function set_fullscreen(bool: fullscreen) -> bool {
+        return raw.set_fullscreen(fullscreen);
+    } end function set_fullscreen
+
+    function is_fullscreen() const -> bool {
+        return raw.is_fullscreen();
+    } end function is_fullscreen
+
+    function toggle_fullscreen() -> bool {
+        return raw.toggle_fullscreen();
+    } end function toggle_fullscreen
+
+    function snapshot_to_canvas(const Element&: canvas) const -> bool {
+        return raw.snapshot_to_canvas(canvas.raw);
+    } end function snapshot_to_canvas
+
     function children() const -> ElementList {
         ElementList: out;
         out.raw = NativeElementList::children_of(raw);
@@ -960,6 +1113,10 @@ public:
         return raw.choose_file(mode, title, filter);
     } end function choose_file
 
+    function choose_file(const string&: mode, const string&: title, const string&: filter, const string&: reject, bool: enforce) const -> string {
+        return raw.choose_file(mode, title, filter, reject, enforce);
+    } end function choose_file
+
     function navigate(const string&: target) const -> bool {
         return raw.navigate(target);
     } end function navigate
@@ -1102,6 +1259,134 @@ public:
         raw.log(message);
     } end function log
 
+    function preload_sound(const string&: path) const -> long int {
+        return raw.preload_sound(path);
+    } end function preload_sound
+
+    function sound_loaded(long int: sound) const -> bool {
+        return raw.sound_loaded(sound);
+    } end function sound_loaded
+
+    function unload_sound(long int: sound) const -> bool {
+        return raw.unload_sound(sound);
+    } end function unload_sound
+
+    function play_sound(const string&: path, short float: volume, short float: pan, bool: loop) const -> long int {
+        return raw.play_sound(path, volume, pan, loop);
+    } end function play_sound
+
+    function play_sound(long int: sound, short float: volume, short float: pan, bool: loop) const -> long int {
+        return raw.play_sound(sound, volume, pan, loop);
+    } end function play_sound
+
+    function stop_sound(long int: id) const -> bool {
+        return raw.stop_sound(id);
+    } end function stop_sound
+
+    function set_sound_volume(long int: id, short float: volume) const -> bool {
+        return raw.set_sound_volume(id, volume);
+    } end function set_sound_volume
+
+    function sound_playing(long int: id) const -> bool {
+        return raw.sound_playing(id);
+    } end function sound_playing
+
+    function stop_all_sounds() const -> void {
+        raw.stop_all_sounds();
+    } end function stop_all_sounds
+
+    function set_master_volume(short float: volume) const -> void {
+        raw.set_master_volume(volume);
+    } end function set_master_volume
+
+    function master_volume() const -> short float {
+        return raw.master_volume();
+    } end function master_volume
+
+    function master_level() const -> short float {
+        return raw.master_level();
+    } end function master_level
+
+    function audio_device_count(bool: input) const -> long int {
+        return raw.audio_device_count(input);
+    } end function audio_device_count
+
+    function audio_device_id(bool: input, long int: index) const -> string {
+        return raw.audio_device_id(input, index);
+    } end function audio_device_id
+
+    function audio_device_name(bool: input, long int: index) const -> string {
+        return raw.audio_device_name(input, index);
+    } end function audio_device_name
+
+    function set_output_device(const string&: id) const -> bool {
+        return raw.set_output_device(id);
+    } end function set_output_device
+
+    function output_device() const -> string {
+        return raw.output_device();
+    } end function output_device
+
+    function audio_error() const -> string {
+        return raw.audio_error();
+    } end function audio_error
+
+    function create_effect(const string&: type) const -> long int {
+        return raw.create_effect(type);
+    } end function create_effect
+
+    function free_effect(long int: effect) const -> bool {
+        return raw.free_effect(effect);
+    } end function free_effect
+
+    function set_effect(long int: effect, const string&: name, short float: value) const -> bool {
+        return raw.set_effect(effect, name, value);
+    } end function set_effect
+
+    function effect_value(long int: effect, const string&: name) const -> short float {
+        return raw.effect_value(effect, name);
+    } end function effect_value
+
+    function effect_param_count(long int: effect) const -> long int {
+        return raw.effect_param_count(effect);
+    } end function effect_param_count
+
+    function effect_param_name(long int: effect, long int: index) const -> string {
+        return raw.effect_param_name(effect, index);
+    } end function effect_param_name
+
+    function set_effect_enabled(long int: effect, bool: enabled) const -> bool {
+        return raw.set_effect_enabled(effect, enabled);
+    } end function set_effect_enabled
+
+    function chain_add(long int: chain, long int: effect) const -> bool {
+        return raw.chain_add(chain, effect);
+    } end function chain_add
+
+    function chain_remove(long int: chain, long int: index) const -> bool {
+        return raw.chain_remove(chain, index);
+    } end function chain_remove
+
+    function start_monitor(const string&: input_device, const string&: output_device, long int: effect) const -> long int {
+        return raw.start_monitor(input_device, output_device, effect);
+    } end function start_monitor
+
+    function stop_monitor(long int: monitor) const -> bool {
+        return raw.stop_monitor(monitor);
+    } end function stop_monitor
+
+    function set_monitor_effect(long int: monitor, long int: effect) const -> bool {
+        return raw.set_monitor_effect(monitor, effect);
+    } end function set_monitor_effect
+
+    function monitor_input_level(long int: monitor) const -> short float {
+        return raw.monitor_input_level(monitor);
+    } end function monitor_input_level
+
+    function monitor_output_level(long int: monitor) const -> short float {
+        return raw.monitor_output_level(monitor);
+    } end function monitor_output_level
+
     function add_event_listener(const string&: type, function(Event&) -> void: fn) const -> long int {
         return raw.listen(type, [fn]() -> void {
             Event: e = Event::current();
@@ -1222,6 +1507,11 @@ function call(const string&: name, const string&: argument) -> string {
 function choose_file(const string&: mode, const string&: title, const string&: filter) -> string {
     Document: d;
     return d.choose_file(mode, title, filter);
+} end function choose_file
+
+function choose_file(const string&: mode, const string&: title, const string&: filter, const string&: reject, bool: enforce) -> string {
+    Document: d;
+    return d.choose_file(mode, title, filter, reject, enforce);
 } end function choose_file
 
 function navigate(const string&: target) -> bool {
@@ -1363,6 +1653,166 @@ function log(const string&: message) -> void {
     Document: d;
     d.log(message);
 } end function log
+
+function preload_sound(const string&: path) -> long int {
+    Document: d;
+    return d.preload_sound(path);
+} end function preload_sound
+
+function sound_loaded(long int: sound) -> bool {
+    Document: d;
+    return d.sound_loaded(sound);
+} end function sound_loaded
+
+function unload_sound(long int: sound) -> bool {
+    Document: d;
+    return d.unload_sound(sound);
+} end function unload_sound
+
+function play_sound(const string&: path, short float: volume, short float: pan, bool: loop) -> long int {
+    Document: d;
+    return d.play_sound(path, volume, pan, loop);
+} end function play_sound
+
+function play_sound(long int: sound, short float: volume, short float: pan, bool: loop) -> long int {
+    Document: d;
+    return d.play_sound(sound, volume, pan, loop);
+} end function play_sound
+
+function stop_sound(long int: id) -> bool {
+    Document: d;
+    return d.stop_sound(id);
+} end function stop_sound
+
+function set_sound_volume(long int: id, short float: volume) -> bool {
+    Document: d;
+    return d.set_sound_volume(id, volume);
+} end function set_sound_volume
+
+function sound_playing(long int: id) -> bool {
+    Document: d;
+    return d.sound_playing(id);
+} end function sound_playing
+
+function stop_all_sounds() -> void {
+    Document: d;
+    d.stop_all_sounds();
+} end function stop_all_sounds
+
+function set_master_volume(short float: volume) -> void {
+    Document: d;
+    d.set_master_volume(volume);
+} end function set_master_volume
+
+function master_volume() -> short float {
+    Document: d;
+    return d.master_volume();
+} end function master_volume
+
+function master_level() -> short float {
+    Document: d;
+    return d.master_level();
+} end function master_level
+
+function audio_device_count(bool: input) -> long int {
+    Document: d;
+    return d.audio_device_count(input);
+} end function audio_device_count
+
+function audio_device_id(bool: input, long int: index) -> string {
+    Document: d;
+    return d.audio_device_id(input, index);
+} end function audio_device_id
+
+function audio_device_name(bool: input, long int: index) -> string {
+    Document: d;
+    return d.audio_device_name(input, index);
+} end function audio_device_name
+
+function set_output_device(const string&: id) -> bool {
+    Document: d;
+    return d.set_output_device(id);
+} end function set_output_device
+
+function output_device() -> string {
+    Document: d;
+    return d.output_device();
+} end function output_device
+
+function audio_error() -> string {
+    Document: d;
+    return d.audio_error();
+} end function audio_error
+
+function create_effect(const string&: type) -> long int {
+    Document: d;
+    return d.create_effect(type);
+} end function create_effect
+
+function free_effect(long int: effect) -> bool {
+    Document: d;
+    return d.free_effect(effect);
+} end function free_effect
+
+function set_effect(long int: effect, const string&: name, short float: value) -> bool {
+    Document: d;
+    return d.set_effect(effect, name, value);
+} end function set_effect
+
+function effect_value(long int: effect, const string&: name) -> short float {
+    Document: d;
+    return d.effect_value(effect, name);
+} end function effect_value
+
+function effect_param_count(long int: effect) -> long int {
+    Document: d;
+    return d.effect_param_count(effect);
+} end function effect_param_count
+
+function effect_param_name(long int: effect, long int: index) -> string {
+    Document: d;
+    return d.effect_param_name(effect, index);
+} end function effect_param_name
+
+function set_effect_enabled(long int: effect, bool: enabled) -> bool {
+    Document: d;
+    return d.set_effect_enabled(effect, enabled);
+} end function set_effect_enabled
+
+function chain_add(long int: chain, long int: effect) -> bool {
+    Document: d;
+    return d.chain_add(chain, effect);
+} end function chain_add
+
+function chain_remove(long int: chain, long int: index) -> bool {
+    Document: d;
+    return d.chain_remove(chain, index);
+} end function chain_remove
+
+function start_monitor(const string&: input_device, const string&: output_device, long int: effect) -> long int {
+    Document: d;
+    return d.start_monitor(input_device, output_device, effect);
+} end function start_monitor
+
+function stop_monitor(long int: monitor) -> bool {
+    Document: d;
+    return d.stop_monitor(monitor);
+} end function stop_monitor
+
+function set_monitor_effect(long int: monitor, long int: effect) -> bool {
+    Document: d;
+    return d.set_monitor_effect(monitor, effect);
+} end function set_monitor_effect
+
+function monitor_input_level(long int: monitor) -> short float {
+    Document: d;
+    return d.monitor_input_level(monitor);
+} end function monitor_input_level
+
+function monitor_output_level(long int: monitor) -> short float {
+    Document: d;
+    return d.monitor_output_level(monitor);
+} end function monitor_output_level
 
 function add_event_listener(const string&: type, function(Event&) -> void: fn) -> long int {
     Document: d;

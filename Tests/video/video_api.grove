@@ -1,0 +1,17 @@
+<grove>
+    <head>
+        <title>Video API</title>
+        <script lang="walnut" src="video_api.wal"></script>
+        <script lang="c++" src="video_api.cpp"></script>
+        <script lang="c" src="video_api.c" entry="video_c_start"></script>
+    </head>
+    <body>
+        <video id="clip" src="clip.mp4" controls poster="poster.png" fit="contain" width="320" volume="0.8" />
+        <canvas id="shot" height="96" />
+        <p id="state">idle</p>
+        <p id="frame">-</p>
+        <p id="walnut">-</p>
+        <p id="cpp">-</p>
+        <p id="c">-</p>
+    </body>
+</grove>

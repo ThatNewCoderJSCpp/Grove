@@ -4,6 +4,7 @@
 #include "api/grove_api.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <functional>
 #include <string>
@@ -236,6 +237,49 @@ public:
     bool is_current() const { return grove_is_current(m_element); }
     std::string answer_value() const { return get_attribute("value"); }
 
+    bool play() { return grove_media_play(doc(), m_element); }
+    bool pause() { return grove_media_pause(doc(), m_element); }
+    bool stop() { return grove_media_stop(doc(), m_element); }
+    bool seek(double seconds) { return grove_media_seek(doc(), m_element, seconds); }
+    double position() const { return grove_media_position(doc(), m_element); }
+    double duration() const { return grove_media_duration(doc(), m_element); }
+    bool is_playing() const { return grove_media_is_playing(doc(), m_element); }
+    bool set_volume(double volume) { return grove_media_set_volume(doc(), m_element, volume); }
+    double volume() const {
+        const std::string v = get_attribute("volume");
+        if (v.empty()) return 1.0;
+        const double d = std::strtod(v.c_str(), nullptr);
+        return d < 0.0 ? 0.0 : (d > 1.0 ? 1.0 : d);
+    }
+    bool set_muted(bool muted) { return grove_media_set_muted(doc(), m_element, muted); }
+    bool muted() const { return has_attribute("muted") && get_attribute("muted") != "false"; }
+    bool set_loop(bool loop) { return grove_media_set_loop(doc(), m_element, loop); }
+    bool loops() const { return has_attribute("loop") && get_attribute("loop") != "false"; }
+    bool set_rate(double rate) { return grove_media_set_rate(doc(), m_element, rate); }
+    double rate() const {
+        const std::string v = get_attribute("playbackrate");
+        const double d = v.empty() ? 1.0 : std::strtod(v.c_str(), nullptr);
+        return d > 0.0 ? d : 1.0;
+    }
+    bool set_src(const std::string& src) { return grove_media_set_src(doc(), m_element, src.c_str()); }
+    std::string media_error() const { return detail::str(grove_media_error(doc(), m_element)); }
+    double level() const { return grove_media_level(doc(), m_element); }
+    double video_width() const { return grove_video_width(doc(), m_element); }
+    double video_height() const { return grove_video_height(doc(), m_element); }
+    bool set_fullscreen(bool fullscreen) { return grove_video_set_fullscreen(doc(), m_element, fullscreen); }
+    bool is_fullscreen() const { return grove_video_is_fullscreen(doc(), m_element); }
+    bool toggle_fullscreen() { return set_fullscreen(!is_fullscreen()); }
+    bool snapshot_to_canvas(const Element& canvas) const { return grove_video_snapshot_to_canvas(doc(), m_element, canvas.m_element); }
+    bool snapshot(std::vector<std::uint8_t>& rgba, std::uint32_t& width, std::uint32_t& height) const {
+        const std::size_t need = grove_video_snapshot(doc(), m_element, nullptr, 0, &width, &height);
+        if (need == 0) {
+            rgba.clear();
+            return false;
+        }
+        rgba.resize(need);
+        return grove_video_snapshot(doc(), m_element, rgba.data(), rgba.size(), &width, &height) == need;
+    }
+
 private:
     static grove_document* doc() { return grove_current_document(); }
     grove_element* m_element = nullptr;
@@ -372,6 +416,23 @@ public:
     std::string choose_file(const std::string& mode, const std::string& title, const std::string& filter) const {
         return detail::str(grove_file_dialog(handle(), mode.c_str(), title.c_str(), filter.c_str(), false));
     }
+    std::string choose_file(const std::string& mode, const std::string& title, const std::string& filter, const std::string& reject, bool enforce) const {
+        return detail::str(grove_file_dialog_checked(handle(), mode.c_str(), title.c_str(), filter.c_str(), reject.c_str(), enforce, false));
+    }
+    std::vector<std::string> choose_files(const std::string& title, const std::string& filter, const std::string& reject, bool enforce) const {
+        return split_paths(detail::str(grove_file_dialog_checked(handle(), "open", title.c_str(), filter.c_str(), reject.c_str(), enforce, true)));
+    }
+    static std::vector<std::string> split_paths(const std::string& joined) {
+        std::vector<std::string> out;
+        std::size_t start = 0;
+        while (start < joined.size()) {
+            const std::size_t end = joined.find('\n', start);
+            out.push_back(joined.substr(start, end == std::string::npos ? std::string::npos : end - start));
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        return out;
+    }
     std::vector<std::string> choose_files(const std::string& title, const std::string& filter) const {
         const std::string joined = detail::str(grove_file_dialog(handle(), "open", title.c_str(), filter.c_str(), true));
         std::vector<std::string> out;
@@ -451,6 +512,48 @@ public:
     void set_vsync(bool enabled) const { grove_set_vsync(handle(), enabled); }
     bool vsync() const { return grove_vsync(handle()); }
     void log(const std::string& message) const { grove_log(message.c_str()); }
+
+    std::int64_t preload_sound(const std::string& path) const { return static_cast<std::int64_t>(grove_sound_preload(handle(), path.c_str())); }
+    bool sound_loaded(std::int64_t sound) const { return grove_sound_loaded(static_cast<int64_t>(sound)); }
+    bool unload_sound(std::int64_t sound) const { return grove_sound_unload(static_cast<int64_t>(sound)); }
+    std::int64_t play_sound(const std::string& path, double volume = 1.0, double pan = 0.0, bool loop = false) const {
+        return static_cast<std::int64_t>(grove_sound_play(handle(), path.c_str(), volume, pan, loop));
+    }
+    std::int64_t play_sound(std::int64_t sound, double volume = 1.0, double pan = 0.0, bool loop = false) const {
+        return static_cast<std::int64_t>(grove_sound_play_preloaded(static_cast<int64_t>(sound), volume, pan, loop));
+    }
+    bool stop_sound(std::int64_t id) const { return grove_sound_stop(static_cast<int64_t>(id)); }
+    bool set_sound_volume(std::int64_t id, double volume) const { return grove_sound_set_volume(static_cast<int64_t>(id), volume); }
+    bool sound_playing(std::int64_t id) const { return grove_sound_is_playing(static_cast<int64_t>(id)); }
+    void stop_all_sounds() const { grove_sound_stop_all(); }
+
+    void set_master_volume(double volume) const { grove_audio_set_master_volume(volume); }
+    double master_volume() const { return grove_audio_master_volume(); }
+    double master_level() const { return grove_audio_master_level(); }
+    std::int64_t audio_device_count(bool input) const { return static_cast<std::int64_t>(grove_audio_device_count(input)); }
+    std::string audio_device_id(bool input, std::int64_t index) const { return index < 0 ? std::string() : detail::str(grove_audio_device_id(input, static_cast<size_t>(index))); }
+    std::string audio_device_name(bool input, std::int64_t index) const { return index < 0 ? std::string() : detail::str(grove_audio_device_name(input, static_cast<size_t>(index))); }
+    bool set_output_device(const std::string& id) const { return grove_audio_set_output_device(id.c_str()); }
+    std::string output_device() const { return detail::str(grove_audio_output_device()); }
+    std::string audio_error() const { return detail::str(grove_audio_error()); }
+
+    std::int64_t create_effect(const std::string& type) const { return static_cast<std::int64_t>(grove_effect_create(type.c_str())); }
+    bool free_effect(std::int64_t effect) const { return grove_effect_free(static_cast<int64_t>(effect)); }
+    bool set_effect(std::int64_t effect, const std::string& name, double value) const { return grove_effect_set(static_cast<int64_t>(effect), name.c_str(), value); }
+    double effect_value(std::int64_t effect, const std::string& name) const { return grove_effect_get(static_cast<int64_t>(effect), name.c_str()); }
+    std::int64_t effect_param_count(std::int64_t effect) const { return static_cast<std::int64_t>(grove_effect_param_count(static_cast<int64_t>(effect))); }
+    std::string effect_param_name(std::int64_t effect, std::int64_t index) const { return index < 0 ? std::string() : detail::str(grove_effect_param_name(static_cast<int64_t>(effect), static_cast<size_t>(index))); }
+    bool set_effect_enabled(std::int64_t effect, bool enabled) const { return grove_effect_set_enabled(static_cast<int64_t>(effect), enabled); }
+    bool chain_add(std::int64_t chain, std::int64_t effect) const { return grove_effect_chain_add(static_cast<int64_t>(chain), static_cast<int64_t>(effect)); }
+    bool chain_remove(std::int64_t chain, std::int64_t index) const { return index >= 0 && grove_effect_chain_remove(static_cast<int64_t>(chain), static_cast<size_t>(index)); }
+
+    std::int64_t start_monitor(const std::string& input_device, const std::string& output_device, std::int64_t effect) const {
+        return static_cast<std::int64_t>(grove_monitor_start(input_device.c_str(), output_device.c_str(), static_cast<int64_t>(effect)));
+    }
+    bool stop_monitor(std::int64_t monitor) const { return grove_monitor_stop(static_cast<int64_t>(monitor)); }
+    bool set_monitor_effect(std::int64_t monitor, std::int64_t effect) const { return grove_monitor_set_effect(static_cast<int64_t>(monitor), static_cast<int64_t>(effect)); }
+    double monitor_input_level(std::int64_t monitor) const { return grove_monitor_input_level(static_cast<int64_t>(monitor)); }
+    double monitor_output_level(std::int64_t monitor) const { return grove_monitor_output_level(static_cast<int64_t>(monitor)); }
 
 private:
     grove_document* m_document = nullptr;

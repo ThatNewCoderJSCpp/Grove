@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.2.13 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.3.0 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -17,8 +17,8 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ${GROVE_DESKTOP_DEFAULT})
 set(GROVE_ANDROID_KIT_DIR "" CACHE PATH "Where grove build looks for the Android runtime kit (one folder per ABI) before its own lib/grove/android")
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.3.12" CACHE STRING "Fizmo git tag to fetch")
-set(GROVE_WALNUT_TAG "v0.2.14" CACHE STRING "Walnut git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.4.0" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_WALNUT_TAG "v0.3.0" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
 set(GROVE_FETCH_EXCLUDE "")
@@ -129,7 +129,10 @@ add_library(grove_core STATIC
     Source/highlight.cpp
     Source/terminal.cpp
     Source/canvas.cpp
-    Source/math_input.cpp)
+    Source/math_input.cpp
+    Source/audio.cpp
+    Source/media.cpp
+    Source/video.cpp)
 add_library(grove::core ALIAS grove_core)
 target_compile_features(grove_core PUBLIC cxx_std_17)
 target_include_directories(grove_core PUBLIC
@@ -142,6 +145,21 @@ elseif(TARGET fizmo::string)
     message(FATAL_ERROR "Grove needs Fizmo's chemistry component for <input_ion> and the unit inputs; use Fizmo ${GROVE_FIZMO_TAG} or newer")
 else()
     target_link_libraries(grove_core PUBLIC fizmo::fizmo)
+endif()
+if(TARGET fizmo::video)
+    target_link_libraries(grove_core PUBLIC fizmo::video)
+elseif(TARGET fizmo::string)
+    message(FATAL_ERROR "Grove needs Fizmo's video component for <video>; use a Fizmo with fizmo::video")
+endif()
+if(TARGET fizmo::audio)
+    target_link_libraries(grove_core PUBLIC fizmo::audio)
+elseif(TARGET fizmo::string)
+    message(FATAL_ERROR "Grove needs Fizmo's audio component for <audio> and the sound API; use a Fizmo with fizmo::audio")
+endif()
+find_package(Threads REQUIRED)
+target_link_libraries(grove_core PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(grove_core PUBLIC ole32)
 endif()
 target_compile_definitions(grove_core PRIVATE "GROVE_SOURCE_INCLUDE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Include\"")
 set_target_properties(grove_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -243,6 +261,26 @@ if(GROVE_BUILD_TESTS)
     target_compile_definitions(grove_tests PRIVATE "GROVE_EXAMPLES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Examples\"")
     grove_warnings(grove_tests)
     add_test(NAME grove_tests COMMAND grove_tests)
+    add_executable(grove_audio_tests Tests/grove_audio_tests.cpp)
+    target_link_libraries(grove_audio_tests PRIVATE grove_core)
+    grove_warnings(grove_audio_tests)
+    add_test(NAME grove_audio_tests COMMAND grove_audio_tests)
+    set_tests_properties(grove_audio_tests PROPERTIES ENVIRONMENT "FIZMO_AUDIO_BACKEND=null")
+    option(GROVE_AUDIO_DEVICE_TESTS "Also run grove_audio_tests against the real audio device" OFF)
+    if(GROVE_AUDIO_DEVICE_TESTS)
+        add_test(NAME grove_audio_device_tests COMMAND grove_audio_tests)
+        set_tests_properties(grove_audio_device_tests PROPERTIES ENVIRONMENT "FIZMO_AUDIO_DEVICE_TESTS=1")
+    endif()
+    add_executable(grove_video_tests Tests/grove_video_tests.cpp)
+    target_link_libraries(grove_video_tests PRIVATE grove_core)
+    target_compile_definitions(grove_video_tests PRIVATE "GROVE_VIDEO_TEST_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests/video\"")
+    grove_warnings(grove_video_tests)
+    add_test(NAME grove_video_tests COMMAND grove_video_tests)
+    set_tests_properties(grove_video_tests PROPERTIES ENVIRONMENT "FIZMO_AUDIO_BACKEND=null")
+    add_test(NAME grove_check_audio COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/audio/audio_api.grove")
+    set_tests_properties(grove_check_audio PROPERTIES FAIL_REGULAR_EXPRESSION ": warning: |: error: ")
+    add_test(NAME grove_check_video COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/video/video_api.grove")
+    set_tests_properties(grove_check_video PROPERTIES FAIL_REGULAR_EXPRESSION ": warning: |: error: ")
     add_test(NAME grove_check_hello COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/hello/hello.grove")
     add_test(NAME grove_check_inputs COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/inputs/inputs.grove")
     add_test(NAME grove_check_todo COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove")
@@ -274,11 +312,30 @@ if(GROVE_BUILD_TESTS)
         set_tests_properties(grove_exec_bark_fail PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
             PASS_REGULAR_EXPRESSION "checking everything; failed: everything is broken")
+        add_test(NAME grove_scripts_audio COMMAND grove scripts "${CMAKE_CURRENT_SOURCE_DIR}/Tests/audio/audio_api.grove" --build)
+        set_tests_properties(grove_scripts_audio PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            FAIL_REGULAR_EXPRESSION "FAILED|: error: ")
+        add_test(NAME grove_exec_audio COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Tests/audio/audio_api.grove" --event "click #beep-play" --for 900)
+        set_tests_properties(grove_exec_audio PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache;FIZMO_AUDIO_BACKEND=null"
+            PASS_REGULAR_EXPRESSION "ended at.*walnut ok.*cpp ok.*c ok")
+        add_test(NAME grove_scripts_video COMMAND grove scripts "${CMAKE_CURRENT_SOURCE_DIR}/Tests/video/video_api.grove" --build)
+        set_tests_properties(grove_scripts_video PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+            FAIL_REGULAR_EXPRESSION "FAILED|: error: ")
+        add_test(NAME grove_exec_video COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Tests/video/video_api.grove" --event "click #clip-play" --for 2600)
+        set_tests_properties(grove_exec_video PROPERTIES
+            ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache;FIZMO_AUDIO_BACKEND=null"
+            PASS_REGULAR_EXPRESSION "ended at.*frame ok.*walnut ok.*cpp ok.*c ok")
+        set_tests_properties(grove_scripts_audio grove_exec_audio PROPERTIES RESOURCE_LOCK grove_audio_scripts)
+        set_tests_properties(grove_scripts_video grove_exec_video PROPERTIES RESOURCE_LOCK grove_video_scripts)
         if(GROVE_BUILD_RUNTIME)
             add_test(NAME grove_build_todo COMMAND grove build "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove" -o "${CMAKE_CURRENT_BINARY_DIR}/todo-app")
             set_tests_properties(grove_build_todo PROPERTIES
                 ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
                 PASS_REGULAR_EXPRESSION "2 scripts")
+            set_tests_properties(grove_exec_todo grove_build_todo PROPERTIES RESOURCE_LOCK grove_todo_scripts)
         endif()
     endif()
 endif()
@@ -379,6 +436,7 @@ if(GROVE_PACKAGE)
     set(CPACK_DEBIAN_FILE_NAME ${CPACK_PACKAGE_FILE_NAME}.deb)
     set(CPACK_DEBIAN_PACKAGE_SECTION devel)
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "libpulse0 | libasound2t64 | libasound2")
     set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${_grove_scripts}/deb/postinst;${_grove_scripts}/deb/prerm")
 
     set(CPACK_RPM_PACKAGE_NAME grove)
@@ -387,6 +445,7 @@ if(GROVE_PACKAGE)
     set(CPACK_RPM_PACKAGE_LICENSE "See https://github.com/ThatNewCoderJSCpp/Grove")
     set(CPACK_RPM_PACKAGE_AUTOREQ ON)
     set(CPACK_RPM_PACKAGE_AUTOPROV OFF)
+    set(CPACK_RPM_PACKAGE_SUGGESTS "pulseaudio-libs")
     set(CPACK_RPM_SPEC_MORE_DEFINE "%define _build_id_links none")
     set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION /opt)
     set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Packaging/linux/rpm-post.sh")
