@@ -189,7 +189,7 @@ void test_parsing_and_controls() {
     CHECK(plain->children().empty());
     CHECK(grove::media_fit(*v) == "cover" && grove::media_fit(*plain) == "contain");
     CHECK(grove::media_volume(*v) == 0.5 && grove::media_rate(*v) == 1.5 && grove::media_muted(*v) && grove::media_loop(*v));
-    CHECK(grove::media_poster(doc, *v) == (g_media / "poster.png").string());
+    CHECK(grove::media_poster(doc, *v) == (g_media / "poster.png").lexically_normal().string());
     CHECK(grove::media_poster(doc, *plain).empty());
     CHECK(!grove::media_is_fullscreen(*v));
     CHECK(project.diagnostics.ok());
@@ -407,7 +407,7 @@ void test_poster_preload_and_range() {
     grove::start_media(doc);
     for (int i = 0; i < 20; ++i) pump(doc, clock, 10.0);
     CHECK(!rec.has("loadedmetadata"));
-    CHECK(grove::media_poster(doc, *p) == (g_media / "poster.png").string());
+    CHECK(grove::media_poster(doc, *p) == (g_media / "poster.png").lexically_normal().string());
     grove::MediaFrame f;
     CHECK(!grove::media_frame(doc, *p, f));
     CHECK(grove::media_play(doc, *p));
