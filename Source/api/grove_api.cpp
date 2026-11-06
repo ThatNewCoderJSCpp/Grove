@@ -499,6 +499,11 @@ unsigned grove_event_modifiers(const grove_event* event) { return event ? event_
 void grove_event_stop_propagation(grove_event* event) { if (event) event_of(event)->propagation_stopped = true; }
 void grove_event_prevent_default(grove_event* event) { if (event) event_of(event)->default_prevented = true; }
 bool grove_event_default_prevented(const grove_event* event) { return event && event_of(event)->default_prevented; }
+bool grove_event_has_edit_text(const grove_event* event) { return event && event_of(event)->has_edit_text; }
+const char* grove_event_edit_text(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_text.c_str() : ""; }
+size_t grove_event_edit_caret(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_caret : 0; }
+size_t grove_event_edit_selection_start(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_selection_start : 0; }
+size_t grove_event_edit_selection_end(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_selection_end : 0; }
 
 uint64_t grove_set_timeout(grove_document* document, double milliseconds, grove_timer_fn fn, void* user_data, grove_release_fn release) {
     auto guard = std::make_shared<Release>();

@@ -4,6 +4,7 @@
 #include "../project.hpp"
 #include "../script/builder.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -37,6 +38,30 @@ int run_android(Project& project, fizmo::android::App& app, const ScriptBuild* s
 #endif
 
 std::vector<std::string> font_families(std::string_view kind = "all");
+
+class HeadlessView {
+public:
+    explicit HeadlessView(Project& project, const std::string& window_id = std::string());
+    ~HeadlessView();
+    HeadlessView(const HeadlessView&) = delete;
+    HeadlessView& operator=(const HeadlessView&) = delete;
+
+    bool ready() const noexcept;
+    bool focus(Node& node);
+    std::string edit_text() const;
+
+    bool key(std::string_view name, unsigned modifiers = 0);
+    void text(const std::string& text);
+    void type(const std::string& text);
+    void paste(const std::string& text);
+
+    void set_clipboard(const std::string& text);
+    std::string clipboard() const;
+
+private:
+    struct State;
+    std::unique_ptr<State> m_state;
+};
 
 } // namespace runtime
 } // namespace grove

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <sstream>
@@ -66,6 +67,10 @@ void print_usage(std::ostream& os) {
           "  --install       with an Android build: install the .apk with adb\n"
           "  --launch        with an Android build: install the .apk with adb and start it\n"
           "  --event \"T S\"   with exec: dispatch event T to the first element matching selector S (repeatable)\n"
+          "  --type \"S TEXT\"  with exec: focus the field matching S and type TEXT key by key, as a keyboard would (repeatable)\n"
+          "  --key \"S K\"     with exec: focus the field matching S and press key K, such as Backspace or Ctrl+A (repeatable)\n"
+          "  --paste \"S TEXT\" with exec: focus the field matching S and paste TEXT with Ctrl+V (repeatable)\n"
+          "  --text \"S TEXT\"  with exec: focus the field matching S and send TEXT as committed text with no key press, like an IME (repeatable)\n"
           "  --for <ms>      with exec: keep running timers for this long (default 0)\n"
           "  --tools         print where grove looks for walnut, the compilers and its headers\n"
           "  --full          with dump and exec: print text and attribute values in full instead of shortening them\n"
@@ -151,6 +156,7 @@ int main(int argc, char** argv) {
     std::optional<grove::Target> target;
     grove::AndroidBuildOptions android;
     std::vector<std::string> events;
+    std::vector<std::string> event_kinds;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-q" || a == "--quiet") quiet = true;
@@ -161,7 +167,14 @@ int main(int argc, char** argv) {
         else if (a == "--tools") show_tools = true;
         else if (a == "-v" || a == "--verbose") verbose = true;
         else if (a == "--full") full = true;
-        else if (a == "--event" && i + 1 < argc) events.push_back(argv[++i]);
+        else if (a == "--event" && i + 1 < argc) {
+            events.push_back(argv[++i]);
+            event_kinds.push_back("event");
+        }
+        else if ((a == "--type" || a == "--key" || a == "--paste" || a == "--text") && i + 1 < argc) {
+            events.push_back(argv[++i]);
+            event_kinds.push_back(a.substr(2));
+        }
         else if (a == "--for" && i + 1 < argc) {
             const auto ms = grove::parse_float(argv[++i]);
             if (!ms || *ms < 0) {
@@ -359,7 +372,48 @@ int main(int argc, char** argv) {
         doc.events().dispatch(doc, nullptr, load);
         grove::start_media(doc);
         doc.events().run_due_timers();
-        for (const std::string& spec : events) {
+#ifdef GROVE_HAS_RUNTIME
+        std::unique_ptr<grove::runtime::HeadlessView> keyboard;
+#endif
+        for (std::size_t step = 0; step < events.size(); ++step) {
+            const std::string& spec = events[step];
+            if (event_kinds[step] != "event") {
+                const std::size_t gap = spec.find(' ');
+                const std::string where = spec.substr(0, gap);
+                const std::string what = gap == std::string::npos ? std::string() : spec.substr(gap + 1);
+                grove::Node* field = where.empty() ? nullptr : grove::query(doc.root(), where);
+                if (!field) {
+                    std::cerr << "grove: --" << event_kinds[step] << ": nothing matches '" << where << "'\n";
+                    continue;
+                }
+#ifdef GROVE_HAS_RUNTIME
+                if (!keyboard) keyboard = std::make_unique<grove::runtime::HeadlessView>(project, window_id);
+                if (!keyboard->ready() || !keyboard->focus(*field)) {
+                    std::cerr << "grove: --" << event_kinds[step] << ": can't focus '" << where << "'\n";
+                    continue;
+                }
+                if (event_kinds[step] == "type") keyboard->type(what);
+                else if (event_kinds[step] == "paste") keyboard->paste(what);
+                else if (event_kinds[step] == "text") keyboard->text(what);
+                else {
+                    unsigned mods = 0;
+                    std::string name = what;
+                    for (std::size_t plus = name.find('+'); plus != std::string::npos && plus + 1 < name.size(); plus = name.find('+')) {
+                        const std::string part = name.substr(0, plus);
+                        if (part == "Ctrl" || part == "Control") mods |= grove::ModifierControl;
+                        else if (part == "Shift") mods |= grove::ModifierShift;
+                        else if (part == "Alt") mods |= grove::ModifierAlt;
+                        else if (part == "Meta" || part == "Cmd") mods |= grove::ModifierMeta;
+                        name = name.substr(plus + 1);
+                    }
+                    if (!keyboard->key(name, mods)) std::cerr << "grove: --key: unknown key '" << name << "'\n";
+                }
+#else
+                std::cerr << "grove: --" << event_kinds[step] << " needs a build with the runtime (GROVE_BUILD_RUNTIME)\n";
+#endif
+                doc.events().run_due_timers();
+                continue;
+            }
             const std::size_t space = spec.find(' ');
             const std::string type = spec.substr(0, space);
             const std::string selector = space == std::string::npos ? std::string() : spec.substr(space + 1);

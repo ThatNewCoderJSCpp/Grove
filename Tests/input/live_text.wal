@@ -1,0 +1,26 @@
+import module.grove
+
+grove::Element: field = grove::get_by_id("field");
+string: log = "";
+
+field.on("input", [&](grove::Event&: e) -> void {
+    string: value = field.value_string();
+    string: edit = e.edit_text();
+    if (!e.has_edit_text() || value != edit) then {
+        grove::get_by_id("status").set_inner_text("lagging at " + value + " vs " + edit);
+    }
+    log = log + "[" + value + "@" + e.edit_caret().to_string() + "]";
+    grove::get_by_id("log").set_inner_text(log);
+});
+
+field.on("key_down", [&](grove::Event&: e) -> void {
+    if (e.key() == "Backspace") then {
+        grove::get_by_id("before").set_inner_text("down " + e.edit_text() + "/" + field.value_string());
+    }
+});
+
+field.on("key_up", [&](grove::Event&: e) -> void {
+    if (e.key() == "Backspace") then {
+        grove::get_by_id("after").set_inner_text("up " + e.edit_text() + "/" + field.value_string());
+    }
+});

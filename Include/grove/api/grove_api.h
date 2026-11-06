@@ -324,6 +324,11 @@ GROVE_API bool grove_video_set_fullscreen(grove_document* document, grove_elemen
 GROVE_API bool grove_video_is_fullscreen(grove_document* document, grove_element* element);
 GROVE_API size_t grove_video_snapshot(grove_document* document, grove_element* element, uint8_t* rgba, size_t capacity, uint32_t* width, uint32_t* height);
 GROVE_API bool grove_video_snapshot_to_canvas(grove_document* document, grove_element* element, grove_element* canvas);
+GROVE_API bool grove_event_has_edit_text(const grove_event* event);
+GROVE_API const char* grove_event_edit_text(const grove_event* event);
+GROVE_API size_t grove_event_edit_caret(const grove_event* event);
+GROVE_API size_t grove_event_edit_selection_start(const grove_event* event);
+GROVE_API size_t grove_event_edit_selection_end(const grove_event* event);
 
 #ifdef __cplusplus
 }

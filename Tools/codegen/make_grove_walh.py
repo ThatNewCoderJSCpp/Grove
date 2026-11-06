@@ -118,6 +118,11 @@ EVENT = [
     ('stop_propagation', [], 'void', False),
     ('prevent_default', [], 'void', False),
     ('default_prevented', [], 'bool', True),
+    ('has_edit_text', [], 'bool', True),
+    ('edit_text', [], 'string', True),
+    ('edit_caret', [], 'long int', True),
+    ('edit_selection_start', [], 'long int', True),
+    ('edit_selection_end', [], 'long int', True),
 ]
 
 DOCUMENT = [

@@ -1,0 +1,13 @@
+<grove>
+    <head>
+        <title>Live text</title>
+        <script lang="walnut" src="live_text.wal"></script>
+    </head>
+    <body>
+        <input_string id="field" />
+        <p id="log">-</p>
+        <p id="before">-</p>
+        <p id="after">-</p>
+        <p id="status">live ok</p>
+    </body>
+</grove>
