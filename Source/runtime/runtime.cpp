@@ -8,6 +8,8 @@
 #include "grove/input/input.hpp"
 #include "grove/input/element_table.hpp"
 #include "grove/input/quantity.hpp"
+#include "grove/media.hpp"
+#include "grove/audio.hpp"
 #include "grove/input/code_buffer.hpp"
 #include "grove/input/code_find.hpp"
 #include "grove/input/keymap.hpp"
@@ -26,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fizmo/includes.hpp>
+#include <fizmo/../../Source/Graphics/video_frame_texture.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -360,6 +363,8 @@ FileDialogRequest dialog_request_for(Node& node) {
     r.filter = node.attribute_or("filter", "");
     r.start = node.attribute_or("start", "");
     r.multiple = node.has_attribute("multiple");
+    r.reject = node.attribute_or("reject", "");
+    r.enforce = node.has_attribute("enforce");
     r.owner = &node;
     const std::string current = input_string(node).value_or("");
     if (r.start.empty() && !current.empty()) r.start = current.substr(0, current.find('\n'));
@@ -575,6 +580,7 @@ struct BarDrag {
 struct PendingDialog {
     const Node* node = nullptr;
     std::future<std::vector<std::string>> result;
+    FileDialogRequest request;
 };
 
 std::shared_ptr<fizmo::images::BitmapImage> load_bitmap(const std::string& path) {
@@ -583,6 +589,14 @@ std::shared_ptr<fizmo::images::BitmapImage> load_bitmap(const std::string& path)
     auto image = std::make_shared<fizmo::images::BitmapImage>();
     if (!fizmo::images::decode_image(reinterpret_cast<const std::uint8_t*>(bytes->data()), bytes->size(), *image) || !image->is_valid_image()) return nullptr;
     return image;
+}
+
+bool gpu_video_ready(const fizmo::graphics::Renderer& r) {
+    if (!r.is_gpu()) return false;
+    fizmo::graphics::VideoFrameView probe;
+    probe.width = 16;
+    probe.height = 16;
+    return r.supports_video(probe);
 }
 
 struct DrawOp {
@@ -600,6 +614,8 @@ struct DrawOp {
     const fizmo::graphics::Texture* texture = nullptr;
     float alpha = 1.0f;
     const Node* node = nullptr;
+    const fizmo::graphics::VideoTexture* video = nullptr;
+    int rotation = 0;
 };
 
 struct FrameStatsLog {
@@ -1093,6 +1109,7 @@ public:
         }
         if (m_revision != document().revision()) {
             expand_quantity_inputs(document());
+            sync_media(document());
             m_revision = document().revision();
             m_styles.invalidate();
             apply_zoom();
@@ -1192,7 +1209,7 @@ public:
             } else {
                 if (stats.enabled) {
                     const int kind = op.kind == DrawOp::Kind::Text || op.kind == DrawOp::Kind::Math ? 1 : op.kind == DrawOp::Kind::Image ? 2 : 0;
-                    const void* texture = op.kind == DrawOp::Kind::Image ? static_cast<const void*>(op.texture) : nullptr;
+                    const void* texture = op.kind == DrawOp::Kind::Image ? (op.video ? static_cast<const void*>(op.video) : static_cast<const void*>(op.texture)) : nullptr;
                     if (kind != last_kind || texture != last_texture) ++batches;
                     last_kind = kind;
                     last_texture = texture;
@@ -1275,6 +1292,7 @@ public:
                 text_drag_to(px, py);
                 hover_at(px, py);
                 code_hover_move(px, py);
+                if (const Node* under = hit_element(px, py)) media_pointer(document(), mutable_node(*under));
                 if (document().events().has_listeners("mouse_move")) {
                     Event ev = pointer_event("mouse_move", px, py, 0);
                     dispatch(hit_element(px, py), ev);
@@ -1601,7 +1619,7 @@ private:
         layers.clear();
         for (const DrawOp* op : segment) {
             const int cls = draw_class(*op);
-            const void* texture = op->kind == DrawOp::Kind::Image ? static_cast<const void*>(op->texture) : nullptr;
+            const void* texture = op->kind == DrawOp::Kind::Image ? (op->video ? static_cast<const void*>(op->video) : static_cast<const void*>(op->texture)) : nullptr;
             const DrawShape shape = op_shape(*op);
             const Rect rect = shape.rect;
             std::size_t target = layers.size();
@@ -1748,11 +1766,38 @@ private:
             case DrawOp::Kind::CircleStroke: r.draw_circle(x, y, static_cast<unsigned>(std::lround(op.radius)), fizmo::graphics::Paint::stroke(op.color, op.stroke)); break;
             case DrawOp::Kind::Text: r.draw_text(x, y, std::max(w, 1u), std::max(h, 1u), op.text, op.style); break;
             case DrawOp::Kind::Math: if (op.math) r.draw_fancy_text(*op.math, op.x, op.y); break;
-            case DrawOp::Kind::Image: if (op.texture) r.draw_texture(*op.texture, x, y, w, h, op.alpha); break;
+            case DrawOp::Kind::Image:
+                if (op.video) draw_video_op(r, op, x, y, w, h);
+                else if (op.texture) r.draw_texture(*op.texture, x, y, w, h, op.alpha);
+                break;
             case DrawOp::Kind::Line: r.draw_line(x, y, static_cast<int>(std::lround(op.x + op.w)), static_cast<int>(std::lround(op.y + op.h)), fizmo::graphics::Paint::stroke(op.color, op.stroke)); break;
             case DrawOp::Kind::ClipPush:
             case DrawOp::Kind::ClipPop:
             case DrawOp::Kind::Custom: break;
+        }
+    }
+
+    static void draw_video_op(fizmo::graphics::Renderer& r, const DrawOp& op, int x, int y, unsigned w, unsigned h) {
+        if (w == 0 || h == 0) return;
+        const float x0 = static_cast<float>(x);
+        const float y0 = static_cast<float>(y);
+        const float x1 = x0 + static_cast<float>(w);
+        const float y1 = y0 + static_cast<float>(h);
+        const fizmo::graphics::RenderPoint tl{ x0, y0 };
+        const fizmo::graphics::RenderPoint tr{ x1, y0 };
+        const fizmo::graphics::RenderPoint br{ x1, y1 };
+        const fizmo::graphics::RenderPoint bl{ x0, y1 };
+        if (op.rotation == 90) {
+            const fizmo::graphics::RenderPoint q[4] = { tr, br, bl, tl };
+            r.draw_video_quad(*op.video, q, op.alpha);
+        } else if (op.rotation == 180) {
+            const fizmo::graphics::RenderPoint q[4] = { br, bl, tl, tr };
+            r.draw_video_quad(*op.video, q, op.alpha);
+        } else if (op.rotation == 270) {
+            const fizmo::graphics::RenderPoint q[4] = { bl, tl, tr, br };
+            r.draw_video_quad(*op.video, q, op.alpha);
+        } else {
+            r.draw_video(*op.video, x, y, w, h, op.alpha);
         }
     }
 
@@ -2256,10 +2301,10 @@ private:
         const Box m = box_of(s, "margin");
         const float avail = std::max(0.0f, width - m.left - m.right);
         float bw = avail;
-        const bool fixed_kind = b.tag() == "img" || input_kind_of(b).has_value();
+        const bool fixed_kind = b.tag() == "img" || is_video(b) || input_kind_of(b).has_value();
         if (fixed_kind) {
             const float n = natural_width(r, b.parent() ? *b.parent() : b, b, width);
-            if (n >= 0.0f) bw = m_wide > 0 && b.tag() == "img" ? n - m.left - m.right : std::min(avail, n - m.left - m.right);
+            if (n >= 0.0f) bw = m_wide > 0 && (b.tag() == "img" || is_video(b)) ? n - m.left - m.right : std::min(avail, n - m.left - m.right);
             return bw + m.left + m.right;
         }
         if (const auto w = resolve_length(s, "width", width)) {
@@ -2362,7 +2407,7 @@ private:
             const std::string label = collapse_whitespace(node.inner_text());
             return box + (label.empty() ? 0.0f : 8.0f + text_width(r, label, text_style(node))) + margins + 2.0f;
         }
-        if (node.tag() == "img") {
+        if (node.tag() == "img" || is_video(node)) {
             float iw = 0.0f;
             float ih = 0.0f;
             image_size(node, style, row_width, iw, ih);
@@ -5861,7 +5906,10 @@ private:
     }
 
     const fizmo::graphics::Texture* texture_for(const Node& img) {
-        const std::string path = image_path(m_project, img);
+        return path_texture(image_path(m_project, img));
+    }
+
+    const fizmo::graphics::Texture* path_texture(const std::string& path) {
         if (path.empty()) return nullptr;
         auto it = m_textures.find(path);
         if (it == m_textures.end()) {
@@ -5872,11 +5920,38 @@ private:
         return it->second && it->second->valid() ? it->second.get() : nullptr;
     }
 
+    void video_natural_size(const Node& video, float& w, float& h) {
+        double vw = 0.0;
+        double vh = 0.0;
+        if (media_video_size(document(), video, vw, vh) && vw > 0.0 && vh > 0.0) {
+            w = static_cast<float>(vw);
+            h = static_cast<float>(vh);
+            return;
+        }
+        const std::string poster = video.attribute_or("poster", "");
+        if (!poster.empty()) {
+            if (const fizmo::graphics::Texture* tex = path_texture(media_path(document(), poster))) {
+                w = static_cast<float>(tex->width());
+                h = static_cast<float>(tex->height());
+                return;
+            }
+        }
+        w = 300.0f;
+        h = 150.0f;
+    }
+
     void image_size(const Node& img, const bark::ComputedStyle& style, float available, float& w, float& h) {
-        const fizmo::graphics::Texture* tex = texture_for(img);
         const float zoom = static_cast<float>(m_styles.viewport().scale());
-        const float nw = tex ? static_cast<float>(tex->width()) * zoom : 0.0f;
-        const float nh = tex ? static_cast<float>(tex->height()) * zoom : 0.0f;
+        float nw = 0.0f;
+        float nh = 0.0f;
+        if (is_video(img)) {
+            video_natural_size(img, nw, nh);
+            nw *= zoom;
+            nh *= zoom;
+        } else if (const fizmo::graphics::Texture* tex = texture_for(img)) {
+            nw = static_cast<float>(tex->width()) * zoom;
+            nh = static_cast<float>(tex->height()) * zoom;
+        }
         std::optional<float> sw = resolve_length(style, "width", available);
         std::optional<float> sh = resolve_length(style, "height", -1.0f);
         if (!sw) {
@@ -5902,6 +5977,157 @@ private:
             h = h * available / w;
             w = available;
         }
+    }
+
+    struct VideoTexture {
+        std::uint64_t serial = ~std::uint64_t(0);
+        std::uint64_t used = 0;
+        std::shared_ptr<fizmo::images::BitmapImage> image;
+        std::shared_ptr<fizmo::graphics::Texture> texture;
+        bool has = false;
+        std::uint64_t planar_serial = ~std::uint64_t(0);
+        std::shared_ptr<fizmo::graphics::VideoTexture> planar;
+        int rotation = 0;
+    };
+
+    const fizmo::graphics::VideoTexture* planar_video_texture(fizmo::graphics::Renderer& r, const Node& element, int& rotation) {
+        if (!r.is_gpu()) return nullptr;
+        VideoTexture& t = m_video_textures[&element];
+        t.used = m_frame_index;
+        MediaFrame f;
+        if (!media_planar_frame(document(), element, f) || !f.planes) return nullptr;
+        if (!t.planar) t.planar = std::make_shared<fizmo::graphics::VideoTexture>();
+        if (f.serial != t.planar_serial || !t.planar->valid()) {
+            const fizmo::graphics::VideoFrameView view = fizmo::graphics::video_frame_view(*f.planes);
+            if (!r.supports_video(view) || !t.planar->update(view)) {
+                t.planar_serial = ~std::uint64_t(0);
+                return nullptr;
+            }
+            t.planar_serial = f.serial;
+            t.rotation = f.rotation;
+        }
+        rotation = t.rotation;
+        return t.planar.get();
+    }
+
+    const fizmo::graphics::Texture* video_texture(const Node& element) {
+        static_assert(sizeof(fizmo::colors::Color) == 4, "Color must be four bytes");
+        VideoTexture& t = m_video_textures[&element];
+        t.used = m_frame_index;
+        MediaFrame f;
+        if (!media_frame(document(), element, f)) {
+            t.serial = f.serial;
+            t.has = false;
+            return nullptr;
+        }
+        if (f.serial != t.serial || !t.has) {
+            unsigned w = 0;
+            unsigned h = 0;
+            media_frame_size(f, w, h);
+            if (!t.image || t.image->width() != w || t.image->height() != h) {
+                t.image = std::make_shared<fizmo::images::BitmapImage>(w, h);
+                t.texture = std::make_shared<fizmo::graphics::Texture>(std::shared_ptr<const fizmo::images::BitmapImage>(t.image), fizmo::graphics::SampleFilter::Bilinear);
+            }
+            std::vector<fizmo::colors::Color>& px = t.image->mutable_pixels();
+            if (px.size() >= static_cast<std::size_t>(w) * h) copy_media_frame(f, reinterpret_cast<std::uint8_t*>(px.data()));
+            t.serial = f.serial;
+            t.has = true;
+        }
+        return t.texture && t.texture->valid() ? t.texture.get() : nullptr;
+    }
+
+    static void fit_rect(const std::string& fit, float bw, float bh, float pw, float ph, float& w, float& h) {
+        if (pw <= 0.0f || ph <= 0.0f || fit == "fill") {
+            w = bw;
+            h = bh;
+            return;
+        }
+        float scale = std::min(bw / pw, bh / ph);
+        if (fit == "cover") scale = std::max(bw / pw, bh / ph);
+        else if (fit == "none") scale = 1.0f;
+        else if (fit == "scale-down") scale = std::min(1.0f, scale);
+        w = pw * scale;
+        h = ph * scale;
+    }
+
+    std::string video_fit(const Node& element) {
+        const bark::ComputedStyle& style = style_of(element);
+        for (const char* name : { "fit", "object-fit" }) {
+            const std::string_view v = style.text_view(name);
+            if (v == "contain" || v == "cover" || v == "fill" || v == "none" || v == "scale-down") return std::string(v);
+        }
+        return media_fit(element);
+    }
+
+    void layout_video(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, float forced_h = -1.0f) {
+        const bark::ComputedStyle& style = style_of(element);
+        float w = width;
+        float h = forced_h;
+        if (forced_h < 0.0f) image_size(element, style, width, w, h);
+        w = std::max(0.0f, std::min(w, width));
+        h = std::max(0.0f, h);
+        const float zoom = static_cast<float>(m_styles.viewport().scale());
+        const float opacity = static_cast<float>(opacity_of(element));
+        const fizmo::graphics::Texture* tex = nullptr;
+        const fizmo::graphics::VideoTexture* planar = nullptr;
+        int rotation = 0;
+        float pw = 0.0f;
+        float ph = 0.0f;
+        const std::string poster = media_poster(document(), element);
+        if (!poster.empty()) tex = path_texture(poster);
+        if (tex) {
+            pw = static_cast<float>(tex->width()) * zoom;
+            ph = static_cast<float>(tex->height()) * zoom;
+        } else if ((planar = planar_video_texture(r, element, rotation))) {
+            double vw = 0.0;
+            double vh = 0.0;
+            if (media_video_size(document(), element, vw, vh) && vw > 0.0 && vh > 0.0) {
+                pw = static_cast<float>(vw) * zoom;
+                ph = static_cast<float>(vh) * zoom;
+            } else {
+                const bool turned = rotation == 90 || rotation == 270;
+                pw = static_cast<float>(turned ? planar->height() : planar->width()) * zoom;
+                ph = static_cast<float>(turned ? planar->width() : planar->height()) * zoom;
+            }
+        } else if ((tex = video_texture(element))) {
+            double vw = 0.0;
+            double vh = 0.0;
+            if (media_video_size(document(), element, vw, vh) && vw > 0.0 && vh > 0.0) {
+                pw = static_cast<float>(vw) * zoom;
+                ph = static_cast<float>(vh) * zoom;
+            } else {
+                pw = static_cast<float>(tex->width()) * zoom;
+                ph = static_cast<float>(tex->height()) * zoom;
+            }
+        }
+        if ((tex || planar) && w > 0.0f && h > 0.0f) {
+            float dw = 0.0f;
+            float dh = 0.0f;
+            fit_rect(video_fit(element), w, h, pw, ph, dw, dh);
+            const float dx = std::round(x + (w - dw) / 2.0f);
+            const float dy = std::round(y + (h - dh) / 2.0f);
+            const bool spills = dw > w + 0.5f || dh > h + 0.5f;
+            if (spills) push_clip(Rect{ x, y, w, h });
+            DrawOp& op = push(DrawOp::Kind::Image, dx, dy, std::round(dw), std::round(dh), Color());
+            op.texture = tex;
+            op.video = tex ? nullptr : planar;
+            op.rotation = rotation;
+            op.alpha = opacity;
+            if (spills) pop_clip();
+        }
+        for (const auto& c : element.children()) {
+            if (!c->is_element() || !c->has_class("media-controls")) continue;
+            if (style_of(*c).text_view("display") == "none") continue;
+            const Mark before = mark();
+            float my = 0.0f;
+            layout_element(r, *c, x, my, w);
+            rewind(before);
+            float ry = y + h - my;
+            push_clip(Rect{ x, y, w, h });
+            layout_element(r, *c, x, ry, w);
+            pop_clip();
+        }
+        y += h;
     }
 
     void layout_image(const Node& element, float x, float& y, float width) {
@@ -6081,6 +6307,10 @@ private:
             if (it->second.used + 120 < m_frame_index) it = m_child_cache.erase(it);
             else ++it;
         }
+        for (auto it = m_video_textures.begin(); it != m_video_textures.end();) {
+            if (it->second.used + 120 < m_frame_index) it = m_video_textures.erase(it);
+            else ++it;
+        }
     }
 
     void layout_element(fizmo::graphics::Renderer& r, const Node& element, float x, float& y, float width, bool sized = false, float forced_h = -1.0f) {
@@ -6201,7 +6431,7 @@ private:
             return;
         }
 
-        if (element.tag() == "img") {
+        if (element.tag() == "img" || is_video(element)) {
             float iw = 0.0f;
             float ih = 0.0f;
             image_size(element, style, bw, iw, ih);
@@ -6234,8 +6464,8 @@ private:
         }
 
         std::optional<float> fixed_h;
-        if (forced_h >= 0.0f && element.tag() != "img") fixed_h = forced_h;
-        else if (element.tag() == "img") fixed_h = std::nullopt;
+        if (forced_h >= 0.0f && element.tag() != "img" && !is_video(element)) fixed_h = forced_h;
+        else if (element.tag() == "img" || is_video(element)) fixed_h = std::nullopt;
         else if (const auto hgt = resolve_length(style, "height", m_avail_h)) fixed_h = *hgt;
         std::optional<float> max_h = resolve_length(style, "max-height", m_avail_h);
         const std::string_view overflow_raw = style.text_view("overflow");
@@ -6268,6 +6498,7 @@ private:
         if (scrolls_x) ++m_wide;
         if (element.tag() == "math") layout_math(element, content_x, cy, content_w);
         else if (element.tag() == "img") layout_image(element, content_x, cy, content_w);
+        else if (is_video(element)) layout_video(r, element, content_x, cy, content_w);
         else if (element.tag() == "terminal") layout_terminal(r, element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
         else if (is_canvas(element)) layout_canvas(element, content_x, cy, content_w, fixed_h ? std::max(0.0f, *fixed_h - pad.top - pad.bottom) : -1.0f);
         else if (element.tag() == "br") cy += static_cast<float>(font_size_of(element));
@@ -6622,7 +6853,7 @@ private:
             m_avail_h = std::max(0.0f, max_h - pad.top - pad.bottom);
             const Mark before = mark();
             float my = 0.0f;
-            lay_content(r, *node, style, pad.left, my, inner_w);
+            if (!is_video(*node)) lay_content(r, *node, style, pad.left, my, inner_w);
             rewind(before);
             float height = my + pad.top + pad.bottom;
             if (const auto fixed = resolve_length(style, "height", view_h)) height = *fixed;
@@ -6654,7 +6885,8 @@ private:
             add_box(ElementBox{ node, x, y, width, height });
             push_clip(Rect{ x, y, width, height });
             float cy = y + pad.top;
-            lay_content(r, *node, style, x + pad.left, cy, inner_w);
+            if (is_video(*node)) layout_video(r, *node, x + pad.left, cy, inner_w, std::max(0.0f, height - pad.top - pad.bottom));
+            else lay_content(r, *node, style, x + pad.left, cy, inner_w);
             pop_clip();
             m_avail_h = saved_avail;
             m_floating_node = nullptr;
@@ -9130,6 +9362,7 @@ private:
         void* parent = m_native ? m_native->native_handle() : nullptr;
         PendingDialog pending;
         pending.node = node;
+        pending.request = request;
         pending.result = std::async(std::launch::async, [request, parent] { return show_file_dialog(request, parent); });
         m_dialogs_pending.emplace(node, std::move(pending));
     }
@@ -9142,10 +9375,23 @@ private:
             }
             const Node* node = it->first;
             std::vector<std::string> paths = it->second.result.get();
+            const FileDialogRequest request = it->second.request;
             it = m_dialogs_pending.erase(it);
             if (!document().is_attached(*node)) continue;
             m_last_activity = std::chrono::steady_clock::now();
+            const std::vector<std::string> rejected = remove_disallowed_files(request, paths);
+            if (!rejected.empty()) {
+                Event invalid;
+                invalid.type = "invalid";
+                invalid.paths = rejected;
+                for (const std::string& p : rejected) {
+                    if (!invalid.text.empty()) invalid.text += '\n';
+                    invalid.text += p;
+                }
+                dispatch(node, invalid);
+            }
             if (paths.empty()) {
+                if (!rejected.empty()) continue;
                 Event cancel;
                 cancel.type = "cancel";
                 dispatch(node, cancel);
@@ -9215,6 +9461,7 @@ private:
     bool m_swallow_text = false;
     std::map<const Node*, std::array<std::uint8_t, 9>> m_term_colors;
     std::map<const Node*, CanvasTexture> m_canvas_textures;
+    std::map<const Node*, VideoTexture> m_video_textures;
     CodeHover m_code_hover;
     std::shared_ptr<int> m_alive = std::make_shared<int>(0);
     std::shared_ptr<fizmo::images::BitmapImage> m_color_wheel_image;
@@ -9613,9 +9860,10 @@ public:
             bool quiet = true;
             for (const auto& h : m_hosts) quiet = quiet && h->view->idle();
             const Clock::time_point before = Clock::now();
-            if (!quiet || m_force_render || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_hosts.size() != m_painted_hosts || before - m_painted_at >= std::chrono::milliseconds(500)) {
+            if (!quiet || m_force_render || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_doc.host().paint_requests != m_painted_requests || m_hosts.size() != m_painted_hosts || before - m_painted_at >= std::chrono::milliseconds(500)) {
                 render();
                 frame_stats_log().report();
+                m_painted_requests = m_doc.host().paint_requests;
                 m_painted_revision = m_doc.revision();
                 m_painted_stamp = m_doc.root().tree_stamp();
                 m_painted_hosts = m_hosts.size();
@@ -9748,6 +9996,7 @@ private:
             host->window->close();
             return nullptr;
         }
+        if (main) set_media_planar_frames(gpu_video_ready(*host->renderer));
         if (host->popup) host->window->set_resizable(false);
         else if (host->min_width > 0 || host->min_height > 0) host->window->set_min_size(host->min_width, host->min_height);
         if (!main) place(*host);
@@ -10001,6 +10250,7 @@ private:
     std::vector<std::unique_ptr<WindowHost>> m_hosts;
     std::uint64_t m_painted_revision = static_cast<std::uint64_t>(-1);
     std::uint64_t m_painted_stamp = 0;
+    std::uint64_t m_painted_requests = 0;
     std::size_t m_painted_hosts = 0;
     std::chrono::steady_clock::time_point m_painted_at{};
     std::uint64_t m_seen_revision = ~std::uint64_t(0);
@@ -10184,7 +10434,7 @@ public:
 
     bool open_main() {
         apply_declaration();
-        m_renderer.bind();
+        if (m_renderer.bind()) set_media_planar_frames(gpu_video_ready(m_renderer));
         return open_layer(m_main, true) != nullptr;
     }
 
@@ -10210,6 +10460,7 @@ public:
                 m_app.finish();
                 continue;
             }
+            poll_monitors(m_doc);
             m_doc.events().run_due_timers();
             if (m_doc.events().quit_requested()) {
                 m_app.finish();
@@ -10223,8 +10474,9 @@ public:
             step_touch();
             if (!(m_app.visible() && m_renderer.is_bound())) continue;
             const bool busy = !all_idle() || m_fling || m_touching;
-            if (m_dirty || busy || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_app.surface().redraw_requested()) {
+            if (m_dirty || busy || m_doc.revision() != m_painted_revision || m_doc.root().tree_stamp() != m_painted_stamp || m_doc.host().paint_requests != m_painted_requests || m_app.surface().redraw_requested()) {
                 render();
+                m_painted_requests = m_doc.host().paint_requests;
                 m_painted_revision = m_doc.revision();
                 m_painted_stamp = m_doc.root().tree_stamp();
                 m_app.surface().clear_redraw();
@@ -10767,6 +11019,7 @@ private:
     std::uint64_t m_seen_revision = ~std::uint64_t(0);
     std::uint64_t m_painted_revision = ~std::uint64_t(0);
     std::uint64_t m_painted_stamp = 0;
+    std::uint64_t m_painted_requests = 0;
 
     bool m_touching = false;
     std::int32_t m_touch_id = -1;
@@ -10877,9 +11130,12 @@ int run(Project& project, const RunOptions& options) {
             load.bubbles = false;
             doc.events().dispatch(doc, nullptr, load);
         }
+        start_media(doc);
         code = windows.loop();
+        stop_media(doc);
     }
     doc.events().clear();
+    grove::audio::shutdown();
     grove_bind_document(nullptr);
     return code;
 }
@@ -10918,9 +11174,12 @@ int run_android(Project& project, fizmo::android::App& app, const ScriptBuild* s
             load.bubbles = false;
             doc.events().dispatch(doc, nullptr, load);
         }
+        start_media(doc);
         code = shell.loop();
+        stop_media(doc);
     }
     doc.events().clear();
+    grove::audio::shutdown();
     grove_bind_document(nullptr);
     return code;
 }

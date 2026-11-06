@@ -191,3 +191,56 @@ const char*|grove_bark_runner_error|const grove_bark_runner* runner
 grove_bark_values*|grove_bark_runner_values|grove_bark_runner* runner
 size_t|grove_bark_runner_position|const grove_bark_runner* runner
 size_t|grove_bark_runner_size|const grove_bark_runner* runner
+const char*|grove_file_dialog_checked|grove_document* document, const char* mode, const char* title, const char* filter, const char* reject, bool enforce, bool multiple
+bool|grove_media_play|grove_document* document, grove_element* element
+bool|grove_media_pause|grove_document* document, grove_element* element
+bool|grove_media_stop|grove_document* document, grove_element* element
+bool|grove_media_seek|grove_document* document, grove_element* element, double seconds
+double|grove_media_position|grove_document* document, grove_element* element
+double|grove_media_duration|grove_document* document, grove_element* element
+bool|grove_media_is_playing|grove_document* document, grove_element* element
+bool|grove_media_set_volume|grove_document* document, grove_element* element, double volume
+bool|grove_media_set_muted|grove_document* document, grove_element* element, bool muted
+bool|grove_media_set_loop|grove_document* document, grove_element* element, bool loop
+bool|grove_media_set_rate|grove_document* document, grove_element* element, double rate
+bool|grove_media_set_src|grove_document* document, grove_element* element, const char* src
+const char*|grove_media_error|grove_document* document, grove_element* element
+double|grove_media_level|grove_document* document, grove_element* element
+int64_t|grove_sound_preload|grove_document* document, const char* path
+bool|grove_sound_loaded|int64_t sound
+bool|grove_sound_unload|int64_t sound
+int64_t|grove_sound_play|grove_document* document, const char* path, double volume, double pan, bool loop
+int64_t|grove_sound_play_preloaded|int64_t sound, double volume, double pan, bool loop
+bool|grove_sound_stop|int64_t id
+bool|grove_sound_set_volume|int64_t id, double volume
+bool|grove_sound_is_playing|int64_t id
+void|grove_sound_stop_all|void
+void|grove_audio_set_master_volume|double volume
+double|grove_audio_master_volume|void
+double|grove_audio_master_level|void
+size_t|grove_audio_device_count|bool input
+const char*|grove_audio_device_id|bool input, size_t index
+const char*|grove_audio_device_name|bool input, size_t index
+bool|grove_audio_set_output_device|const char* id
+const char*|grove_audio_output_device|void
+const char*|grove_audio_error|void
+int64_t|grove_effect_create|const char* type
+bool|grove_effect_free|int64_t effect
+bool|grove_effect_set|int64_t effect, const char* name, double value
+double|grove_effect_get|int64_t effect, const char* name
+size_t|grove_effect_param_count|int64_t effect
+const char*|grove_effect_param_name|int64_t effect, size_t index
+bool|grove_effect_set_enabled|int64_t effect, bool enabled
+bool|grove_effect_chain_add|int64_t chain, int64_t effect
+bool|grove_effect_chain_remove|int64_t chain, size_t index
+int64_t|grove_monitor_start|const char* input_device, const char* output_device, int64_t effect
+bool|grove_monitor_stop|int64_t monitor
+bool|grove_monitor_set_effect|int64_t monitor, int64_t effect
+double|grove_monitor_input_level|int64_t monitor
+double|grove_monitor_output_level|int64_t monitor
+double|grove_video_width|grove_document* document, grove_element* element
+double|grove_video_height|grove_document* document, grove_element* element
+bool|grove_video_set_fullscreen|grove_document* document, grove_element* element, bool fullscreen
+bool|grove_video_is_fullscreen|grove_document* document, grove_element* element
+size_t|grove_video_snapshot|grove_document* document, grove_element* element, uint8_t* rgba, size_t capacity, uint32_t* width, uint32_t* height
+bool|grove_video_snapshot_to_canvas|grove_document* document, grove_element* element, grove_element* canvas

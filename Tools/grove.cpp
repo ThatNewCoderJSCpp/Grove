@@ -357,6 +357,8 @@ int main(int argc, char** argv) {
         load.type = "load";
         load.bubbles = false;
         doc.events().dispatch(doc, nullptr, load);
+        grove::start_media(doc);
+        doc.events().run_due_timers();
         for (const std::string& spec : events) {
             const std::size_t space = spec.find(' ');
             const std::string type = spec.substr(0, space);
@@ -379,6 +381,8 @@ int main(int argc, char** argv) {
             if (now >= until || next > until) break;
             std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(std::max(0.0, std::min(next, until) - now)));
         }
+        grove::stop_media(doc);
+        grove::audio::shutdown();
         grove::dump(doc.root(), std::cout, full ? grove::DumpOptions::full() : grove::DumpOptions{});
         print_diagnostics(project.diagnostics, quiet);
         return project.diagnostics.ok() ? 0 : 1;

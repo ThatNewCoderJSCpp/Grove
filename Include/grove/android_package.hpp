@@ -56,6 +56,7 @@ struct AndroidManifestInfo {
     std::string lib_name = "grove_android";
     bool icon = false;
     int platform_api = 0;
+    bool microphone = false;
 };
 
 struct ZipAddition {
@@ -67,6 +68,7 @@ std::string default_android_output(const std::string& document_path);
 std::string default_android_package(const std::string& document_path);
 std::string android_app_label(const Project& project);
 std::string android_manifest_xml(const AndroidManifestInfo& info);
+bool android_microphone_wanted(const Project& project, const std::map<std::string, std::string>& declarations = {});
 bool append_zip_entries(const std::string& input, const std::string& output, const std::vector<ZipAddition>& additions, std::string& error);
 std::uint32_t zip_crc32(const std::string& data);
 

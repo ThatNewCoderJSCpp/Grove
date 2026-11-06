@@ -72,6 +72,8 @@ The first is for a game: as many frames as the computer can draw. The second is 
 | `img`, `br`, `hr` | images and breaks |
 | `canvas` | pixels the app draws itself, see [Canvas](#canvas) |
 | `gpu_canvas` | a canvas the app draws into with Fizmo's renderer every frame, on the GPU when there is one; see [GPU canvas](#gpu-canvas) |
+| `audio` | a sound file to play, with an optional control bar; see [Audio](#audio) |
+| `audio_meter` | a level meter for an `<audio>`, everything playing, or a microphone; see [Level meters](#level-meters) |
 | `math` | MathText, see below |
 | `style` | Bark, inline or `src="file.bark"` |
 | `script` | Walnut, C++ or C, inline or `src="..."` |
@@ -553,6 +555,8 @@ From a script, `value_float()` is the value in SI units (kelvin, pascals, kilogr
 <input_file id="project" mode="folder">Open folder...</input_file>
 <input_file id="images" filter="Images: *.png *.jpg; All files: *" multiple />
 <input_file id="export" mode="save" title="Export as" start="/home/me/exports" />
+<input_file id="model" filter="Models: *.obj *.gltf *.glb" enforce />
+<input_file id="any" reject="*.exe *.dll *.bat" multiple />
 ```
 
 | Attribute | |
@@ -560,12 +564,18 @@ From a script, `value_float()` is the value in SI units (kelvin, pascals, kilogr
 | `mode` | `open` (default), `save` or `folder` |
 | `multiple` | with `open`: pick several files |
 | `filter` | `Name: *.a *.b; Other: *.c`, or just `*.a *.b` |
+| `reject` | names that are never accepted, in the same form as `filter` (`*.exe *.dll`, or `Programs: *.exe; Scripts: *.bat`) |
+| `enforce` | only accept files that match `filter`, even if the user typed another name or picked a different file type in the dialog |
 | `title` | the dialog's title |
 | `start` | the folder the dialog starts in (default: the current value) |
 | `hide-value` | don't show the chosen file's name next to the label |
 | `placeholder` | shown next to the label until something is picked |
 
 With no label, it says "Choose file...", "Choose files...", "Choose folder..." or "Save as...". A script can also ask directly: `grove::choose_file("folder", "Pick a folder", "")` (C: `grove_file_dialog`) waits for the dialog and returns the path, or `""` when cancelled.
+
+`filter` on its own only sets the choices in the dialog's file type list, so the user can still pick something else. `reject` and `enforce` are checked after the dialog closes, against the file's name (not the folder it's in), ignoring case, where `*` matches anything and `?` matches one character. A file that fails is left out: the value keeps the files that passed, and an `invalid` event goes to the `input_file` with the rejected files in `paths` (C++) or `text()` (one per line). If nothing passed, the value doesn't change and `cancel` doesn't fire. `enforce` with an `All files: *` (or `*.*`) group accepts everything except `reject`, and in `mode="folder"` only `reject` is checked, against the folder's name.
+
+The checks are also available when asking from a script: `grove::choose_file(mode, title, filter, reject, enforce)` in Walnut and on `grove::Document` in C++, `choose_files(title, filter, reject, enforce)` on `grove::Document` for several files, and `grove_file_dialog_checked(document, mode, title, filter, reject, enforce, multiple)` in C. Files that fail are left out of what they return. In C++, `grove/native.hpp` has the matching itself: `file_allowed(request, path)`, `file_pattern_matches(pattern, name)`, `file_patterns(filter)` and `remove_disallowed_files(request, paths)`.
 
 ## Terminals
 
@@ -649,6 +659,274 @@ grove::set_canvas_draw(project.document, *view, [&](grove::GpuCanvasFrame& f) {
 - Grove only draws the window when something changed. Call `grove::redraw_canvas(document, canvas)` after changing what the canvas shows, or let it draw every frame with the `animate` attribute (`<gpu_canvas animate>`) or `grove::set_canvas_animating(document, canvas, true)`. An animating canvas only keeps the window busy while it's shown, and the window's `max-fps` still caps it.
 - `clear_canvas_draw` removes the function, and `has_canvas_draw` says whether there is one. A plain `<canvas>` can have a draw function too: it's drawn over the canvas's pixels, if it has any.
 - 3D left open by the function is closed for it, and the transform, clip and blend mode are put back afterwards. An exception thrown by the function is printed and the frame carries on.
+
+## Audio
+
+`<audio>` plays a sound file: WAV, FLAC, MP3, Ogg Vorbis, Opus (`.opus`), AAC (`.aac`), the audio of M4A/MP4 and MKV/WebM files, or anything else Fizmo's `fizmo::audio` reads. Without `controls` it takes no space and is driven from scripts; with `controls` it draws a play button, a seek slider, the time, a mute button and a volume slider.
+
+```html
+<audio id="song" src="music/song.mp3" controls />
+<audio id="click" src="click.wav" preload="auto" volume="0.6" />
+<audio id="intro" src="intro.ogg" autoplay start="0:05" end="0:20" loop />
+```
+
+| Attribute | |
+|---|---|
+| `src` | the file, relative to the `.grove` file (or the page file it's in). `grove build` packs it into the program |
+| `controls` | show the control bar |
+| `autoplay` | start playing as soon as the document has loaded (after its scripts and the `load` event) |
+| `loop` | start again from `start` at the end |
+| `muted` | silent, without forgetting `volume` |
+| `volume` | 0 to 1 (default 1) |
+| `playbackrate` | speed: `2` is twice as fast, `0.5` half (kept between 0.0625 and 16) |
+| `preservespitch` | on unless it's `"false"`: a `playbackrate` other than 1 keeps the pitch, through Fizmo's time stretcher (between 0.25× and 4×). Off, the pitch goes up and down with the speed like a record |
+| `preload` | `auto` (default) decodes the file when the document loads; `metadata` only reads its length until it's played; `none` doesn't touch it until it's played |
+| `start`, `end` | only play this part of the file, in seconds (`12.5`) or `m:ss` / `h:mm:ss` (`1:05`). `position()`, `seek()` and the slider still count from the start of the file |
+
+The boolean attributes are on when they're there, like HTML's, except that `="false"`, `"0"`, `"no"` and `"off"` turn them off, so `loop="false"` means what it says. Changing any attribute from a script (or with `set_attribute`) takes effect straight away: a new `src` stops the old file and loads the new one (and plays it if `autoplay` is set), and `volume`, `muted`, `loop`, `playbackrate`, `preservespitch`, `start`, `end` and `controls` apply to what's playing.
+
+Playback never waits on the window: all of the app's sounds go through one shared Fizmo `Mixer`, whose output is opened the first time something plays, and files are read on a background thread. Files up to 30 seconds long are decoded into memory, so they start, seek and loop instantly. Longer files on disk (music, podcasts) stream: Fizmo's mixer decodes a couple of seconds ahead on its own thread, so a long file starts at once and only that much of it is in memory. With a streamed file `end` is checked about 20 times a second rather than to the sample, and `level()` is the level of the whole mixer. Files packed into a program by `grove build` are already in memory and are always decoded. Until a file is ready, `play()` just remembers that it should play and starts it the moment it is.
+
+### Media events
+
+Media events go to the `<audio>` element and don't bubble. They're delivered from Grove's own loop right after whatever caused them, never in the middle of a script's call, so `play()` returns before the `play` event fires.
+
+| Event | Fired when | Useful fields |
+|---|---|---|
+| `play` | `play()` is called, the play button is clicked or `autoplay` starts it (even if the file is still loading) | |
+| `pause` | playback stops: `pause()`, `stop()`, the button, the end of the file, or an error | |
+| `ended` | the end (or `end`) was reached without `loop`; it comes after `timeupdate` and `pause` | |
+| `timeupdate` | about four times a second while playing, and after every seek and pause | |
+| `durationchange` | the length becomes known, or changes once the whole file is decoded | |
+| `loadedmetadata` | the file was opened and its length is known | |
+| `canplay` | the file is decoded and can start at once | |
+| `volumechange` | `volume` or `muted` changes | |
+| `ratechange` | `playbackrate` changes | |
+| `seeking`, `seeked` | before and after a seek (seeking is instant once decoded, so they come together) | |
+| `emptied` | `src` changed and the old file was dropped | |
+| `error` | the file can't be found or read, or the audio output can't be opened | `text()` is the message |
+
+### Playing from a script
+
+| Walnut and C++ (`Element`) | C | |
+|---|---|---|
+| `play()` | `grove_media_play(doc, el)` | start or resume; `false` when there's no `src` |
+| `pause()` | `grove_media_pause` | |
+| `stop()` | `grove_media_stop` | pause and go back to `start` |
+| `seek(seconds)` | `grove_media_seek` | jump, kept inside `start`..`end` |
+| `position()`, `duration()` | `grove_media_position`, `grove_media_duration` | seconds from the start of the file; `duration()` is 0 until it's known |
+| `is_playing()` | `grove_media_is_playing` | `true` from `play()` until it pauses or ends |
+| `set_volume(v)`, `volume()` | `grove_media_set_volume` | 0 to 1; sets the `volume` attribute |
+| `set_muted(b)`, `muted()` | `grove_media_set_muted` | |
+| `set_loop(b)`, `loops()` | `grove_media_set_loop` | |
+| `set_rate(r)`, `rate()` | `grove_media_set_rate` | `playbackrate` |
+| `set_src(path)` | `grove_media_set_src` | load another file |
+| `media_error()` | `grove_media_error` | the last error, or `""` |
+| `level()` | `grove_media_level` | how loud it is right now, 0 to 1 (also works on an `<audio_meter>`, and with a `NULL` element in C for everything playing) |
+
+```walnut
+grove::Element: song = grove::get_by_id("song");
+song.on("ended", [&](grove::Event&: e) -> void {
+    song.set_src("music/next.mp3");
+    song.play();
+});
+grove::get_by_id("louder").on("click", [&](grove::Event&: e) -> void {
+    song.set_volume(song.volume() + 0.1);
+});
+```
+
+### The control bar
+
+`controls` puts Grove's own elements inside the `<audio>`, so Bark styles them like anything else. For `<audio id="song">` they are:
+
+| Part | Element | id |
+|---|---|---|
+| the bar | `row.media-controls` | `song-controls` |
+| play / pause | `button.media-play` (with `.playing` while it plays) | `song-play` |
+| position | `input_slider.media-seek`, from `start` to `end` (or the length) | `song-seek` |
+| time | `text.media-time`, like `1:05 / 3:12` | `song-time` |
+| mute | `button.media-mute` (with `.muted` while muted) | `song-mute` |
+| volume | `input_slider.media-volume`, 0 to 1 | `song-volume` |
+
+```css
+.media-controls { background: #181825; border-radius: 20px; }
+.media-play { background: #89b4fa; color: #1e1e2e; border-radius: 16px; }
+.media-play.playing { background: #f9e2af; }
+.media-seek { accent-color: #a6e3a1; }
+.media-volume { width: 60px; }
+```
+
+Dragging the seek slider moves through the file as it's dragged; while it's held, playback doesn't move the slider back. The parts fire the usual `click`, `input` and `change` events first, and a listener that calls `prevent_default()` stops the control from doing its job.
+
+### Level meters
+
+`<audio_meter>` is a bar that shows how loud something is, about 20 times a second, falling back smoothly after peaks:
+
+```html
+<audio_meter for="song" />
+<audio_meter id="everything" />
+<audio_meter id="mic" scale="linear" />
+```
+
+| Attribute | |
+|---|---|
+| `for` | the id of an `<audio>`, `master` (the default: everything playing through the app's mixer), `monitor:<id>` for a microphone monitor's output, or `monitor-input:<id>` for what the microphone hears. A script can set it after `start_monitor`: `meter.set_attribute("for", "monitor:" + id.to_string())` |
+| `scale` | `db` (default: -60 dB at the left, 0 dB at the right) or `linear` |
+| `min-db` | the quietest level shown with `scale="db"` (default `-60`) |
+
+Its `value` attribute is the level from 0 to 1. Inside is a `div.meter-fill` whose width is the level, with `.clipping` while it's at full scale, so Bark sets the colors: `audio_meter { background: ...; height: 12px; }`, `.meter-fill { background: ...; }`, `.meter-fill.clipping { background: red; }`.
+
+### Sound effects
+
+For short sounds (a soundboard, clicks, game effects) scripts don't need elements. Each call returns a number: a sound handle from `preload_sound`, or a playing id from `play_sound`. Paths are relative to the document, and any number of sounds can play at once.
+
+| Walnut and C++ (`grove::` / `grove::document.`) | C | |
+|---|---|---|
+| `preload_sound(path)` | `grove_sound_preload(doc, path)` | decode in the background; returns a handle (the same one for the same file) or 0 |
+| `sound_loaded(handle)` | `grove_sound_loaded` | |
+| `unload_sound(handle)` | `grove_sound_unload` | |
+| `play_sound(path, volume, pan, loop)` | `grove_sound_play(doc, path, volume, pan, loop)` | preload if needed and play as soon as it's ready; `pan` is -1 (left) to 1 (right). C++ has defaults `1.0, 0.0, false` |
+| `play_sound(handle, volume, pan, loop)` | `grove_sound_play_preloaded` | |
+| `stop_sound(id)` | `grove_sound_stop` | |
+| `set_sound_volume(id, volume)` | `grove_sound_set_volume` | |
+| `sound_playing(id)` | `grove_sound_is_playing` | `true` while it's waiting to load or playing |
+| `stop_all_sounds()` | `grove_sound_stop_all` | (not `<audio>` elements) |
+
+```walnut
+long int: airhorn = grove::preload_sound("sounds/airhorn.wav");
+grove::get_by_id("horn").on("click", [&](grove::Event&: e) -> void {
+    grove::play_sound(airhorn, 1.0, 0.0, false);
+});
+```
+
+### Output devices and volume
+
+| Walnut and C++ | C | |
+|---|---|---|
+| `set_master_volume(v)`, `master_volume()` | `grove_audio_set_master_volume`, `grove_audio_master_volume` | scales everything the mixer plays, `<audio>` elements and sounds (0 to 4, default 1) |
+| `master_level()` | `grove_audio_master_level` | the mixer's output peak right now, 0 to 1 |
+| `audio_device_count(input)` | `grove_audio_device_count(input)` | outputs, or microphones with `true` |
+| `audio_device_id(input, i)`, `audio_device_name(input, i)` | `grove_audio_device_id`, `grove_audio_device_name` | the id to pass around and a name to show |
+| `set_output_device(id)`, `output_device()` | `grove_audio_set_output_device`, `grove_audio_output_device` | `""` is the system's default; switching while something plays moves it to the new device |
+| `audio_error()` | `grove_audio_error` | the last error from opening a device or loading a sound |
+
+On Linux, Grove plays through PulseAudio (or PipeWire's Pulse server) and falls back to ALSA; on Windows it uses WASAPI, on macOS Core Audio and on Android AAudio (Android 8.0 or newer). Recording from a microphone needs `NSMicrophoneUsageDescription` in the app's `Info.plist` on macOS, and the `RECORD_AUDIO` permission on Android, which the manifest `grove build` writes asks for when the document uses the microphone (see `microphone` under [Android](#android)); Fizmo's `Documentation/audio_platforms.md` has the details for each system. `FIZMO_AUDIO_BACKEND=null` swaps in a silent device that keeps time, which is what tests and headless machines use.
+
+### Effects and the microphone
+
+Voice changers and similar apps build a chain of Fizmo's effects and run the microphone through it to the speakers. Effects are handles too: make one by its type name, set its parameters by name, and put several in a `chain`.
+
+| Walnut and C++ | C | |
+|---|---|---|
+| `create_effect(type)` | `grove_effect_create` | 0 for a type it doesn't know |
+| `set_effect(fx, name, value)`, `effect_value(fx, name)` | `grove_effect_set`, `grove_effect_get` | values are clamped to the parameter's range; `false` for a name the effect doesn't have |
+| `effect_param_count(fx)`, `effect_param_name(fx, i)` | `grove_effect_param_count`, `grove_effect_param_name` | to build a panel of knobs |
+| `set_effect_enabled(fx, on)` | `grove_effect_set_enabled` | bypass it without removing it |
+| `chain_add(chain, fx)`, `chain_remove(chain, i)` | `grove_effect_chain_add`, `grove_effect_chain_remove` | `chain` is an effect made with `create_effect("chain")` |
+| `free_effect(fx)` | `grove_effect_free` | a monitor or chain still using it keeps it alive |
+| `start_monitor(input, output, fx)` | `grove_monitor_start` | microphone `input` → `fx` (0 for none) → `output`; `""` picks the default devices. Returns an id, or 0 (see `audio_error()`) |
+| `set_monitor_effect(id, fx)` | `grove_monitor_set_effect` | swap the effect while it runs |
+| `monitor_input_level(id)`, `monitor_output_level(id)` | `grove_monitor_input_level`, `grove_monitor_output_level` | 0 to 1, for meters |
+| `stop_monitor(id)` | `grove_monitor_stop` | |
+
+The types are `chain`, `gain`, `filter` (and `lowpass`, `highpass`, `bandpass`, `notch`), `parametric_eq`, `graphic_eq`, `dc_blocker`, `compressor`, `limiter`, `noise_gate`, `expander`, `de_esser`, `delay`, `reverb`, `distortion`, `bitcrusher`, `chorus`, `flanger`, `phaser`, `tremolo`, `vibrato`, `autopan`, `noise_reduction`, `hum_remover`, `click_remover`, `pitch_shifter`, `formant_shifter`, `autotune`, `voice_eq`, `ring_modulator`, `vocoder` and `voice_changer`, plus the voice changer's presets by name (`helium`, `deep`, `robot`, `alien`, `monster`, `radio`, `telephone`, `megaphone`, `cave`, `underwater`, `whisper`, `feminine`, `masculine`), which make a `voice_changer` set to that preset. `-` and spaces work in place of `_`. Their parameters are the ones Fizmo's effects have (`pitch_shifter` has `semitones`, `cents`, `mode`, `preserve_formants` and `formant`, for example); `effect_param_name` lists them.
+
+```walnut
+long int: voice = grove::create_effect("chain");
+long int: pitch = grove::create_effect("pitch_shifter");
+grove::set_effect(pitch, "semitones", 7.0);
+grove::chain_add(voice, pitch);
+grove::chain_add(voice, grove::create_effect("reverb"));
+long int: mic = grove::start_monitor("", "", voice);
+grove::get_by_id("mic-meter").set_attribute("for", "monitor:" + mic.to_string());
+```
+
+The monitor has its own low-latency input and output streams (about 10 ms each way); it doesn't go through the shared mixer, so `master_volume` doesn't change it (put a `gain` effect in its chain instead). Use headphones, or the speakers feed back into the microphone.
+
+On Android the first `start_monitor` shows the system's prompt asking the user to allow the microphone. It still returns an id: the monitor waits (`audio_error()` says the prompt was shown) and starts by itself once the user allows it, so meters pointed at it come alive then. If the user says no, the monitor stays stopped, `audio_error()` says why, and every `<audio_meter>` whose `for` names it gets an `error` event with the reason as its text. From C++, `grove::audio::monitor_waiting(id)` and `monitor_error(id)` tell the same; `grove::poll_monitors(document)` is what checks on waiting monitors (a few times a second, from the app's loop and the media update), and it does nothing on a computer, where the microphone opens or fails straight away.
+
+### From C++
+
+`grove/media.hpp` has the element functions the API above calls (`grove::media_play(document, node)`, `media_seek`, `media_set_src`, ...), `expand_media` and `media_problems` behind `grove check`, and `start_media` / `stop_media`, which `grove run`, `grove exec` and `grove::runtime::run` call around the document's life (a host that drives a `Document` itself calls them too, and `sync_media` after changing attributes). Playing is done by a `grove::MediaPlayer`, chosen per tag: `register_media_player(tag, factory)` plugs in another kind of player, which gets the same attributes, events, control bar and script API. `grove/audio.hpp` is the shared engine: the mixer, devices, the sound and effect handles (`grove::audio::effect(handle)` gives the `fizmo::audio::Effect` itself, and `add_effect` hands one of your own to scripts), monitors, and `set_manual_output(true)` / `advance(seconds)` for running the mixer by hand without a device, as Grove's own tests do.
+
+### Checks, bundles and Android
+
+`grove check` warns about an `src` it can't find or that isn't a kind of file Grove plays (for `<video>` it also opens the file and warns about video or audio it can't decode), a `volume` outside 0..1, a `playbackrate` that isn't above 0, an unknown `preload`, a `start` or `end` that isn't a time or an `end` before `start`, and an `<audio_meter for>` that names no `<audio>`. `grove build` packs every `<audio src>`, `<video src>` and `poster` file into the program, and the program plays them from memory.
+
+On Android, `<audio>`, `<video>` and the sound calls play through Fizmo's AAudio backend like they do on the desktop. When a device can't be opened, playing fires `error` instead of making a sound, the sound and effect calls return 0 or `false`, and `audio_error()` says why.
+
+## Video
+
+`<video>` plays a movie: MP4 (`.mp4`, `.m4v`, `.mov`, `.3gp`), Matroska and WebM (`.mkv`, `.webm`) and raw video streams (IVF `.ivf`, AV1 `.obu`, H.265 `.hevc`/`.h265`) with H.264, H.265 (HEVC), AV1 or VP9 video and AAC, Opus, Vorbis, MP3, FLAC or PCM audio, through Fizmo's `fizmo::video`. It shares everything with `<audio>`: the attributes, the media events, the script API and the control bar, plus a picture, a poster, `fit` and fullscreen.
+
+```html
+<video id="trailer" src="media/trailer.mp4" controls poster="media/trailer.jpg" width="640" />
+<video src="loop.mp4" autoplay muted loop fit="cover" style="width: 100%; height: 200px;" />
+```
+
+| Attribute | |
+|---|---|
+| `src`, `controls`, `autoplay`, `loop`, `muted`, `volume`, `playbackrate`, `preservespitch`, `start`, `end` | as for [`<audio>`](#audio). `playbackrate` is kept between 0.25 and 4 for video |
+| `preload` | `auto` (default) and `metadata` open the file when the document loads and decode its first frame in the background, so the first picture shows before it plays; `none` opens nothing until it's played |
+| `poster` | an image (any kind `<img>` takes) shown until the video is played or seeked. Without one, the first frame is shown (unless `preload="none"`) |
+| `width`, `height` | the size in pixels, like `<img>`. With one of them the other keeps the video's shape; with neither it's the video's own size (300×150 until that's known), never wider than the space it's in. Bark's `width` and `height` win over them |
+| `fit` | how the picture fills the box, like CSS `object-fit`: `contain` (default: all of it, with bars), `cover` (fills the box, cropping), `fill` (stretched), `none` (its own size, centred, cropped), `scale-down` (`none` or `contain`, whichever is smaller). Bark's `fit` (or `object-fit`) wins over the attribute |
+
+The video's own size is its display size: non-square pixels and the rotation stored in phone videos are applied, so a portrait phone clip is drawn upright. The bars around the picture are the element's Bark `background` (black by default). `playsinline` and the other HTML attributes that only matter in a browser aren't needed.
+
+H.264 (8 to 14 bits, 4:2:0, 4:2:2 and 4:4:4, progressive or interlaced), H.265 (Main, Main 10, Main 12 and the 4:2:2 and 4:4:4 range extensions), AV1 (8, 10 and 12 bits, film grain) and VP9 (profiles 0 to 3) are decoded; interlaced video is deinterlaced as it plays. A file whose video is something else, such as VP8, Theora or MPEG-4 Part 2, still plays its sound: `grove check` warns ("... with VP8 video, which isn't supported; the video will play without picture (Grove plays H.264 (AVC), H.265 (HEVC), AV1 and VP9 video)"), and the element gets a `warning` event with the same reason. A file with only audio plays like `<audio>` with an empty picture.
+
+### Video events
+
+All of [`<audio>`'s events](#media-events), and:
+
+| Event | Fired when | Useful fields |
+|---|---|---|
+| `resize` | the video's size becomes known (or changes) | `x`, `y`: the width and height `video_width()` and `video_height()` return |
+| `loadeddata` | the first frame has been decoded, so there's a picture | |
+| `playing`, `waiting` | after `play` once frames are actually coming, and when playback stalls because the decoder fell behind | |
+| `warning` | something can't be played but the rest goes on: video or audio in a codec Grove can't decode, or no audio output | `text()` is the reason |
+| `fullscreenchange` | fullscreen was turned on or off | |
+
+### From a script
+
+`play()`, `pause()`, `seek()` and the rest work the same as for `<audio>`. Video adds:
+
+| Walnut and C++ (`Element`) | C | |
+|---|---|---|
+| `video_width()`, `video_height()` | `grove_video_width`, `grove_video_height` | the display size in pixels, 0 until it's known |
+| `set_fullscreen(on)`, `is_fullscreen()`, `toggle_fullscreen()` | `grove_video_set_fullscreen`, `grove_video_is_fullscreen` | |
+| `snapshot_to_canvas(canvas)` | `grove_video_snapshot_to_canvas(doc, video, canvas)` | copy the frame on screen into a `<canvas>`, at the video's pixel size (upright) |
+| `snapshot(rgba, width, height)` (C++ only) | `grove_video_snapshot(doc, video, rgba, capacity, &width, &height)` | copy the current frame as 8-bit RGBA rows; C returns the bytes it needs (0 when there's no frame) and only copies when `capacity` is enough |
+
+```walnut
+grove::Element: movie = grove::get_by_id("trailer");
+movie.on("resize", [&](grove::Event&: e) -> void {
+    grove::log("the video is " + e.x().to_string() + " by " + e.y().to_string());
+});
+grove::get_by_id("grab").on("click", [&](grove::Event&: e) -> void {
+    movie.snapshot_to_canvas(grove::get_by_id("thumbnail"));
+});
+```
+
+### Controls and fullscreen
+
+`controls` draws the same bar as `<audio>` (`row.media-controls` with `-play`, `-seek`, `-time`, `-mute` and `-volume` parts) over the bottom of the picture, plus `button.media-fullscreen` (id `<id>-fullscreen`, with `.active` while fullscreen). Clicking the picture plays and pauses, and double-clicking it toggles fullscreen. While the video plays, the bar gets the `idle` class 2.5 seconds after the mouse last moved over the video and isn't over the bar, which hides it; moving the mouse brings it back, and it stays while paused. All of it is Bark:
+
+```css
+video { background: #111; border-radius: 8px; }
+video .media-controls { background: rgba(0, 0, 0, 70%); }
+video .media-controls.idle { display: row; opacity: 0.25; }
+.media-fullscreen.active { background: #89b4fa; }
+```
+
+Fullscreen is the window's, not the screen's: the element gets the `fullscreen` class, which the default style turns into `position: fixed` covering its whole window (`video.fullscreen { ... }` changes that), and Escape leaves it. To cover the whole screen as well, make the window itself fullscreen from the host program.
+
+### How it's drawn
+
+Fizmo decodes on its own threads. On a GPU backend (Vulkan or OpenGL) Grove uploads each frame's Y'CbCr planes as they are and the GPU converts them to RGB while drawing, with the video's own color matrix and range; on the software backend, or when the GPU can't take the frame, Fizmo converts it to RGBA on its threads instead. Grove only redraws the window when the next frame is due (the frame timer follows the video's frame rate while it plays and stops while it's paused), so a playing video doesn't hold the window at `max-fps`, and an idle window with a 24 fps video draws 24 frames a second. Each new frame is uploaded once and scaled when drawn; frames that haven't changed cost nothing to draw again. The software backend draws an RGBA texture on the CPU. Sound goes through the app's shared mixer like `<audio>`, so `set_master_volume` and the output device apply, and the picture follows the sound's clock.
+
+On Android, `<video>` plays its sound through AAudio like `<audio>` does.
 
 ## Math
 
@@ -798,8 +1076,10 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `page_show`, `page_hide` | a page starts or stops being the one showing | |
 | `open`, `close` | a modal opens or closes | |
 | `ok`, `cancel` | a popup is answered; the target is the popup. `cancel` also fires on an `input_file` whose dialog was closed without picking | |
+| `invalid` | an `input_file` was given files its `reject` or `enforce` doesn't allow; see [File picker](#file-picker) | `paths` in C++; `text()` is the paths, one per line |
 | `menu` | an item of a [right-click menu](#right-click-menus) is picked; the target is the menu's owner (doesn't bubble) | `key` is the item's value |
 | `menu_close` | a right-click menu closes without a pick (doesn't bubble) | |
+| `play`, `pause`, `ended`, `timeupdate`, `durationchange`, `loadedmetadata`, `canplay`, `volumechange`, `ratechange`, `seeking`, `seeked`, `emptied`, `error` | an `<audio>` element; see [Media events](#media-events) (they don't bubble) | `text()` for `error` |
 
 Any other name is a custom event, fired with `dispatch`. Names ignore case, `_` and `-`, so `mouse_down`, `mousedown` and `MouseDown` are the same.
 
@@ -933,7 +1213,7 @@ grove build todo.grove -o todo
 ./todo
 ```
 
-`grove build` compiles the scripts and writes a single program holding the document, its Bark files and its compiled scripts. It runs without Grove, Walnut, a compiler or the source files. Scripts are unpacked into a per-user cache (`~/.cache/grove/apps` or `%LOCALAPPDATA%\Grove\apps`) the first time it runs. On Linux the scripts are linked with `-static-libstdc++` so they don't depend on the compiler's C++ library, when the compiler has a static C++ library to link (Fedora and others need `libstdc++-static` installed); without one they're linked normally. From C++, `AppBuildOptions::portable = false` asks for a normal link.
+`grove build` compiles the scripts and writes a single program holding the document, its Bark files, its images and `<audio>` files and its compiled scripts. It runs without Grove, Walnut, a compiler or the source files. Scripts are unpacked into a per-user cache (`~/.cache/grove/apps` or `%LOCALAPPDATA%\Grove\apps`) the first time it runs. On Linux the scripts are linked with `-static-libstdc++` so they don't depend on the compiler's C++ library, when the compiler has a static C++ library to link (Fedora and others need `libstdc++-static` installed); without one they're linked normally. From C++, `AppBuildOptions::portable = false` asks for a normal link.
 
 ## Android
 
@@ -959,8 +1239,9 @@ Start the document with `<!GROVE type=android>` and `grove build` makes an Andro
 | `fullscreen` | hide the status and navigation bars |
 | `keep-screen-on` | stop the screen from turning off while the app is open |
 | `storage` | `app` (the default): files the user picks are read where they are when the app can, or as a copy otherwise. `all`: the app asks once for Android's "All files access", so it can open folders and save anywhere on the phone's storage, as a code editor or file manager needs |
+| `microphone` | whether the app asks for Android's `RECORD_AUDIO` permission, which recording from the microphone needs. `auto` (the default): yes when the document uses the microphone, which Grove sees from an `<audio_meter for="monitor:…">` or `for="monitor-input:…"`, or a script that calls `start_monitor` (`grove_monitor_start` in C). `yes` asks for it anyway (a script in a file Grove doesn't read, such as an included header, or a microphone started some other way); `no` leaves it out, and recording fails on the phone |
 
-`grove check` reports keys it doesn't know, values that can't work and elements that do nothing on a phone (`<terminal>`, and `<input_file>` folder and save pickers without `storage=all`). `grove run` on a computer opens an Android document in a phone-sized window (412×892), so you can try the layout before building.
+`grove check` reports keys it doesn't know, values that can't work, elements that do nothing on a phone (`<terminal>`, and `<input_file>` folder and save pickers without `storage=all`) and a document that uses the microphone with `microphone=no`. `grove run` on a computer opens an Android document in a phone-sized window (412×892), so you can try the layout before building.
 
 ### What changes on a phone
 
@@ -976,7 +1257,7 @@ Start the document with `<!GROVE type=android>` and `grove build` makes an Andro
   - `mode="open"`: the file where it is on the phone's storage when the app can read it there; otherwise (Google Drive, another app's files) a copy in the app's cache, so changes to it don't go back to the original.
   - `mode="folder"` and `mode="save"` need `<!GROVE storage=all>`. The first time, the app opens Android's "All files access" setting for the user to allow it (on Android 10 and older, the storage permission prompt instead). A folder or place that isn't on the phone's storage (a cloud drive) can't be opened as a folder or saved to, and the picker fires `cancel`.
   - From C++, `fizmo::windows::dialogs::open_file`, `save_file` and `select_folder` use the same picker; call them off the app's main thread, since they wait for the user.
-- Not there yet: `<terminal>` (there's no shell to run).
+- Not there yet: `<terminal>` (there's no shell to run). Sound, `<audio>`, `<video>` and devices work through AAudio; the microphone needs the `microphone` key and the user's permission (see [Audio](#audio)).
 
 ### Building the APK
 

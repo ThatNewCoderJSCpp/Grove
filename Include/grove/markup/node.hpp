@@ -135,10 +135,13 @@ struct FileDialogRequest {
     std::string start;
     bool multiple = false;
     Node* owner = nullptr;
+    std::string reject;
+    bool enforce = false;
 };
 
 class Terminal;
 struct CanvasPixels;
+struct MediaRegistry;
 
 struct MenuItem {
     std::string value;
@@ -202,7 +205,9 @@ struct DocumentHost {
     std::function<void()> clear_selection;
     std::map<const Node*, std::shared_ptr<Terminal>> terminals;
     std::map<const Node*, std::shared_ptr<CanvasPixels>> canvases;
+    std::shared_ptr<MediaRegistry> media;
     FrameRate frame_rate;
+    std::uint64_t paint_requests = 0;
 };
 
 class Document {

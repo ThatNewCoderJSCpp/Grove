@@ -1,0 +1,42 @@
+import module.grove
+
+grove::Element: clip = grove::get_by_id("clip");
+grove::Element: state = grove::get_by_id("state");
+grove::Element: shot = grove::get_by_id("shot");
+
+clip.on("play", [&](grove::Event&: e) -> void {
+    state.set_inner_text("playing");
+});
+
+clip.on("ended", [&](grove::Event&: e) -> void {
+    state.set_inner_text("ended at " + clip.position().to_string());
+});
+
+clip.on("error", [&](grove::Event&: e) -> void {
+    state.set_inner_text("error: " + e.input_text());
+});
+
+clip.on("loadeddata", [&](grove::Event&: e) -> void {
+    if (clip.snapshot_to_canvas(shot) && clip.video_width() > 159.0 && clip.video_height() > 95.0) then {
+        grove::get_by_id("frame").set_inner_text("frame ok");
+    }
+});
+
+function walnut_video_checks() -> string {
+    short float: w = clip.video_width();
+    short float: h = clip.video_height();
+    bool: full = clip.set_fullscreen(true);
+    bool: is_full = clip.is_fullscreen();
+    bool: toggled = clip.toggle_fullscreen();
+    bool: still_full = clip.is_fullscreen();
+    bool: vol = clip.set_volume(0.75);
+    short float: d = clip.duration();
+    if (w > 159.0 && h > 95.0 && full && is_full && toggled && !still_full && vol && d > 1.9) then {
+        return "walnut ok";
+    }
+    return "walnut failed";
+} end function walnut_video_checks
+
+clip.on("loadedmetadata", [&](grove::Event&: e) -> void {
+    grove::get_by_id("walnut").set_inner_text(walnut_video_checks());
+});
