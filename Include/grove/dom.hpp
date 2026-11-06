@@ -91,6 +91,11 @@ public:
     void stop_propagation() { grove_event_stop_propagation(m_event); }
     void prevent_default() { grove_event_prevent_default(m_event); }
     bool default_prevented() const { return grove_event_default_prevented(m_event); }
+    bool has_edit_text() const { return grove_event_has_edit_text(m_event); }
+    std::string edit_text() const { return detail::str(grove_event_edit_text(m_event)); }
+    std::int64_t edit_caret() const { return static_cast<std::int64_t>(grove_event_edit_caret(m_event)); }
+    std::int64_t edit_selection_start() const { return static_cast<std::int64_t>(grove_event_edit_selection_start(m_event)); }
+    std::int64_t edit_selection_end() const { return static_cast<std::int64_t>(grove_event_edit_selection_end(m_event)); }
 
 private:
     grove_event* m_event = nullptr;

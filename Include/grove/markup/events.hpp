@@ -1,6 +1,7 @@
 #ifndef GROVE_MARKUP_EVENTS_HPP
 #define GROVE_MARKUP_EVENTS_HPP
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -38,6 +39,9 @@ struct Event {
     bool bubbles = true;
     bool propagation_stopped = false;
     bool default_prevented = false;
+    std::size_t edit_caret = 0;
+    std::size_t edit_selection_start = 0;
+    std::size_t edit_selection_end = 0;
 };
 
 using Listener = std::function<void(Event&)>;

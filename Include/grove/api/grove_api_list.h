@@ -249,6 +249,11 @@
     X(bool, grove_video_set_fullscreen, (grove_document* document, grove_element* element, bool fullscreen), (document, element, fullscreen)) \
     X(bool, grove_video_is_fullscreen, (grove_document* document, grove_element* element), (document, element)) \
     X(size_t, grove_video_snapshot, (grove_document* document, grove_element* element, uint8_t* rgba, size_t capacity, uint32_t* width, uint32_t* height), (document, element, rgba, capacity, width, height)) \
-    X(bool, grove_video_snapshot_to_canvas, (grove_document* document, grove_element* element, grove_element* canvas), (document, element, canvas))
+    X(bool, grove_video_snapshot_to_canvas, (grove_document* document, grove_element* element, grove_element* canvas), (document, element, canvas)) \
+    X(bool, grove_event_has_edit_text, (const grove_event* event), (event)) \
+    X(const char*, grove_event_edit_text, (const grove_event* event), (event)) \
+    X(size_t, grove_event_edit_caret, (const grove_event* event), (event)) \
+    X(size_t, grove_event_edit_selection_start, (const grove_event* event), (event)) \
+    X(size_t, grove_event_edit_selection_end, (const grove_event* event), (event))
 
 #endif // GROVE_API_LIST_H

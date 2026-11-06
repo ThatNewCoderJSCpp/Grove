@@ -75,7 +75,7 @@ Without the runtime, `grove_core` only needs Fizmo's headers (MathText is header
 | `grove inputs doc.grove` | every input with its type and current value |
 | `grove scripts doc.grove` | the scripts the document uses |
 | `grove run doc.grove [--window id]` | build the scripts and open the document's `<body>` as a Fizmo window |
-| `grove exec doc.grove [--event "click #id"] [--for ms]` | build and run the scripts without a window, then print the element tree |
+| `grove exec doc.grove [--event "click #id"] [--type "#id text"] [--key "#id Backspace"] [--paste "#id text"] [--text "#id text"] [--for ms]` | build and run the scripts without a window, then print the element tree; `--type`, `--key`, `--paste` and `--text` type into a field the way a keyboard, the clipboard or an input method would |
 | `grove build doc.grove [-o app]` | one executable with the document, its styles and its compiled scripts; an Android app (`.apk`) when the document starts with `<!GROVE type=android>` |
 | `grove scripts doc.grove --build` | compile every script and report errors |
 | `grove highlight doc.grove` | tokens, colors and diagnostics as JSON, for editors (`.bark` files too; `--stdin` reads unsaved text) |

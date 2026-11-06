@@ -1384,6 +1384,7 @@ public:
                 break;
             }
             case WindowEventType::KeyRelease: {
+                if (m_swallow_text && m_swallow_key != fizmo::input::Key::Unknown && m_swallow_key == (e.logical_key != fizmo::input::Key::Unknown ? e.logical_key : e.physical_key)) m_swallow_text = false;
                 hover_at(m_mouse_x, m_mouse_y);
                 Event ev = key_event("key_up", e);
                 dispatch(key_target(), ev);
@@ -1394,6 +1395,7 @@ public:
     }
 
     std::string public_selected_text() { return selection_text(); }
+    std::string public_edit_text() const { return m_edit; }
     bool public_select(const Node& node) { return select_contents(node); }
     void public_clear_selection() { clear_text_selection(); }
 
@@ -1485,10 +1487,54 @@ private:
     bool dispatch(const Node* target, Event& e) {
         e.modifiers = m_mods;
         if (target && target != &m_window && !document().is_attached(*target)) target = &m_window;
+        const Node* live = nullptr;
+        std::string synced;
+        if (edit_event(target, e)) {
+            stamp_edit(e);
+            if (e.type == "input" && input_kind_of(*m_focus) == InputKind::String) {
+                live = m_focus;
+                Node& field = mutable_node(*live);
+                if (input_text(field) != m_edit) set_input_string(document(), field, m_edit);
+                synced = input_text(field);
+            }
+        }
         const std::uint64_t before = document().revision();
         const bool result = document().events().dispatch(document(), const_cast<Node*>(target), e);
         if (document().revision() != before) m_styles.invalidate();
+        if (live && m_focus == live && document().is_attached(*live)) {
+            const std::string now = input_text(*live);
+            if (now != synced) {
+                m_edit = now;
+                m_edit_caret = now.size();
+                m_edit_anchor = std::string::npos;
+                m_focus_start = now;
+                m_edit_all = false;
+                m_invalid = false;
+            }
+        }
         return result;
+    }
+
+    bool edit_event(const Node* target, const Event& e) const {
+        if (!m_focus || target != m_focus) return false;
+        return e.type == "input" || e.type == "change" || e.type == "key_down" || e.type == "key_up" || e.type == "text";
+    }
+
+    void stamp_edit(Event& e) const {
+        if (!e.has_edit_text) {
+            e.edit_text = m_edit;
+            e.has_edit_text = true;
+        }
+        e.edit_caret = std::min(m_edit_caret, e.edit_text.size());
+        std::size_t a = 0;
+        std::size_t b = 0;
+        if (e.edit_text == m_edit && edit_range(a, b)) {
+            e.edit_selection_start = a;
+            e.edit_selection_end = b;
+        } else {
+            e.edit_selection_start = e.edit_caret;
+            e.edit_selection_end = e.edit_caret;
+        }
     }
 
     Event pointer_event(const char* type, float x, float y, int button) {
@@ -8111,6 +8157,7 @@ private:
         }
         Event ev = key_event("key_down", e);
         m_swallow_text = false;
+        m_swallow_key = e.logical_key != Key::Unknown ? e.logical_key : e.physical_key;
         const Node* editing = m_focus && input_kind_of(*m_focus) == InputKind::String ? m_focus : nullptr;
         std::string synced;
         if (editing) {
@@ -9459,6 +9506,7 @@ private:
     int m_term_last_row = -1;
     bool m_term_swallow = false;
     bool m_swallow_text = false;
+    fizmo::input::Key m_swallow_key = fizmo::input::Key::Unknown;
     std::map<const Node*, std::array<std::uint8_t, 9>> m_term_colors;
     std::map<const Node*, CanvasTexture> m_canvas_textures;
     std::map<const Node*, VideoTexture> m_video_textures;
@@ -11043,7 +11091,104 @@ private:
 };
 #endif
 
+fizmo::input::Modifiers headless_modifiers(unsigned m) {
+    using fizmo::input::Modifiers;
+    Modifiers out = Modifiers::None;
+    if (m & ModifierShift) out |= Modifiers::Shift;
+    if (m & ModifierControl) out |= Modifiers::Control;
+    if (m & ModifierAlt) out |= Modifiers::Alt;
+    if (m & ModifierMeta) out |= Modifiers::Meta;
+    return out;
+}
+
+fizmo::input::Key headless_key(const std::string& name) {
+    if (name == " ") return fizmo::input::Key::Space;
+    return fizmo::input::key_from_name(name);
+}
+
 } // namespace
+
+struct HeadlessView::State {
+    std::string clip;
+    std::unique_ptr<DocumentView> view;
+};
+
+HeadlessView::HeadlessView(Project& project, const std::string& window_id) : m_state(std::make_unique<State>()) {
+    RunOptions options;
+    options.window_id = window_id;
+    const Node* window = pick_window(project, options);
+    if (!window) return;
+    m_state->view = std::make_unique<DocumentView>(project, project.styles, *window, true);
+    State* state = m_state.get();
+    ViewPlatform platform;
+    platform.set_clipboard = [state](const std::string& t) {
+        state->clip = t;
+        return true;
+    };
+    platform.clipboard = [state] { return state->clip; };
+    m_state->view->set_platform(std::move(platform));
+}
+
+HeadlessView::~HeadlessView() = default;
+
+bool HeadlessView::ready() const noexcept { return m_state->view != nullptr; }
+
+bool HeadlessView::focus(Node& node) { return ready() && m_state->view->focus_from_script(&node); }
+
+std::string HeadlessView::edit_text() const { return ready() ? m_state->view->public_edit_text() : std::string(); }
+
+bool HeadlessView::key(std::string_view name, unsigned modifiers) {
+    if (!ready()) return false;
+    const std::string label(name);
+    const fizmo::input::Key k = headless_key(label);
+    if (k == fizmo::input::Key::Unknown) return false;
+    fizmo::windows::WindowEvent e{};
+    e.type = fizmo::windows::WindowEventType::KeyPress;
+    e.logical_key = k;
+    e.physical_key = k;
+    e.key_name = label;
+    e.mods = headless_modifiers(modifiers);
+    m_state->view->on_event(e);
+    e.type = fizmo::windows::WindowEventType::KeyRelease;
+    m_state->view->on_event(e);
+    return true;
+}
+
+void HeadlessView::text(const std::string& text) {
+    if (!ready() || text.empty()) return;
+    fizmo::windows::WindowEvent e{};
+    e.type = fizmo::windows::WindowEventType::TextInput;
+    e.text = text;
+    m_state->view->on_event(e);
+}
+
+void HeadlessView::type(const std::string& text) {
+    if (!ready()) return;
+    for (const std::string& cp : split_code_points(text)) {
+        const fizmo::input::Key k = headless_key(cp);
+        fizmo::windows::WindowEvent e{};
+        e.type = fizmo::windows::WindowEventType::KeyPress;
+        e.logical_key = k;
+        e.physical_key = k;
+        e.key_name = cp;
+        e.text = cp;
+        m_state->view->on_event(e);
+        this->text(cp);
+        e.type = fizmo::windows::WindowEventType::KeyRelease;
+        e.text.clear();
+        m_state->view->on_event(e);
+    }
+}
+
+void HeadlessView::paste(const std::string& text) {
+    if (!ready()) return;
+    m_state->clip = text;
+    key("V", ModifierControl);
+}
+
+void HeadlessView::set_clipboard(const std::string& text) { m_state->clip = text; }
+
+std::string HeadlessView::clipboard() const { return m_state->clip; }
 
 std::vector<std::string> font_families(std::string_view kind) {
     std::vector<std::string> out;

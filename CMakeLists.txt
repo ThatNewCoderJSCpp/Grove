@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(grove VERSION 0.3.0 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
+project(grove VERSION 0.3.1 DESCRIPTION "Grove: HTML-style UI documents backed by Fizmo and Walnut" LANGUAGES C CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
@@ -17,7 +17,7 @@ option(GROVE_WITH_WALNUT "Fetch Walnut so Grove can build <script lang=\"walnut\
 option(GROVE_BUILD_TESTS "Build the Grove tests" ${GROVE_DESKTOP_DEFAULT})
 set(GROVE_ANDROID_KIT_DIR "" CACHE PATH "Where grove build looks for the Android runtime kit (one folder per ABI) before its own lib/grove/android")
 option(GROVE_PACKAGE "Build grove as a self-contained download (static C++ runtime) and set up CPack" OFF)
-set(GROVE_FIZMO_TAG "v0.4.0" CACHE STRING "Fizmo git tag to fetch")
+set(GROVE_FIZMO_TAG "v0.4.1" CACHE STRING "Fizmo git tag to fetch")
 set(GROVE_WALNUT_TAG "v0.3.0" CACHE STRING "Walnut git tag to fetch")
 
 include(FetchContent)
@@ -277,10 +277,19 @@ if(GROVE_BUILD_TESTS)
     grove_warnings(grove_video_tests)
     add_test(NAME grove_video_tests COMMAND grove_video_tests)
     set_tests_properties(grove_video_tests PROPERTIES ENVIRONMENT "FIZMO_AUDIO_BACKEND=null")
+    if(GROVE_BUILD_RUNTIME)
+        add_executable(grove_input_tests Tests/grove_input_tests.cpp)
+        target_link_libraries(grove_input_tests PRIVATE grove_runtime)
+        grove_warnings(grove_input_tests)
+        add_test(NAME grove_input_tests COMMAND grove_input_tests)
+        set_tests_properties(grove_input_tests PROPERTIES ENVIRONMENT "FIZMO_AUDIO_BACKEND=null")
+    endif()
     add_test(NAME grove_check_audio COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/audio/audio_api.grove")
     set_tests_properties(grove_check_audio PROPERTIES FAIL_REGULAR_EXPRESSION ": warning: |: error: ")
     add_test(NAME grove_check_video COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/video/video_api.grove")
     set_tests_properties(grove_check_video PROPERTIES FAIL_REGULAR_EXPRESSION ": warning: |: error: ")
+    add_test(NAME grove_check_live_text COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/input/live_text.grove")
+    set_tests_properties(grove_check_live_text PROPERTIES FAIL_REGULAR_EXPRESSION ": warning: |: error: ")
     add_test(NAME grove_check_hello COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/hello/hello.grove")
     add_test(NAME grove_check_inputs COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/inputs/inputs.grove")
     add_test(NAME grove_check_todo COMMAND grove check "${CMAKE_CURRENT_SOURCE_DIR}/Examples/todo/todo.grove")
@@ -312,6 +321,7 @@ if(GROVE_BUILD_TESTS)
         set_tests_properties(grove_exec_bark_fail PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
             PASS_REGULAR_EXPRESSION "checking everything; failed: everything is broken")
+        set_tests_properties(grove_exec_bark grove_exec_bark_fail PROPERTIES RESOURCE_LOCK grove_bark_scripts)
         add_test(NAME grove_scripts_audio COMMAND grove scripts "${CMAKE_CURRENT_SOURCE_DIR}/Tests/audio/audio_api.grove" --build)
         set_tests_properties(grove_scripts_audio PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
@@ -328,6 +338,14 @@ if(GROVE_BUILD_TESTS)
         set_tests_properties(grove_exec_video PROPERTIES
             ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache;FIZMO_AUDIO_BACKEND=null"
             PASS_REGULAR_EXPRESSION "ended at.*frame ok.*walnut ok.*cpp ok.*c ok")
+        if(GROVE_BUILD_RUNTIME)
+            add_test(NAME grove_exec_live_text COMMAND grove exec "${CMAKE_CURRENT_SOURCE_DIR}/Tests/input/live_text.grove" --full
+                --type "#field ab" --key "#field Backspace" --paste "#field xyz" --text "#field jp" --key "#field Ctrl+A" --type "#field Z")
+            set_tests_properties(grove_exec_live_text PROPERTIES
+                ENVIRONMENT "GROVE_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/grove-cache"
+                PASS_REGULAR_EXPRESSION "\\[a@1\\]\\[ab@2\\]\\[a@1\\]\\[axyz@4\\]\\[axyzjp@6\\]\\[Z@1\\].*down ab/ab.*up a/a.*live ok"
+                FAIL_REGULAR_EXPRESSION "lagging|: error: ")
+        endif()
         set_tests_properties(grove_scripts_audio grove_exec_audio PROPERTIES RESOURCE_LOCK grove_audio_scripts)
         set_tests_properties(grove_scripts_video grove_exec_video PROPERTIES RESOURCE_LOCK grove_video_scripts)
         if(GROVE_BUILD_RUNTIME)

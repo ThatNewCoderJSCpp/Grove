@@ -127,6 +127,11 @@ extern "C++" from "<grove/dom.hpp>" {
         function stop_propagation() -> void;
         function prevent_default() -> void;
         function default_prevented() const -> bool;
+        function has_edit_text() const -> bool;
+        function edit_text() const -> string;
+        function edit_caret() const -> long int;
+        function edit_selection_start() const -> long int;
+        function edit_selection_end() const -> long int;
     } end class NativeEvent
 
     class NativeDocument as "grove::Document" {
@@ -991,6 +996,26 @@ public:
     function default_prevented() const -> bool {
         return raw.default_prevented();
     } end function default_prevented
+
+    function has_edit_text() const -> bool {
+        return raw.has_edit_text();
+    } end function has_edit_text
+
+    function edit_text() const -> string {
+        return raw.edit_text();
+    } end function edit_text
+
+    function edit_caret() const -> long int {
+        return raw.edit_caret();
+    } end function edit_caret
+
+    function edit_selection_start() const -> long int {
+        return raw.edit_selection_start();
+    } end function edit_selection_start
+
+    function edit_selection_end() const -> long int {
+        return raw.edit_selection_end();
+    } end function edit_selection_end
 } end class Event
 
 class Document {
