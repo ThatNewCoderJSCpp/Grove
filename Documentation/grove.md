@@ -1055,11 +1055,11 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `mouse_enter`, `mouse_leave` | the mouse moves onto or off an element (doesn't bubble) | |
 | `wheel` | scrolling | `delta_x`, `delta_y` |
 | `drop` | files or folders are dragged in from outside the program (a file manager, the desktop) and dropped; it goes to the element they were dropped on | `x`, `y`, `paths` in C++; `text()` is the paths, one per line |
-| `key_down`, `key_up` | a key is pressed or released; `key` is a name like `A`, `Enter`, `Delete`, `F2` or `UpArrow`, never a control character. While an `input_string` is being typed in, its value is the text typed so far during `key_down`, and a handler that sets the value replaces what's in the field | `key`, `shift()`, `ctrl()`, `alt()`, `meta()` |
-| `text` | text is typed | `text` |
+| `key_down`, `key_up` | a key is pressed or released; `key` is a name like `A`, `Enter`, `Delete`, `F2` or `UpArrow`, never a control character. `key_down` comes before the key does anything, so in a field being typed in `edit_text()` (and an `input_string`'s value) is the text from before this key, and `prevent_default()` stops the key's edit; `key_up` comes after, with the text the key left. A `key_down` handler that sets an `input_string`'s value replaces what's in the field | `key`, `shift()`, `ctrl()`, `alt()`, `meta()`, `edit_text()` |
+| `text` | text is typed, by a key or by an input method (IME), before it goes into the field; `edit_text()` is the text from before it | `text`, `edit_text()` |
 | `focus`, `blur` | an element gains or loses focus (doesn't bubble) | |
-| `input` | an input's value changes while editing. A typed field's value stays the last committed one until Enter or leaving it, so in C++ `edit_text` holds the text typed so far (with `has_edit_text` set) for handlers that react as you type, like a search box | `edit_text`, `has_edit_text` |
-| `change` | an input's value is committed (Enter, a click, leaving the field, picking a file) | |
+| `input` | an input's value changes while editing: after every typed character, Backspace or Delete, paste, cut, undo or input method text. This is the event for reacting as you type, like a search box. `edit_text()` is the whole text now in the field, and an `input_string`'s `value_string()` already matches it. Other typed fields (numbers, colors, math) keep their last committed value until Enter or leaving the field, so read `edit_text()` for those. A handler that sets an `input_string`'s value replaces what's in the field | `edit_text()`, `has_edit_text()`, `edit_caret()`, `edit_selection_start()`, `edit_selection_end()` |
+| `change` | an input's value is committed (Enter, a click, leaving the field, picking a file) | `edit_text()` when it comes from a typed field |
 | `cursor` | the caret of an `input_code` moves | `x()` is the line, `y()` the column, both from 1 |
 | `find` | an `input_code`'s matches for its `find` text or its current match change | `x()` is the current match from 1 (0 when none is selected), `y()` how many there are; `key()` is `bad-pattern` for a regular expression that doesn't parse |
 | `replace` | Replace All finished in an `input_code` | `x()` is how many were replaced |
@@ -1084,6 +1084,31 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `play`, `pause`, `ended`, `timeupdate`, `durationchange`, `loadedmetadata`, `canplay`, `volumechange`, `ratechange`, `seeking`, `seeked`, `emptied`, `error` | an `<audio>` element; see [Media events](#media-events) (they don't bubble) | `text()` for `error` |
 
 Any other name is a custom event, fired with `dispatch`. Names ignore case, `_` and `-`, so `mouse_down`, `mousedown` and `MouseDown` are the same.
+
+#### Reading what's being typed
+
+While a field has the keyboard, its `input`, `change`, `key_down`, `key_up` and `text` events carry the text being edited:
+
+| Walnut and C++ | C | |
+|---|---|---|
+| `has_edit_text()` | `grove_event_has_edit_text` | `true` when the event came from a field being edited |
+| `edit_text()` | `grove_event_edit_text` | the field's text (`""` for other events) |
+| `edit_caret()` | `grove_event_edit_caret` | where the caret is, in bytes of `edit_text()` |
+| `edit_selection_start()`, `edit_selection_end()` | `grove_event_edit_selection_start`, `grove_event_edit_selection_end` | the selected bytes; both equal `edit_caret()` when nothing is selected |
+
+Listen for `input` to follow the text as it's typed. It fires once the edit is done, so `edit_text()` and an `input_string`'s `value_string()` both hold the full current text, whether the edit came from a key, Backspace, a paste or an input method. `key_down` and `text` fire before the edit, so they see the text without the new key; that's what lets them `prevent_default()` it.
+
+```walnut
+grove::Element: search = grove::get_by_id("search");
+
+search.on("input", [&](grove::Event&: e) -> void {
+    grove::get_by_id("status").set_inner_text("Searching for " + e.edit_text());
+});
+```
+
+In C++ (`grove::Event` from `grove/markup/events.hpp`) the same values are the fields `edit_text`, `has_edit_text`, `edit_caret`, `edit_selection_start` and `edit_selection_end`.
+
+To test this without a window, `grove exec` can type into a field: `--type "#search abc"` presses keys one by one, `--key "#search Backspace"` (or `Ctrl+A`, `Shift+Left`) presses one key, `--paste "#search text"` pastes and `--text "#search text"` sends text the way an input method does. From C++, `grove::runtime::HeadlessView` (in `grove/runtime/runtime.hpp`) does the same with `focus(node)`, `type`, `key`, `paste` and `text`.
 
 ## Windows
 
