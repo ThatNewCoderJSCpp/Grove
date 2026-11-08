@@ -119,7 +119,7 @@ bool allowed_attribute(InputKind kind, const std::string& name, bool generic) {
     switch (kind) {
         case InputKind::Integer:
         case InputKind::Float: return name == "value" || name == "min" || name == "max" || name == "step" || name == "placeholder";
-        case InputKind::Slider: return name == "value" || name == "min" || name == "max" || name == "step";
+        case InputKind::Slider: return name == "value" || name == "min" || name == "max" || name == "step" || name == "readout";
         case InputKind::String: return name == "value" || name == "maxlength" || name == "placeholder" || name == "allow" || name == "block" || name == "chars" || name == "block-chars" || name == "pattern";
         case InputKind::Bool: return name == "checked" || name == "switch";
         case InputKind::Radio: return name == "name" || name == "value" || name == "checked";
