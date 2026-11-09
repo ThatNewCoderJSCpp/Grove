@@ -1147,13 +1147,17 @@ public:
         const bark::ComputedStyle& style = style_of(m_window);
         if (auto bg = style.color("background")) push_rect(DrawOp::Kind::Fill, 0, 0, w, h, to_color(*bg));
         const Box pad = box_of(style, "padding");
+        const std::string_view root_overflow_y = style.text_view("overflow-y");
+        const std::string_view root_overflow = root_overflow_y.empty() ? style.text_view("overflow") : root_overflow_y;
+        const bool root_fixed = root_overflow == "hidden" || root_overflow == "clip";
+        if (root_fixed) m_scroll = 0.0f;
         float y = pad.top - m_scroll;
         const float start = y;
         m_avail_h = std::max(0.0f, h - pad.top - pad.bottom);
         lay_content(r, m_window, style, pad.left, y, w - pad.left - pad.right);
         m_avail_h = -1.0f;
         m_content_height = (y - start) + pad.top + pad.bottom;
-        const float max_scroll = std::max(0.0f, m_content_height - h);
+        const float max_scroll = root_fixed ? 0.0f : std::max(0.0f, m_content_height - h);
         if (m_scroll > max_scroll) m_scroll = max_scroll;
         layout_modals(r, w, h);
         layout_code_hover(r, w, h);
@@ -2034,6 +2038,16 @@ private:
         return std::max(0.0f, static_cast<float>((*v)[0].number));
     }
 
+    float trailing_gap(const Node& node) {
+        if (!node.is_element() || skipped(node)) return 0.0f;
+        const bark::ComputedStyle& style = style_of(node);
+        const std::optional<double> gap = style.length("gap");
+        if (!gap) return 0.0f;
+        const std::optional<InputKind> kind = input_kind_of(node);
+        if ((kind && *kind != InputKind::File) || !is_row(node, style)) return static_cast<float>(*gap);
+        return 0.0f;
+    }
+
     bool is_inline_flow(const Node& node) {
         if (node.is_text()) return true;
         if (!node.is_element()) return false;
@@ -2239,7 +2253,7 @@ private:
                         const bark::ComputedStyle& bs = style_of(*b);
                         if (flex_of(bs) > 0.0f) {
                             const Box m = box_of(bs, "margin");
-                            my = m.top + m.bottom;
+                            my = m.top + m.bottom + trailing_gap(*b);
                         } else {
                             m_avail_h = saved_avail;
                             place_item(o, my, -1.0f);
@@ -2249,10 +2263,36 @@ private:
                 }
                 rewind(before);
                 m_avail_h = saved_avail;
-                const float free = std::max(0.0f, avail - used);
+                float free = std::max(0.0f, avail - used);
+                std::vector<float> floors(blocks.size(), 0.0f);
+                std::vector<bool> settled(blocks.size(), false);
                 for (std::size_t i = 0; i < blocks.size(); ++i) {
-                    const float f = flex_of(style_of(*blocks[i]));
-                    if (f > 0.0f) forced[i] = free * f / total_flex;
+                    const bark::ComputedStyle& bs = style_of(*blocks[i]);
+                    settled[i] = flex_of(bs) <= 0.0f;
+                    if (const auto mn = resolve_length(bs, "min-height", avail)) floors[i] = std::max(0.0f, *mn);
+                }
+                for (std::size_t pass = 0; pass <= blocks.size(); ++pass) {
+                    float total = 0.0f;
+                    for (std::size_t i = 0; i < blocks.size(); ++i) {
+                        if (!settled[i]) total += flex_of(style_of(*blocks[i]));
+                    }
+                    if (total <= 0.0f) break;
+                    bool clamped = false;
+                    for (std::size_t i = 0; i < blocks.size(); ++i) {
+                        if (settled[i]) continue;
+                        const float share = free * flex_of(style_of(*blocks[i])) / total;
+                        if (share < floors[i]) {
+                            forced[i] = floors[i];
+                            settled[i] = true;
+                            free = std::max(0.0f, free - floors[i]);
+                            clamped = true;
+                        }
+                    }
+                    if (clamped) continue;
+                    for (std::size_t i = 0; i < blocks.size(); ++i) {
+                        if (!settled[i]) forced[i] = free * flex_of(style_of(*blocks[i])) / total;
+                    }
+                    break;
                 }
             }
         }
@@ -2660,7 +2700,9 @@ private:
                 std::vector<const Node*> one{ items[i] };
                 layout_inline(r, element, one, px, py, w);
             } else {
-                layout_element(r, *items[i], px, py, w, true, forced_for(i));
+                const float forced = forced_for(i);
+                layout_element(r, *items[i], px, py, w, true, forced);
+                if (forced >= 0.0f) py -= trailing_gap(*items[i]);
             }
         };
         std::vector<float> heights(items.size(), -1.0f);
