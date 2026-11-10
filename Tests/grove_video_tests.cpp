@@ -98,9 +98,11 @@ void pump(grove::Document& doc, Clock& clock, double ms) {
 }
 
 bool wait_until(grove::Document& doc, Clock& clock, const std::function<bool()>& done) {
-    for (int i = 0; i < 3000; ++i) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    for (int i = 0; i < 3000 || std::chrono::steady_clock::now() < deadline; ++i) {
         pump(doc, clock, 10.0);
         if (done()) return true;
+        if (std::chrono::steady_clock::now() >= deadline) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return done();

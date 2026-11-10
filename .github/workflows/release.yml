@@ -217,7 +217,7 @@ jobs:
       - name: Download llvm-mingw
         if: steps.llvm-mingw-cache.outputs.cache-hit != 'true'
         run: |
-          curl -fL --retry 5 --retry-delay 10 -o /tmp/llvm-mingw.tar.xz "$LLVM_MINGW_URL"
+          curl -fL --retry 10 --retry-delay 20 --retry-all-errors -o /tmp/llvm-mingw.tar.xz "$LLVM_MINGW_URL"
           mkdir -p ~/llvm-mingw
           tar -xf /tmp/llvm-mingw.tar.xz -C ~/llvm-mingw --strip-components=1
 
