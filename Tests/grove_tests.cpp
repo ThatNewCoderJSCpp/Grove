@@ -1623,6 +1623,26 @@ void test_keymap() {
     CHECK(grove::code_action_for({}, *grove::parse_chord("Ctrl+Click")).value_or("") == "go-to-definition");
     CHECK(grove::keymap_text(map) == "add-caret=Ctrl+Alt+Click; copy=Ctrl+Shift+C; redo=none");
     CHECK(grove::parse_chord(grove::chord_display_text(*c)) == c);
+    const auto p = grove::parse_chord("Ctrl+Physical:Z");
+    CHECK(p && p->physical && p->ctrl && p->key == "Z" && p->key_code == fizmo::input::Key::Z && grove::chord_text(*p) == "Ctrl+Physical:Z");
+    CHECK(grove::parse_chord(grove::chord_text(*p)) == p && grove::parse_chord("ctrl+physical:z") == p);
+    CHECK(!grove::parse_chord("Physical:Click") && *p != *grove::parse_chord("Ctrl+Z"));
+    CHECK(grove::key_code_of("-") == fizmo::input::Key::Minus && grove::key_code_of("Left") == fizmo::input::Key::Left && grove::key_code_of("Click") == fizmo::input::Key::Unknown);
+    const grove::Keymap azerty = grove::parse_keymap("undo=Ctrl+Physical:Z; redo=Ctrl+Y");
+    CHECK(grove::keymap_text(azerty) == "redo=Ctrl+Y; undo=Ctrl+Physical:Z");
+    const grove::Chord physical_z = grove::chord_of(fizmo::input::Key::W, fizmo::input::Key::Z, grove::ModifierControl);
+    const grove::Chord logical_z = grove::chord_of(fizmo::input::Key::Z, fizmo::input::Key::W, grove::ModifierControl);
+    CHECK(physical_z.key == "W" && physical_z.key_code == fizmo::input::Key::W && physical_z.physical_code == fizmo::input::Key::Z);
+    CHECK(grove::code_action_for(azerty, physical_z).value_or("") == "undo");
+    CHECK(!grove::code_action_for(azerty, logical_z));
+    CHECK(grove::code_action_for({}, logical_z).value_or("") == "undo");
+    CHECK(!grove::code_action_for({}, physical_z));
+    grove::Event key_event;
+    key_event.physical_key = fizmo::input::Key::Q;
+    key_event.logical_key = fizmo::input::Key::A;
+    CHECK(key_event.is_physical_key(fizmo::input::Key::Q) && !key_event.is_physical_key(fizmo::input::Key::A));
+    CHECK(key_event.is_logical_key(fizmo::input::Key::A) && key_event.is_key(fizmo::input::Key::Q) && !key_event.is_key(fizmo::input::Key::Unknown));
+    CHECK(std::string(key_event.code()) == "Q" && std::string(key_event.logical_name()) == "A" && key_event.any_key() == fizmo::input::Key::A);
 #if defined(__APPLE__)
     CHECK(grove::chord_display_text(*c) == "Cmd+Shift+M" && grove::chords_display_text(many) == "Cmd+Y, Cmd+Shift+Z, Cmd+,");
 #else

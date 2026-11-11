@@ -1560,6 +1560,10 @@ private:
             if (const char* name = fizmo::input::key_name(k)) e.key = name;
         }
         e.text = w.text;
+        e.physical_key = w.physical_key != fizmo::input::Key::Unknown ? w.physical_key : w.logical_key;
+        e.logical_key = w.logical_key != fizmo::input::Key::Unknown ? w.logical_key : w.physical_key;
+        e.scancode = w.scancode;
+        e.repeat = w.repeat;
         return e;
     }
 
@@ -8281,7 +8285,7 @@ private:
         }
         if (m_code_focus) {
             if (completion_key(key, mods)) return;
-            code_key(key, mods);
+            code_key(key, mods, e.physical_key);
             if (m_code_focus) after_code_key(key);
             return;
         }
@@ -9328,13 +9332,13 @@ private:
         dispatch(m_code_focus, e);
     }
 
-    void code_key(fizmo::input::Key key, fizmo::input::Modifiers mods) {
+    void code_key(fizmo::input::Key key, fizmo::input::Modifiers mods, fizmo::input::Key physical = fizmo::input::Key::Unknown) {
         using fizmo::input::Key;
         using fizmo::input::Modifiers;
         const Node* node = m_code_focus;
         bool skip_column = false;
         {
-            const Chord pressed = chord_of(fizmo::input::key_name(key), modifiers_of(mods));
+            const Chord pressed = chord_of(key, physical != Key::Unknown ? physical : key, modifiers_of(mods));
             if (!pressed.empty()) {
                 const Keymap overrides = parse_keymap(node->attribute_or("keys", ""));
                 const std::optional<std::string> action = code_action_for(overrides, pressed);
@@ -9342,7 +9346,7 @@ private:
                 if (bound && !bound->mouse && !bound->defaults.empty()) {
                     const Chord& d = bound->defaults.front();
                     if (d != pressed) {
-                        key = fizmo::input::key_from_name(d.key);
+                        key = d.key_code != Key::Unknown ? d.key_code : fizmo::input::key_from_name(d.key);
                         Modifiers next = Modifiers::None;
                         if (d.ctrl) next |= Modifiers::Control;
                         if (d.shift) next |= Modifiers::Shift;

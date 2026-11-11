@@ -504,6 +504,13 @@ const char* grove_event_edit_text(const grove_event* event) { return event && ev
 size_t grove_event_edit_caret(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_caret : 0; }
 size_t grove_event_edit_selection_start(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_selection_start : 0; }
 size_t grove_event_edit_selection_end(const grove_event* event) { return event && event_of(event)->has_edit_text ? event_of(event)->edit_selection_end : 0; }
+const char* grove_event_code(const grove_event* event) { return event ? event_of(event)->code() : ""; }
+uint16_t grove_event_key_code(const grove_event* event) { return event ? static_cast<uint16_t>(event_of(event)->logical_key) : 0u; }
+uint16_t grove_event_physical_key_code(const grove_event* event) { return event ? static_cast<uint16_t>(event_of(event)->physical_key) : 0u; }
+uint32_t grove_event_scancode(const grove_event* event) { return event ? event_of(event)->scancode : 0u; }
+bool grove_event_repeat(const grove_event* event) { return event && event_of(event)->repeat; }
+const char* grove_key_name(uint16_t key) { return key < fizmo::input::kKeyCount ? fizmo::input::key_name(static_cast<fizmo::input::Key>(key)) : "Unknown"; }
+uint16_t grove_key_from_name(const char* name) { return static_cast<uint16_t>(fizmo::input::key_from_name(name)); }
 
 uint64_t grove_set_timeout(grove_document* document, double milliseconds, grove_timer_fn fn, void* user_data, grove_release_fn release) {
     auto guard = std::make_shared<Release>();

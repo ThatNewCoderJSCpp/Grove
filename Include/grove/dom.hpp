@@ -83,6 +83,14 @@ public:
     double delta_y() const { return grove_event_delta_y(m_event); }
     std::int64_t button() const { return grove_event_button(m_event); }
     std::string key() const { return detail::str(grove_event_key(m_event)); }
+    std::string code() const { return detail::str(grove_event_code(m_event)); }
+    std::uint16_t key_code() const { return grove_event_key_code(m_event); }
+    std::uint16_t physical_key_code() const { return grove_event_physical_key_code(m_event); }
+    std::uint32_t scancode() const { return grove_event_scancode(m_event); }
+    bool repeat() const { return grove_event_repeat(m_event); }
+    bool is_key(const char* name) const { const std::uint16_t k = grove_key_from_name(name); return k != 0 && (k == key_code() || k == physical_key_code()); }
+    bool is_logical_key(const char* name) const { const std::uint16_t k = grove_key_from_name(name); return k != 0 && k == key_code(); }
+    bool is_physical_key(const char* name) const { const std::uint16_t k = grove_key_from_name(name); return k != 0 && k == physical_key_code(); }
     std::string text() const { return detail::str(grove_event_text(m_event)); }
     bool shift() const { return (grove_event_modifiers(m_event) & GROVE_MOD_SHIFT) != 0; }
     bool ctrl() const { return (grove_event_modifiers(m_event) & GROVE_MOD_CONTROL) != 0; }

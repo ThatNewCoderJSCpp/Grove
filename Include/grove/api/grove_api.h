@@ -329,6 +329,13 @@ GROVE_API const char* grove_event_edit_text(const grove_event* event);
 GROVE_API size_t grove_event_edit_caret(const grove_event* event);
 GROVE_API size_t grove_event_edit_selection_start(const grove_event* event);
 GROVE_API size_t grove_event_edit_selection_end(const grove_event* event);
+GROVE_API const char* grove_event_code(const grove_event* event);
+GROVE_API uint16_t grove_event_key_code(const grove_event* event);
+GROVE_API uint16_t grove_event_physical_key_code(const grove_event* event);
+GROVE_API uint32_t grove_event_scancode(const grove_event* event);
+GROVE_API bool grove_event_repeat(const grove_event* event);
+GROVE_API const char* grove_key_name(uint16_t key);
+GROVE_API uint16_t grove_key_from_name(const char* name);
 
 #ifdef __cplusplus
 }

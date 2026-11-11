@@ -254,6 +254,13 @@
     X(const char*, grove_event_edit_text, (const grove_event* event), (event)) \
     X(size_t, grove_event_edit_caret, (const grove_event* event), (event)) \
     X(size_t, grove_event_edit_selection_start, (const grove_event* event), (event)) \
-    X(size_t, grove_event_edit_selection_end, (const grove_event* event), (event))
+    X(size_t, grove_event_edit_selection_end, (const grove_event* event), (event)) \
+    X(const char*, grove_event_code, (const grove_event* event), (event)) \
+    X(uint16_t, grove_event_key_code, (const grove_event* event), (event)) \
+    X(uint16_t, grove_event_physical_key_code, (const grove_event* event), (event)) \
+    X(uint32_t, grove_event_scancode, (const grove_event* event), (event)) \
+    X(bool, grove_event_repeat, (const grove_event* event), (event)) \
+    X(const char*, grove_key_name, (uint16_t key), (key)) \
+    X(uint16_t, grove_key_from_name, (const char* name), (name))
 
 #endif // GROVE_API_LIST_H

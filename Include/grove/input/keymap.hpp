@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include <fizmo/../../Source/Input/keys.hpp>
+
 namespace grove {
 
 struct Chord {
@@ -16,15 +18,21 @@ struct Chord {
     bool ctrl = false;
     bool shift = false;
     bool alt = false;
+    bool physical = false;
+    fizmo::input::Key key_code = fizmo::input::Key::Unknown;
+    fizmo::input::Key physical_code = fizmo::input::Key::Unknown;
 
     bool empty() const noexcept { return key.empty(); }
     bool mouse() const noexcept;
-    bool operator==(const Chord& o) const noexcept { return key == o.key && ctrl == o.ctrl && shift == o.shift && alt == o.alt; }
+    bool matches(const Chord& pressed) const noexcept;
+    bool operator==(const Chord& o) const noexcept { return key == o.key && ctrl == o.ctrl && shift == o.shift && alt == o.alt && physical == o.physical; }
     bool operator!=(const Chord& o) const noexcept { return !(*this == o); }
     bool operator<(const Chord& o) const noexcept;
 };
 
 std::string canonical_key_name(std::string_view name);
+fizmo::input::Key key_code_of(std::string_view canonical_name) noexcept;
+Chord chord_of(fizmo::input::Key logical, fizmo::input::Key physical, unsigned modifiers);
 std::optional<Chord> parse_chord(std::string_view text);
 std::vector<Chord> parse_chords(std::string_view text);
 std::string chord_text(const Chord& chord);

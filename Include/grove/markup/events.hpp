@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include <fizmo/../../Source/Input/keys.hpp>
+
 namespace grove {
 
 class Node;
@@ -36,12 +38,23 @@ struct Event {
     bool has_edit_text = false;
     std::vector<std::string> paths;
     unsigned modifiers = 0;
+    fizmo::input::Key physical_key = fizmo::input::Key::Unknown;
+    fizmo::input::Key logical_key = fizmo::input::Key::Unknown;
+    std::uint32_t scancode = 0;
+    bool repeat = false;
     bool bubbles = true;
     bool propagation_stopped = false;
     bool default_prevented = false;
     std::size_t edit_caret = 0;
     std::size_t edit_selection_start = 0;
     std::size_t edit_selection_end = 0;
+
+    fizmo::input::Key any_key() const noexcept { return logical_key != fizmo::input::Key::Unknown ? logical_key : physical_key; }
+    bool is_key(fizmo::input::Key k) const noexcept { return k != fizmo::input::Key::Unknown && (logical_key == k || physical_key == k); }
+    bool is_physical_key(fizmo::input::Key k) const noexcept { return k != fizmo::input::Key::Unknown && physical_key == k; }
+    bool is_logical_key(fizmo::input::Key k) const noexcept { return k != fizmo::input::Key::Unknown && logical_key == k; }
+    const char* code() const noexcept { return physical_key != fizmo::input::Key::Unknown ? fizmo::input::key_name(physical_key) : ""; }
+    const char* logical_name() const noexcept { return logical_key != fizmo::input::Key::Unknown ? fizmo::input::key_name(logical_key) : ""; }
 };
 
 using Listener = std::function<void(Event&)>;

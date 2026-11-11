@@ -45,11 +45,14 @@ constexpr Alias k_aliases[] = {
 Chord chord(const char* key, bool ctrl = false, bool shift = false, bool alt = false) {
     Chord c;
     c.key = key;
+    c.key_code = key_code_of(c.key);
     c.ctrl = ctrl;
     c.shift = shift;
     c.alt = alt;
     return c;
 }
+
+constexpr std::string_view k_physical_prefix = "physical:";
 
 } // namespace
 
@@ -58,7 +61,19 @@ bool Chord::mouse() const noexcept {
 }
 
 bool Chord::operator<(const Chord& o) const noexcept {
-    return std::tie(key, ctrl, shift, alt) < std::tie(o.key, o.ctrl, o.shift, o.alt);
+    return std::tie(key, ctrl, shift, alt, physical) < std::tie(o.key, o.ctrl, o.shift, o.alt, o.physical);
+}
+
+bool Chord::matches(const Chord& pressed) const noexcept {
+    if (ctrl != pressed.ctrl || shift != pressed.shift || alt != pressed.alt) return false;
+    if (physical) return key_code != fizmo::input::Key::Unknown && pressed.physical_code == key_code;
+    if (key_code != fizmo::input::Key::Unknown && pressed.key_code != fizmo::input::Key::Unknown) return key_code == pressed.key_code;
+    return !key.empty() && key == pressed.key;
+}
+
+fizmo::input::Key key_code_of(std::string_view canonical_name) noexcept {
+    if (canonical_name.empty() || canonical_name == "Click" || canonical_name == "DoubleClick" || canonical_name == "MiddleClick" || canonical_name == "RightClick") return fizmo::input::Key::Unknown;
+    return fizmo::input::key_from_name(canonical_name.data(), canonical_name.size());
 }
 
 std::string canonical_key_name(std::string_view raw) {
@@ -132,8 +147,15 @@ std::optional<Chord> parse_chord(std::string_view raw) {
         else if (m == "alt" || m == "option" || m == "opt") out.alt = true;
         else return std::nullopt;
     }
-    out.key = canonical_key_name(parts.back());
+    std::string last = parts.back();
+    if (lower(last).rfind(k_physical_prefix, 0) == 0 && last.size() > k_physical_prefix.size()) {
+        out.physical = true;
+        last = last.substr(k_physical_prefix.size());
+    }
+    out.key = canonical_key_name(last);
     if (out.key.empty()) return std::nullopt;
+    out.key_code = key_code_of(out.key);
+    if (out.physical && (out.key_code == fizmo::input::Key::Unknown || out.mouse())) return std::nullopt;
     return out;
 }
 
@@ -159,6 +181,7 @@ std::string chord_text(const Chord& c) {
     if (c.ctrl) out += "Ctrl+";
     if (c.shift) out += "Shift+";
     if (c.alt) out += "Alt+";
+    if (c.physical) out += "Physical:";
     return out + c.key;
 }
 
@@ -178,6 +201,7 @@ std::string chord_display_text(const Chord& c) {
     if (c.ctrl) out += "Cmd+";
     if (c.shift) out += "Shift+";
     if (c.alt) out += "Option+";
+    if (c.physical) out += "Physical:";
     return out + c.key;
 #else
     return chord_text(c);
@@ -196,9 +220,18 @@ std::string chords_display_text(const std::vector<Chord>& chords) {
 Chord chord_of(std::string_view key_name, unsigned modifiers) {
     Chord c;
     c.key = canonical_key_name(key_name);
+    c.key_code = key_code_of(c.key);
+    c.physical_code = c.key_code;
     c.ctrl = (modifiers & (ModifierControl | ModifierMeta)) != 0;
     c.shift = (modifiers & ModifierShift) != 0;
     c.alt = (modifiers & ModifierAlt) != 0;
+    return c;
+}
+
+Chord chord_of(fizmo::input::Key logical, fizmo::input::Key physical, unsigned modifiers) {
+    Chord c = chord_of(fizmo::input::key_name(logical), modifiers);
+    if (logical != fizmo::input::Key::Unknown && c.key_code == fizmo::input::Key::Unknown) c.key_code = logical;
+    c.physical_code = physical != fizmo::input::Key::Unknown ? physical : c.key_code;
     return c;
 }
 
@@ -276,7 +309,7 @@ std::vector<Chord> effective_chords(const KeyAction& action, const Keymap& overr
 std::optional<std::string> code_action_for(const Keymap& overrides, const Chord& pressed) {
     for (const KeyAction& a : code_editor_actions()) {
         for (const Chord& c : effective_chords(a, overrides)) {
-            if (c == pressed) return a.id;
+            if (c.matches(pressed)) return a.id;
         }
     }
     return std::nullopt;
@@ -285,7 +318,7 @@ std::optional<std::string> code_action_for(const Keymap& overrides, const Chord&
 bool is_code_default_chord(const Chord& pressed) {
     for (const KeyAction& a : code_editor_actions()) {
         for (const Chord& c : a.defaults) {
-            if (c == pressed) return true;
+            if (c.matches(pressed)) return true;
         }
     }
     return false;

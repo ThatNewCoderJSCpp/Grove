@@ -119,6 +119,11 @@ extern "C++" from "<grove/dom.hpp>" {
         function delta_y() const -> short float;
         function button() const -> long int;
         function key() const -> string;
+        function code() const -> string;
+        function key_code() const -> long int;
+        function physical_key_code() const -> long int;
+        function scancode() const -> long int;
+        function repeat() const -> bool;
         function input_text() const -> string as "text";
         function shift() const -> bool;
         function ctrl() const -> bool;
@@ -964,6 +969,42 @@ public:
     function key() const -> string {
         return raw.key();
     } end function key
+
+    function code() const -> string {
+        return raw.code();
+    } end function code
+
+    function key_code() const -> long int {
+        return raw.key_code();
+    } end function key_code
+
+    function logical_key_code() const -> long int {
+        return raw.key_code();
+    } end function logical_key_code
+
+    function physical_key_code() const -> long int {
+        return raw.physical_key_code();
+    } end function physical_key_code
+
+    function scancode() const -> long int {
+        return raw.scancode();
+    } end function scancode
+
+    function repeat_press() const -> bool {
+        return raw.repeat();
+    } end function repeat_press
+
+    function is_key_code(long int: k) const -> bool {
+        return k != 0 && (k == raw.key_code() || k == raw.physical_key_code());
+    } end function is_key_code
+
+    function is_logical_key_code(long int: k) const -> bool {
+        return k != 0 && k == raw.key_code();
+    } end function is_logical_key_code
+
+    function is_physical_key_code(long int: k) const -> bool {
+        return k != 0 && k == raw.physical_key_code();
+    } end function is_physical_key_code
 
     function input_text() const -> string {
         return raw.input_text();
