@@ -1953,9 +1953,35 @@ private:
         std::size_t terms = 0;
         std::size_t runs = 0;
         std::size_t run_refs = 0;
+        // A focused text field turns a pending click into a caret while it is laid out. Passes that only
+        // measure (flex, grids, modals, popovers) lay the field out at a different spot and are thrown away,
+        // so the click and caret are put back and the real pass places them where the field really is.
+        float edit_click_x = -1.0f;
+        float edit_click_y = -1.0f;
+        float edit_press_x = -1.0f;
+        float edit_press_y = -1.0f;
+        bool edit_click_extend = false;
+        bool edit_all = false;
+        std::size_t edit_caret = 0;
+        std::size_t edit_anchor = std::string::npos;
+        float edit_scroll = 0.0f;
+        const Node* edit_view = nullptr;
     };
 
-    Mark mark() const { return Mark{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size(), m_term_views.size(), m_runs.size(), m_run_refs.size() }; }
+    Mark mark() const {
+        Mark m{ m_ops.size(), m_hits.size(), m_boxes.size(), m_scrollers.size(), m_clips.size(), m_swatches.size(), m_code_laid.size(), m_term_views.size(), m_runs.size(), m_run_refs.size() };
+        m.edit_click_x = m_edit_click_x;
+        m.edit_click_y = m_edit_click_y;
+        m.edit_press_x = m_edit_press_x;
+        m.edit_press_y = m_edit_press_y;
+        m.edit_click_extend = m_edit_click_extend;
+        m.edit_all = m_edit_all;
+        m.edit_caret = m_edit_caret;
+        m.edit_anchor = m_edit_anchor;
+        m.edit_scroll = m_edit_scroll;
+        m.edit_view = m_edit_view;
+        return m;
+    }
 
     struct RunRef {
         std::size_t at = 0;
@@ -2019,6 +2045,16 @@ private:
     }
 
     void rewind(const Mark& m) {
+        m_edit_click_x = m.edit_click_x;
+        m_edit_click_y = m.edit_click_y;
+        m_edit_press_x = m.edit_press_x;
+        m_edit_press_y = m.edit_press_y;
+        m_edit_click_extend = m.edit_click_extend;
+        m_edit_all = m.edit_all;
+        m_edit_caret = m.edit_caret;
+        m_edit_anchor = m.edit_anchor;
+        m_edit_scroll = m.edit_scroll;
+        m_edit_view = m.edit_view;
         m_ops.resize(m.ops);
         m_hits.resize(m.hits);
         m_boxes.resize(m.boxes);
