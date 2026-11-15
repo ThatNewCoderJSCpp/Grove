@@ -24,6 +24,14 @@ extern "C++" from "<grove/dom.hpp>" {
         function computed_number_at(const string&: property, long int: index, short float: fallback) const -> short float;
         function computed_color(const string&: property) const -> string;
         function computed_bool(const string&: property, bool: fallback) const -> bool;
+        function laid_out() const -> bool;
+        function box_x() const -> short float;
+        function box_y() const -> short float;
+        function box_width() const -> short float;
+        function box_height() const -> short float;
+        function scroll_top() const -> short float;
+        function scroll_max() const -> short float;
+        function set_scroll_top(short float: value) -> bool;
         function parent() const -> NativeElement;
         function child_count() const -> long int;
         function child(long int: index) const -> NativeElement;
@@ -556,6 +564,38 @@ public:
     function computed_number_at(const string&: property, long int: index, short float: fallback) const -> short float {
         return raw.computed_number_at(property, index, fallback);
     } end function computed_number_at
+
+    function laid_out() const -> bool {
+        return raw.laid_out();
+    } end function laid_out
+
+    function box_x() const -> short float {
+        return raw.box_x();
+    } end function box_x
+
+    function box_y() const -> short float {
+        return raw.box_y();
+    } end function box_y
+
+    function box_width() const -> short float {
+        return raw.box_width();
+    } end function box_width
+
+    function box_height() const -> short float {
+        return raw.box_height();
+    } end function box_height
+
+    function scroll_top() const -> short float {
+        return raw.scroll_top();
+    } end function scroll_top
+
+    function scroll_max() const -> short float {
+        return raw.scroll_max();
+    } end function scroll_max
+
+    function set_scroll_top(short float: value) -> bool {
+        return raw.set_scroll_top(value);
+    } end function set_scroll_top
 
     function computed_color(const string&: property) const -> string {
         return raw.computed_color(property);

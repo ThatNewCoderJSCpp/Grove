@@ -261,6 +261,10 @@
     X(uint32_t, grove_event_scancode, (const grove_event* event), (event)) \
     X(bool, grove_event_repeat, (const grove_event* event), (event)) \
     X(const char*, grove_key_name, (uint16_t key), (key)) \
-    X(uint16_t, grove_key_from_name, (const char* name), (name))
+    X(uint16_t, grove_key_from_name, (const char* name), (name)) \
+    X(bool, grove_element_rect, (grove_document* document, grove_element* element, double* x, double* y, double* width, double* height), (document, element, x, y, width, height)) \
+    X(double, grove_scroll_top, (grove_document* document, grove_element* element), (document, element)) \
+    X(double, grove_scroll_max, (grove_document* document, grove_element* element), (document, element)) \
+    X(bool, grove_set_scroll_top, (grove_document* document, grove_element* element, double value), (document, element, value))
 
 #endif // GROVE_API_LIST_H

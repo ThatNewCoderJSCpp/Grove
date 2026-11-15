@@ -55,6 +55,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "code-variable-template",
         "code-warning-underline",
         "color",
+        "content-visibility",
         "cursor",
         "display",
         "fit",

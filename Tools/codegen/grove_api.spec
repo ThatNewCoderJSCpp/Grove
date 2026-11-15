@@ -249,3 +249,7 @@ const char*|grove_event_edit_text|const grove_event* event
 size_t|grove_event_edit_caret|const grove_event* event
 size_t|grove_event_edit_selection_start|const grove_event* event
 size_t|grove_event_edit_selection_end|const grove_event* event
+bool|grove_element_rect|grove_document* document, grove_element* element, double* x, double* y, double* width, double* height
+double|grove_scroll_top|grove_document* document, grove_element* element
+double|grove_scroll_max|grove_document* document, grove_element* element
+bool|grove_set_scroll_top|grove_document* document, grove_element* element, double value

@@ -386,6 +386,44 @@ void test_viewport_units() {
     CHECK(grove::bark::as_length(grove::bark::ValueList{ grove::bark::Value::make_number(10, "vw") }, 16.0) == std::nullopt);
 }
 
+void test_viewport_resize_keeps_other_styles() {
+    grove::Diagnostics d;
+    grove::bark::Stylesheet sheet = grove::bark::parse_stylesheet(
+        "body { width: 50vwidth; }\n"
+        ".row { padding: 4px; }\n"
+        ".big { font-size: 2vmin; }\n",
+        "t.bark", d);
+    CHECK(d.ok());
+    grove::Document doc = grove::parse_markup("<body><div id=\"row\" class=\"row\">a</div><div id=\"big\" class=\"big\"><span id=\"inner\">b</span></div></body>", "t.grove", d);
+    grove::bark::StyleEngine engine;
+    engine.add(sheet);
+    engine.set_viewport(grove::bark::Viewport{ 800, 600 });
+    const grove::Node& body = *doc.first_by_tag("body");
+    const grove::Node& row = *doc.find_by_id("row");
+    const grove::Node& big = *doc.find_by_id("big");
+    const grove::Node& inner = *doc.find_by_id("inner");
+    const std::uint64_t revision = engine.revision();
+    const std::uint64_t body_key = engine.style_key(body, d);
+    const std::uint64_t row_key = engine.style_key(row, d);
+    const std::uint64_t big_key = engine.style_key(big, d);
+    const std::uint64_t inner_key = engine.style_key(inner, d);
+    CHECK(engine.style_of(big, d).font_size() == 12.0);
+    engine.set_viewport(grove::bark::Viewport{ 1000, 700 });
+    CHECK(engine.revision() == revision);
+    CHECK(engine.style_key(row, d) == row_key);
+    CHECK(engine.style_key(body, d) != body_key);
+    CHECK(engine.style_key(big, d) != big_key);
+    CHECK(engine.style_key(inner, d) != inner_key);
+    CHECK(engine.style_of(body, d).length("width") && *engine.style_of(body, d).length("width") == 500.0);
+    CHECK(engine.style_of(big, d).font_size() == 14.0);
+    CHECK(engine.style_of(inner, d).font_size() == 14.0);
+    CHECK(engine.style_of(row, d).length("padding") && *engine.style_of(row, d).length("padding") == 4.0);
+    CHECK(engine.style_of(row, d).viewport().width == 1000.0);
+    engine.set_viewport(grove::bark::Viewport{ 1000, 700, 2.0 });
+    CHECK(engine.revision() != revision);
+    CHECK(engine.style_of(row, d).length("padding") && *engine.style_of(row, d).length("padding") == 8.0);
+}
+
 void test_inputs() {
     grove::Diagnostics d;
     grove::Document doc = grove::parse_markup(
@@ -2526,6 +2564,7 @@ int main() {
     test_api();
     test_body_is_window();
     test_viewport_units();
+    test_viewport_resize_keeps_other_styles();
     test_inputs();
     test_input_errors();
     test_input_api();

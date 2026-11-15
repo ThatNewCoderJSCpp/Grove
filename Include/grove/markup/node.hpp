@@ -183,6 +183,9 @@ struct FrameRate {
 struct DocumentHost {
     std::function<std::string(const Node&, const std::string&)> computed_style;
     std::function<bool(const Node&, const std::string&, std::size_t, double&)> computed_number;
+    std::function<bool(const Node&, double&, double&, double&, double&)> element_rect;
+    std::function<bool(const Node&, double&, double&)> scroll_state;
+    std::function<bool(const Node&, double)> set_scroll_top;
     std::function<std::string(const Node&, const std::string&)> computed_color;
     std::function<bool(Node*)> focus;
     double viewport_width = 0.0;

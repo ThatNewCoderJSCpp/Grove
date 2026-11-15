@@ -144,6 +144,31 @@ public:
     bool has_computed_style(const std::string& property) const { return grove_has_computed_style(doc(), m_element, property.c_str()); }
     double computed_number(const std::string& property, double fallback = 0.0) const { return grove_computed_number(doc(), m_element, property.c_str(), fallback); }
     double computed_number_at(const std::string& property, std::int64_t index, double fallback = 0.0) const { return index < 0 ? fallback : grove_computed_number_at(doc(), m_element, property.c_str(), static_cast<size_t>(index), fallback); }
+    bool rect(double& x, double& y, double& width, double& height) const { return grove_element_rect(doc(), m_element, &x, &y, &width, &height); }
+    bool laid_out() const { return grove_element_rect(doc(), m_element, nullptr, nullptr, nullptr, nullptr); }
+    double box_x() const {
+        double v = 0.0;
+        grove_element_rect(doc(), m_element, &v, nullptr, nullptr, nullptr);
+        return v;
+    }
+    double box_y() const {
+        double v = 0.0;
+        grove_element_rect(doc(), m_element, nullptr, &v, nullptr, nullptr);
+        return v;
+    }
+    double box_width() const {
+        double v = 0.0;
+        grove_element_rect(doc(), m_element, nullptr, nullptr, &v, nullptr);
+        return v;
+    }
+    double box_height() const {
+        double v = 0.0;
+        grove_element_rect(doc(), m_element, nullptr, nullptr, nullptr, &v);
+        return v;
+    }
+    double scroll_top() const { return grove_scroll_top(doc(), m_element); }
+    double scroll_max() const { return grove_scroll_max(doc(), m_element); }
+    bool set_scroll_top(double value) { return grove_set_scroll_top(doc(), m_element, value); }
     std::string computed_color(const std::string& property) const { return detail::str(grove_computed_color(doc(), m_element, property.c_str())); }
     bool computed_bool(const std::string& property, bool fallback = false) const {
         const std::string v = computed_style(property);

@@ -438,6 +438,46 @@ double grove_computed_number(grove_document* document, grove_element* element, c
     return grove_computed_number_at(document, element, property, 0, fallback);
 }
 
+bool grove_element_rect(grove_document* document, grove_element* element, double* x, double* y, double* width, double* height) {
+    double rx = 0.0;
+    double ry = 0.0;
+    double rw = 0.0;
+    double rh = 0.0;
+    bool found = false;
+    if (document && element) {
+        const grove::DocumentHost& host = doc_of(document)->host();
+        found = host.element_rect && host.element_rect(*node_of(element), rx, ry, rw, rh);
+    }
+    if (!found) rx = ry = rw = rh = 0.0;
+    if (x) *x = rx;
+    if (y) *y = ry;
+    if (width) *width = rw;
+    if (height) *height = rh;
+    return found;
+}
+
+double grove_scroll_top(grove_document* document, grove_element* element) {
+    if (!document || !element) return 0.0;
+    const grove::DocumentHost& host = doc_of(document)->host();
+    double top = 0.0;
+    double max = 0.0;
+    return host.scroll_state && host.scroll_state(*node_of(element), top, max) ? top : 0.0;
+}
+
+double grove_scroll_max(grove_document* document, grove_element* element) {
+    if (!document || !element) return 0.0;
+    const grove::DocumentHost& host = doc_of(document)->host();
+    double top = 0.0;
+    double max = 0.0;
+    return host.scroll_state && host.scroll_state(*node_of(element), top, max) ? max : 0.0;
+}
+
+bool grove_set_scroll_top(grove_document* document, grove_element* element, double value) {
+    if (!document || !element) return false;
+    const grove::DocumentHost& host = doc_of(document)->host();
+    return host.set_scroll_top && host.set_scroll_top(*node_of(element), value);
+}
+
 const char* grove_computed_color(grove_document* document, grove_element* element, const char* property) {
     if (!document || !element || !property) return "";
     const grove::DocumentHost& host = doc_of(document)->host();

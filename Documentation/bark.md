@@ -325,6 +325,7 @@ Grove ships a small default sheet first: heading sizes and weights, `display: no
 | `font-family` | text | a font name like `"JetBrains Mono"`, or `monospace`, `serif`, `sans-serif`; a font that isn't installed falls back to one of the same kind |
 | `text-decoration` | text | `underline`, `line-through` |
 | `white-space` | blocks | `normal` (default) wraps text and collapses spaces; `nowrap` collapses but doesn't wrap; `pre` keeps spaces and line breaks and doesn't wrap; `pre-wrap` keeps them and wraps |
+| `content-visibility` | elements with block children | `auto` lets Grove skip laying out children that are scrolled out of view, reusing their last measured height until they come back into view. Elements with 24 or more children already do this; `auto` turns it on for any element. `visible` (default) does nothing extra |
 | `math-color` | `math` | defaults to `color` |
 | `margin`, `padding` | blocks, inputs | 1 to 4 lengths, CSS order |
 | `border-color`, `border-width` | blocks, inputs | |

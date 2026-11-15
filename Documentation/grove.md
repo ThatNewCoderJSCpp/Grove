@@ -984,6 +984,8 @@ An `Element` has:
 - `style(p)`, `set_style(p, v)`, `remove_style(p)` for its `style="..."`, and `computed_style(p)` for the value after the cascade
 - typed reads of any property after the cascade, including your own [custom properties](bark.md#custom-properties) like `--glow`: `computed_number(p)` (or `computed_number(p, fallback)`; lengths in pixels, `true`/`false` as 1 and 0), `computed_number_at(p, i, fallback)` for the `i`th value, `computed_color(p)` as `#rrggbbaa` (or `""`), `computed_bool(p)` and `has_computed_style(p)`. In C: `grove_computed_number`, `grove_computed_number_at`, `grove_computed_color` and `grove_has_computed_style`
 - `parent()`, `children()`, `child(i)`, `child_count()`, `next_sibling()`, `previous_sibling()`, `append_child`, `insert_before`, `remove()`, `is_attached()`
+- where it was drawn in the last frame, in window coordinates like mouse events: `box_x()`, `box_y()`, `box_width()`, `box_height()` (C++ also has `rect(x, y, w, h)`), and `laid_out()`, which is `false` (and the box all zeros) when it wasn't drawn, because it's hidden, not attached, or scrolled out of view inside a long list. In C: `grove_element_rect`
+- for elements with `overflow: auto` or `scroll`: `scroll_top()`, `scroll_max()` (how far it can scroll; 0 before its first frame) and `set_scroll_top(px)`. Listen for `scroll` to hear about changes. In C: `grove_scroll_top`, `grove_scroll_max`, `grove_set_scroll_top`
 - `query` and `query_all` inside it
 - `on(type, fn)`, `add_event_listener(type, fn)`, `remove_event_listener(id)`, `dispatch(type)`
 - `focus()`, `hovered()`, `focused()`, `active()`
@@ -1070,6 +1072,7 @@ Events go to the element under the mouse (or the focused element for keys), then
 | `complete` | the word being typed in an `input_code` changes, or Ctrl+Space | `x()`, `y()`, `key()` the word so far; answer by setting its `completions` attribute |
 | `completion` | a suggestion is put in | `key()` the label, `text()` the inserted text |
 | `resize` | a window changes size; for a `<window>` it goes to that `<window>` and bubbles | `width()`, `height()`, or `window_width()` on the target |
+| `scroll` | an element with `overflow: auto` or `scroll` was scrolled (by the wheel, its scrollbar, the keyboard or `set_scroll_top`); sent to that element before the next frame is laid out (doesn't bubble) | `y()` is `scroll_top()`, `x()` the horizontal scroll |
 | `load` | after the scripts have run | |
 | `open` | a `<window>` opens; the target is the `<window>` | |
 | `close` | a window closes; `prevent_default()` keeps it open when the user closed it | |
@@ -1254,6 +1257,8 @@ Grove keeps the work for a frame proportional to what changed and what is on scr
 - Laid-out elements are kept too. An element that didn't change is placed again from the last frame instead of being measured and wrapped again, and elements scrolled out of view are skipped. Long lists, documents and logs cost about the same per frame as short ones, even when one big element is only partly on screen: only the parts inside the view are drawn.
 - Replacing an element's text with `set_inner_text` updates its text in place, and the same text again isn't a change. Creating, moving and removing elements costs the same however many elements the document has made before.
 - Elements that change every frame (a clock, a live value) are laid out directly instead of being cached, and elements off screen that keep changing are laid out once they scroll into view, so the content you're looking at doesn't jump.
+- Resizing the window only restyles elements whose styles use viewport units (`vwidth`, `vmin`, ...). An element with 24 or more children (or `content-visibility: auto`) keeps skipping the children that are out of view while the window is being resized, using their last height; once the size settles, those children are measured again a few milliseconds per frame until they're all up to date.
+- For lists with thousands of rows, build only the rows in view: read the scroller's `scroll_top()` and `box_height()`, put spacer elements above and below, and rebuild on `scroll` and `resize`.
 - Draws are grouped so shapes and text that don't overlap go to the GPU together, and clips that don't cut anything off are dropped. A screen of text, buttons and inputs is usually under ten batches.
 - When nothing has changed and nothing is moving, Grove redraws the window only twice a second.
 - Code editors only read the editor's text and attributes when the element changed, and re-highlight only the lines an edit touched.

@@ -288,10 +288,22 @@ const Stylesheet& default_stylesheet() {
 
 void StyleEngine::set_viewport(const Viewport& viewport) {
     if (viewport == m_viewport) return;
+    const bool full = !m_viewport.known() || !viewport.known() || viewport.zoom != m_viewport.zoom;
     m_viewport = viewport;
-    m_cache.clear();
     m_recent = RecentSlot();
-    ++m_revision;
+    if (full) {
+        m_cache.clear();
+        ++m_revision;
+        return;
+    }
+    ++m_viewport_generation;
+    bool inherited = false;
+    for (auto& [node, entry] : m_cache) {
+        entry.style.set_viewport(m_viewport);
+        if (entry.viewport_self) entry.checked = 0;
+        inherited = inherited || entry.viewport_inherit;
+    }
+    if (inherited) ++m_epoch;
 }
 
 void StyleEngine::add(const Stylesheet& sheet) {
@@ -304,7 +316,7 @@ void StyleEngine::add(const Stylesheet& sheet) {
 
 std::uint64_t StyleEngine::style_key(const Node& node, Diagnostics& diagnostics) {
     style_of(node, diagnostics);
-    return m_recent.node == &node ? m_recent.entry->key : 0;
+    return m_recent.node == &node ? m_recent.entry->own_key : 0;
 }
 
 void StyleEngine::prune() {
@@ -378,6 +390,27 @@ std::size_t element_position(const Node& node, bool from_end) {
     return from_end ? after : before;
 }
 
+bool mentions_viewport(const Value& v) {
+    if (v.is_number() && is_viewport_unit(v.unit)) return true;
+    for (const Value& a : v.args) {
+        if (mentions_viewport(a)) return true;
+    }
+    return false;
+}
+
+bool mentions_viewport(const ValueList& values) {
+    for (const Value& v : values) {
+        if (mentions_viewport(v)) return true;
+    }
+    return false;
+}
+
+std::uint64_t with_generation(std::uint64_t key, std::uint64_t generation) {
+    std::uint64_t h = key;
+    mix(h, generation);
+    return h;
+}
+
 } // namespace
 
 std::uint64_t StyleEngine::key_of(const Node& node, std::uint64_t parent_key) const {
@@ -398,6 +431,10 @@ std::uint64_t StyleEngine::key_of(const Node& node, std::uint64_t parent_key) co
 }
 
 ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent, Diagnostics& diagnostics) const {
+    return compute_tracked(node, parent, diagnostics, nullptr);
+}
+
+ComputedStyle StyleEngine::compute_tracked(const Node& node, const ComputedStyle* parent, Diagnostics& diagnostics, ViewportUse* use) const {
     (void)diagnostics;
     ComputedStyle out;
     out.set_viewport(m_viewport);
@@ -517,6 +554,17 @@ ComputedStyle StyleEngine::compute(const Node& node, const ComputedStyle* parent
         out.set("display", ValueList{ Value::make_ident("none") });
     }
 
+    if (use) {
+        for (const auto& [name, values] : out.values()) {
+            if (!mentions_viewport(values)) continue;
+            use->self = true;
+            if (is_inherited_property(name) || is_custom_property(name)) {
+                use->inherit = true;
+                break;
+            }
+        }
+    }
+
     if (const ValueList* fs = out.get("font-size")) {
         if (!fs->empty() && fs->front().is_number()) {
             const Value& v = fs->front();
@@ -547,20 +595,26 @@ const ComputedStyle& StyleEngine::style_of(const Node& node, Diagnostics& diagno
     if (const Node* p = node.parent()) {
         parent = &style_of(*p, diagnostics);
         const auto pe = m_cache.find(p);
-        if (pe != m_cache.end()) parent_key = pe->second.key;
+        if (pe != m_cache.end()) parent_key = pe->second.inherit_key;
     }
     const std::uint64_t key = key_of(node, parent_key);
     it = m_cache.find(&node);
-    if (it != m_cache.end() && it->second.key == key) {
+    if (it != m_cache.end() && it->second.key == key && (!it->second.viewport_self || it->second.viewport_generation == m_viewport_generation)) {
         it->second.checked = m_epoch;
         m_recent.node = &node;
         m_recent.entry = &it->second;
         return it->second.style;
     }
-    ComputedStyle computed = compute(node, parent, diagnostics);
+    ViewportUse use;
+    ComputedStyle computed = compute_tracked(node, parent, diagnostics, &use);
     Entry& slot = it != m_cache.end() ? it->second : m_cache[&node];
     slot.key = key;
     slot.checked = m_epoch;
+    slot.viewport_generation = m_viewport_generation;
+    slot.viewport_self = use.self;
+    slot.viewport_inherit = use.inherit;
+    slot.own_key = use.self ? with_generation(key, m_viewport_generation) : key;
+    slot.inherit_key = use.inherit ? with_generation(key, m_viewport_generation) : key;
     slot.style = std::move(computed);
     m_recent.node = &node;
     m_recent.entry = &slot;

@@ -102,13 +102,24 @@ public:
     }
     std::size_t cached_count() const noexcept { return m_cache.size(); }
     std::uint64_t revision() const noexcept { return m_revision; }
+    std::uint64_t viewport_generation() const noexcept { return m_viewport_generation; }
     std::uint64_t style_key(const Node& node, Diagnostics& diagnostics);
 
 private:
     struct Entry {
         std::uint64_t key = 0;
         std::uint64_t checked = 0;
+        std::uint64_t viewport_generation = 0;
+        std::uint64_t own_key = 0;
+        std::uint64_t inherit_key = 0;
+        bool viewport_self = false;
+        bool viewport_inherit = false;
         ComputedStyle style;
+    };
+
+    struct ViewportUse {
+        bool self = false;
+        bool inherit = false;
     };
 
     struct RuleIndex {
@@ -124,6 +135,7 @@ private:
 
     void build_index() const;
     void prune();
+    ComputedStyle compute_tracked(const Node& node, const ComputedStyle* parent, Diagnostics& diagnostics, ViewportUse* use) const;
     std::uint64_t key_of(const Node& node, std::uint64_t parent_key) const;
 
     Stylesheet m_sheet;
@@ -132,6 +144,7 @@ private:
     std::uint64_t m_epoch = 1;
     std::size_t m_prune_at = 4096;
     std::uint64_t m_revision = 1;
+    std::uint64_t m_viewport_generation = 1;
     struct RecentSlot {
         const Node* node = nullptr;
         Entry* entry = nullptr;

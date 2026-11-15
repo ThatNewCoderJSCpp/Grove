@@ -1055,7 +1055,7 @@ public:
         if (vp.zoom == zoom) return;
         vp.zoom = zoom;
         m_styles.set_viewport(vp);
-        m_measure.clear();
+        clear_measures();
     }
 
     void paint(fizmo::graphics::Renderer& r) {
@@ -1107,6 +1107,7 @@ public:
                 dispatch(m_main ? nullptr : &m_window, e);
             }
         }
+        report_scrolls();
         if (m_revision != document().revision()) {
             expand_quantity_inputs(document());
             sync_media(document());
@@ -1134,6 +1135,9 @@ public:
         m_runs.clear();
         m_run_refs.clear();
         m_partial_runs = false;
+        m_layout_refresh_pending = false;
+        m_refresh_count = 0;
+        m_refresh_spent = false;
         if (m_pending_select && !document().is_attached(*m_pending_select)) {
             m_pending_select = nullptr;
             m_force_full = false;
@@ -1450,6 +1454,67 @@ public:
     std::string computed(const Node& node, const std::string& property) {
         const bark::ValueList* v = style_of(node).get(property);
         return v ? bark::to_string(*v) : std::string();
+    }
+
+    bool element_rect(const Node& node, double& x, double& y, double& w, double& h) const {
+        for (const ElementBox& b : m_boxes) {
+            if (b.node != &node) continue;
+            x = b.x;
+            y = b.y;
+            w = b.w;
+            h = b.h;
+            return true;
+        }
+        return false;
+    }
+
+    bool scroll_state(const Node& node, double& top, double& max) const {
+        bool known = false;
+        max = 0.0;
+        for (const Scroller& sc : m_scrollers) {
+            if (sc.node != &node || sc.code) continue;
+            max = std::max(max, static_cast<double>(sc.max));
+            known = true;
+        }
+        const auto it = m_elem_scroll.find(&node);
+        top = it == m_elem_scroll.end() ? 0.0 : static_cast<double>(it->second);
+        return known || it != m_elem_scroll.end();
+    }
+
+    bool set_scroll_top(const Node& node, double value) {
+        if (!std::isfinite(value)) return false;
+        float target = static_cast<float>(std::max(0.0, value));
+        for (const Scroller& sc : m_scrollers) {
+            if (sc.node == &node && !sc.code) target = std::min(target, sc.max);
+        }
+        float& s = m_elem_scroll[&node];
+        if (s == target) return true;
+        s = target;
+        poke();
+        return true;
+    }
+
+    void report_scrolls() {
+        std::unordered_map<const Node*, float> seen;
+        std::vector<const Node*> moved;
+        for (const Scroller& sc : m_scrollers) {
+            if (!sc.node || sc.code || seen.count(sc.node)) continue;
+            const auto it = m_elem_scroll.find(sc.node);
+            const float now = it == m_elem_scroll.end() ? 0.0f : it->second;
+            seen.emplace(sc.node, now);
+            const auto before = m_scroll_reported.find(sc.node);
+            if (before != m_scroll_reported.end() && before->second != now) moved.push_back(sc.node);
+        }
+        m_scroll_reported = std::move(seen);
+        for (const Node* n : moved) {
+            if (!document().is_attached(*n)) continue;
+            Event e;
+            e.type = "scroll";
+            e.bubbles = false;
+            e.x = m_elem_scroll_x[n];
+            e.y = m_elem_scroll[n];
+            dispatch(n, e);
+        }
     }
 
     bool computed_number(const Node& node, const std::string& property, std::size_t index, double& out) {
@@ -1896,26 +1961,52 @@ private:
         return key;
     }
 
+    const float* find_measure(const std::string& key) {
+        auto it = m_measure.find(key);
+        if (it != m_measure.end()) return &it->second;
+        auto old = m_measure_old.find(key);
+        if (old == m_measure_old.end()) return nullptr;
+        const float value = old->second;
+        m_measure_old.erase(old);
+        return &store_measure(key, value);
+    }
+
+    float& store_measure(const std::string& key, float value) {
+        if (m_measure.size() >= k_measure_generation) {
+            m_measure_old = std::move(m_measure);
+            m_measure = std::unordered_map<std::string, float>();
+            m_measure.reserve(k_measure_generation);
+        }
+        return m_measure.insert_or_assign(key, value).first->second;
+    }
+
+    void clear_measures() {
+        m_measure.clear();
+        m_measure_old.clear();
+    }
+
+    float measure_uncached(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& style) {
+        if (text.empty()) return 0.0f;
+        return static_cast<float>(r.measure_text(text.c_str(), static_cast<int>(text.size()), style).width);
+    }
+
     float text_width(fizmo::graphics::Renderer& r, const std::string& text, const fizmo::text::TextStyle& style) {
         if (text.empty()) return 0.0f;
         std::string key = style_key(style);
         key += '\x1f';
         key += text;
-        auto it = m_measure.find(key);
-        if (it != m_measure.end()) return it->second;
-        if (m_measure.size() > 40000) m_measure.clear();
-        const float w = static_cast<float>(r.measure_text(text.c_str(), static_cast<int>(text.size()), style).width);
-        m_measure.emplace(std::move(key), w);
+        if (const float* found = find_measure(key)) return *found;
+        const float w = measure_uncached(r, text, style);
+        store_measure(key, w);
         return w;
     }
 
     float line_height(fizmo::graphics::Renderer& r, const fizmo::text::TextStyle& style) {
         const std::string key = style_key(style) + "\x1eLH";
-        auto it = m_measure.find(key);
-        if (it != m_measure.end()) return it->second;
+        if (const float* found = find_measure(key)) return *found;
         const fizmo::text::TextMetrics m = r.measure_text("Hg", 2, style);
         const float h = static_cast<float>(std::max(m.height, 1u));
-        m_measure.emplace(key, h);
+        store_measure(key, h);
         return h;
     }
 
@@ -2127,6 +2218,9 @@ private:
         unsigned autos = 0;
         bool measured = false;
         float advance = 0.0f;
+        float laid_width = 0.0f;
+        float laid_avail = 0.0f;
+        std::uint64_t laid_viewport = 0;
         Rect bounds;
     };
 
@@ -2139,6 +2233,8 @@ private:
         float total_flex = 0.0f;
         unsigned autos = 0;
         unsigned inlines = 0;
+        std::uint64_t resized_frame = 0;
+        std::uint64_t viewport = 0;
         std::vector<ChildRecord> records;
     };
 
@@ -2165,17 +2261,31 @@ private:
         rec.autos = (a.top ? 1u : 0u) + (a.bottom ? 1u : 0u);
     }
 
+    bool culls_children(const Node& parent) {
+        if (parent.children().size() >= k_cull_children) return true;
+        if (!parent.is_element()) return false;
+        return style_of(parent).text_view("content-visibility") == "auto";
+    }
+
     bool layout_children_cached(fizmo::graphics::Renderer& r, const Node& parent, float x, float& y, float width) {
-        if (!m_layout_caching || m_capturing > 0 || m_force_full || m_sel_anchor.valid()) return false;
         const auto& kids = parent.children();
-        if (kids.size() < 24) return false;
+        if (m_capturing > 0 && kids.size() > 1 && culls_children(parent)) ++m_capture_spoiled;
+        if (!m_layout_caching || m_capturing > 0 || m_force_full || m_sel_anchor.valid()) return false;
+        if (kids.size() < 2 || !culls_children(parent)) return false;
         const std::uint64_t key = m_styles.style_key(parent, m_project.diagnostics);
         const std::uint64_t generation = layout_generation();
         const float avail = m_avail_h;
+        const std::uint64_t viewport = m_styles.viewport_generation();
         ChildCache& cache = m_child_cache[&parent];
         cache.used = m_frame_index;
-        bool valid = cache.style == key && cache.generation == generation && cache.width == width && cache.avail == avail && cache.records.size() == kids.size();
+        bool valid = cache.style == key && cache.generation == generation && cache.records.size() == kids.size();
         for (std::size_t i = 0; valid && i < kids.size(); ++i) valid = cache.records[i].node == kids[i].get();
+        if (valid && (cache.width != width || cache.avail != avail || cache.viewport != viewport)) {
+            cache.width = width;
+            cache.avail = avail;
+            cache.viewport = viewport;
+            cache.resized_frame = m_frame_index;
+        }
         const bool preserve = preserves_space(parent);
         if (!valid) {
             cache = ChildCache{};
@@ -2184,6 +2294,7 @@ private:
             cache.used = m_frame_index;
             cache.width = width;
             cache.avail = avail;
+            cache.viewport = viewport;
             cache.records.resize(kids.size());
             for (std::size_t i = 0; i < kids.size(); ++i) {
                 ChildRecord& rec = cache.records[i];
@@ -2209,9 +2320,29 @@ private:
         const bark::ComputedStyle& parent_style = style_of(parent);
         const Alignment al = alignment_of(parent_style, false);
         if (avail >= 0.0f && (cache.total_flex > 0.0f || cache.autos > 0 || al.main != "start")) return false;
+        const bool settled = m_frame_index > cache.resized_frame + 2;
         for (ChildRecord& rec : cache.records) {
             if (rec.skip) continue;
             if (rec.measured && offscreen(rec.bounds, x, y)) {
+                if (rec.laid_width != width || rec.laid_avail != avail || rec.laid_viewport != viewport) {
+                    if (settled && refresh_allowed()) {
+                        const Mark before = mark();
+                        const float y0 = y;
+                        m_avail_h = avail;
+                        place_block(r, *rec.node, x, y, width, al.cross, -1.0f);
+                        rec.advance = y - y0;
+                        rec.bounds = slice_bounds(before, x, y0, rec.advance);
+                        rec.laid_stamp = rec.node->tree_stamp();
+                        rec.laid_width = width;
+                        rec.laid_avail = avail;
+                        rec.laid_viewport = viewport;
+                        rewind(before);
+                        y = y0 + rec.advance;
+                        m_partial_runs = true;
+                        continue;
+                    }
+                    m_layout_refresh_pending = true;
+                }
                 y += rec.advance;
                 m_partial_runs = true;
                 continue;
@@ -2223,10 +2354,21 @@ private:
             rec.advance = y - y0;
             rec.bounds = slice_bounds(before, x, y0, rec.advance);
             rec.laid_stamp = rec.node->tree_stamp();
+            rec.laid_width = width;
+            rec.laid_avail = avail;
+            rec.laid_viewport = viewport;
             rec.measured = true;
         }
         m_avail_h = avail;
         return true;
+    }
+
+    bool refresh_allowed() {
+        if (m_refresh_count == 0) m_refresh_started = std::chrono::steady_clock::now();
+        ++m_refresh_count;
+        if (m_refresh_count % 16 != 0) return !m_refresh_spent;
+        if (std::chrono::steady_clock::now() - m_refresh_started > std::chrono::milliseconds(4)) m_refresh_spent = true;
+        return !m_refresh_spent;
     }
 
     void layout_children(fizmo::graphics::Renderer& r, const Node& parent, float x, float& y, float width) {
@@ -2914,19 +3056,28 @@ private:
             }
             if (wrap && !space && w > width && cursor == 0.0f && width > 4.0f) {
                 std::string chunk;
+                float estimate = 0.0f;
                 for (const std::string& cp : split_code_points(text)) {
-                    const float cw = text_width(r, chunk + cp, frags[fi].style);
-                    if (!chunk.empty() && cw > width) {
-                        const float pw = text_width(r, chunk, frags[fi].style);
+                    const float cpw = text_width(r, cp, frags[fi].style);
+                    if (!chunk.empty() && estimate + cpw > width) {
+                        const float exact = measure_uncached(r, chunk + cp, frags[fi].style);
+                        if (exact <= width) {
+                            chunk += cp;
+                            estimate = exact;
+                            continue;
+                        }
+                        const float pw = measure_uncached(r, chunk, frags[fi].style);
                         lines.back().push_back(Piece{ fi, chunk, cursor, pw, false });
                         heights.back() = std::max(heights.back(), line_height(r, frags[fi].style));
                         new_line();
                         chunk.clear();
+                        estimate = 0.0f;
                     }
                     chunk += cp;
+                    estimate += cpw;
                 }
                 if (!chunk.empty()) {
-                    const float pw = text_width(r, chunk, frags[fi].style);
+                    const float pw = measure_uncached(r, chunk, frags[fi].style);
                     lines.back().push_back(Piece{ fi, chunk, cursor, pw, false });
                     heights.back() = std::max(heights.back(), line_height(r, frags[fi].style));
                     cursor += pw;
@@ -6289,6 +6440,7 @@ private:
         bool dynamic = false;
         bool measured = false;
         bool captured = false;
+        bool never_capture = false;
         unsigned retries = 0;
         unsigned streak = 0;
         std::uint64_t changed_frame = 0;
@@ -6477,7 +6629,7 @@ private:
                 e.changed_frame = m_frame_index;
                 volatile_entry = e.streak >= 3;
             }
-            const bool retry_dynamic = e.dynamic && ++e.retries % 32 == 0;
+            const bool retry_dynamic = e.dynamic && !e.never_capture && ++e.retries % 32 == 0;
             if (!same && ((e.dynamic && !retry_dynamic) || volatile_entry)) {
                 e.stamp = element.tree_stamp();
                 e.style = key;
@@ -6501,9 +6653,11 @@ private:
         const float y0 = y;
         const float avail = m_avail_h;
         if (frame_stats_log().enabled) ++frame_stats_log().laid;
+        const std::size_t spoiled_before = m_capture_spoiled;
         ++m_capturing;
         layout_element_now(r, element, x, y, width, sized, forced_h);
         --m_capturing;
+        const bool spoiled = m_capture_spoiled != spoiled_before;
         LayoutEntry& e = m_layout_cache[&element];
         for (const RunRef& ref : m_run_refs) {
             if (ref.runs == &e.runs) {
@@ -6520,7 +6674,8 @@ private:
         e.forced = forced_h;
         e.sized = sized;
         e.wide = wide;
-        e.dynamic = !captures_cleanly(before);
+        e.dynamic = spoiled || !captures_cleanly(before);
+        if (spoiled) e.never_capture = true;
         if (e.dynamic) {
             e.ops.clear();
             e.boxes.clear();
@@ -9614,6 +9769,12 @@ private:
     std::unordered_map<const Node*, ChildCache> m_child_cache;
     bool m_force_full = false;
     bool m_partial_runs = false;
+    bool m_layout_refresh_pending = false;
+    std::size_t m_refresh_count = 0;
+    bool m_refresh_spent = false;
+    std::chrono::steady_clock::time_point m_refresh_started;
+    std::size_t m_capture_spoiled = 0;
+    static constexpr std::size_t k_cull_children = 24;
     const Node* m_pending_select = nullptr;
     bool m_layout_caching = std::getenv("GROVE_LAYOUT_CACHE") == nullptr || std::string(std::getenv("GROVE_LAYOUT_CACHE")) != "0";
     int m_capturing = 0;
@@ -9668,11 +9829,14 @@ private:
     std::unordered_map<const Node*, double> m_opacity;
     std::chrono::steady_clock::time_point m_last_activity = std::chrono::steady_clock::now();
     std::unordered_map<std::string, float> m_measure;
+    std::unordered_map<std::string, float> m_measure_old;
+    static constexpr std::size_t k_measure_generation = 32768;
     std::vector<Rect> m_clips;
     std::vector<Scroller> m_scrollers;
     BarDrag m_bar_drag;
     BarDrag m_bar_hot;
     std::unordered_map<const Node*, float> m_elem_scroll;
+    std::unordered_map<const Node*, float> m_scroll_reported;
     std::unordered_map<const Node*, float> m_elem_scroll_x;
     std::unordered_map<const Node*, std::string> m_revealed;
     const Node* m_reveal_node = nullptr;
@@ -9695,7 +9859,7 @@ public:
             const float target = input_bool(*node).value_or(false) ? 1.0f : 0.0f;
             if (pos != target) m_last_activity = now;
         }
-        if (m_dragging || m_pressed || m_code_drag || !m_dialogs_pending.empty()) m_last_activity = now;
+        if (m_dragging || m_pressed || m_code_drag || !m_dialogs_pending.empty() || m_layout_refresh_pending) m_last_activity = now;
         for (const auto& [node, c] : document().host().canvases) {
             if (c->rect.shown && document().is_attached(*node) && in_this_window(*node) && canvas_animating(document(), *node)) {
                 m_last_activity = now;
@@ -9839,6 +10003,18 @@ public:
             WindowHost* h = host_containing(n);
             return h && h->view->computed_number(n, property, index, out);
         };
+        host.element_rect = [this](const Node& n, double& x, double& y, double& w, double& hh) {
+            WindowHost* h = host_containing(n);
+            return h && h->view->element_rect(n, x, y, w, hh);
+        };
+        host.scroll_state = [this](const Node& n, double& top, double& max) {
+            WindowHost* h = host_containing(n);
+            return h && h->view->scroll_state(n, top, max);
+        };
+        host.set_scroll_top = [this](const Node& n, double value) {
+            WindowHost* h = host_containing(n);
+            return h && h->view->set_scroll_top(n, value);
+        };
         host.computed_color = [this](const Node& n, const std::string& property) {
             WindowHost* h = host_containing(n);
             return h ? h->view->computed_color(n, property) : std::string();
@@ -9953,6 +10129,9 @@ public:
         DocumentHost& host = m_doc.host();
         host.computed_style = nullptr;
         host.computed_number = nullptr;
+        host.element_rect = nullptr;
+        host.scroll_state = nullptr;
+        host.set_scroll_top = nullptr;
         host.computed_color = nullptr;
         host.focus = nullptr;
         host.window_size = nullptr;
@@ -10300,9 +10479,13 @@ private:
 
     void render_now(WindowHost* host) {
         if (m_rendering || !host_alive(host) || !host->window || !host->window->is_open() || host->window->width() == 0 || host->window->height() == 0) return;
+        const auto started = std::chrono::steady_clock::now();
+        if (started < m_render_now_ready) {
+            m_force_render = true;
+            return;
+        }
         m_rendering = true;
         fizmo::graphics::Renderer& r = *host->renderer;
-        const auto started = std::chrono::steady_clock::now();
         r.begin_frame();
         r.clear(host->background);
         const std::uint64_t revision = m_doc.revision();
@@ -10313,7 +10496,16 @@ private:
         }
         const auto painted = std::chrono::steady_clock::now();
         r.present();
-        note_frame(*host, started, painted, std::chrono::steady_clock::now());
+        const auto presented = std::chrono::steady_clock::now();
+        note_frame(*host, started, painted, presented);
+        FrameStatsLog& stats = frame_stats_log();
+        if (stats.enabled) {
+            ++stats.frames;
+            stats.present_ms += FrameStatsLog::ms(painted, presented);
+            stats.worst_ms = std::max(stats.worst_ms, FrameStatsLog::ms(started, presented));
+            stats.report();
+        }
+        m_render_now_ready = presented + (presented - started);
         m_rendering = false;
         m_force_render = true;
     }
@@ -10385,6 +10577,7 @@ private:
     const RunOptions& m_options;
     bool m_rendering = false;
     bool m_force_render = false;
+    std::chrono::steady_clock::time_point m_render_now_ready;
     Node& m_main;
     std::vector<std::unique_ptr<WindowHost>> m_hosts;
     std::uint64_t m_painted_revision = static_cast<std::uint64_t>(-1);
@@ -10452,6 +10645,18 @@ public:
         host.computed_number = [this](const Node& n, const std::string& property, std::size_t index, double& out) {
             AndroidLayer* l = layer_containing(n);
             return l && l->view->computed_number(n, property, index, out);
+        };
+        host.element_rect = [this](const Node& n, double& x, double& y, double& w, double& h) {
+            AndroidLayer* l = layer_containing(n);
+            return l && l->view->element_rect(n, x, y, w, h);
+        };
+        host.scroll_state = [this](const Node& n, double& top, double& max) {
+            AndroidLayer* l = layer_containing(n);
+            return l && l->view->scroll_state(n, top, max);
+        };
+        host.set_scroll_top = [this](const Node& n, double value) {
+            AndroidLayer* l = layer_containing(n);
+            return l && l->view->set_scroll_top(n, value);
         };
         host.computed_color = [this](const Node& n, const std::string& property) {
             AndroidLayer* l = layer_containing(n);
@@ -10551,6 +10756,9 @@ public:
         DocumentHost& host = m_doc.host();
         host.computed_style = nullptr;
         host.computed_number = nullptr;
+        host.element_rect = nullptr;
+        host.scroll_state = nullptr;
+        host.set_scroll_top = nullptr;
         host.computed_color = nullptr;
         host.focus = nullptr;
         host.window_size = nullptr;

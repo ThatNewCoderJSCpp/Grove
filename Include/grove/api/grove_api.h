@@ -336,6 +336,10 @@ GROVE_API uint32_t grove_event_scancode(const grove_event* event);
 GROVE_API bool grove_event_repeat(const grove_event* event);
 GROVE_API const char* grove_key_name(uint16_t key);
 GROVE_API uint16_t grove_key_from_name(const char* name);
+GROVE_API bool grove_element_rect(grove_document* document, grove_element* element, double* x, double* y, double* width, double* height);
+GROVE_API double grove_scroll_top(grove_document* document, grove_element* element);
+GROVE_API double grove_scroll_max(grove_document* document, grove_element* element);
+GROVE_API bool grove_set_scroll_top(grove_document* document, grove_element* element, double value);
 
 #ifdef __cplusplus
 }
