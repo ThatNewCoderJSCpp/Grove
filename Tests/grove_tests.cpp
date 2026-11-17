@@ -1238,6 +1238,22 @@ void test_code_highlight_languages() {
     const std::string define = "#define LIMIT 10";
     CHECK(has(grove::highlight_code_line(grove::CodeLanguage::C, define, st), define, grove::CodeTokenKind::Constant, "LIMIT"));
 
+    grove::CodeLineState wn;
+    const std::string safe_line = "safe(compile) {";
+    auto safe_tokens = grove::highlight_code_line(grove::CodeLanguage::Walnut, safe_line, wn);
+    CHECK(has(safe_tokens, safe_line, grove::CodeTokenKind::Keyword, "safe") && has(safe_tokens, safe_line, grove::CodeTokenKind::Keyword, "compile"));
+    const std::string words = "bool: b = items has x && y not in items && v[1:n] == w;";
+    auto word_tokens = grove::highlight_code_line(grove::CodeLanguage::Walnut, words, wn);
+    CHECK(has(word_tokens, words, grove::CodeTokenKind::BuiltinOperator, "has"));
+    CHECK(has(word_tokens, words, grove::CodeTokenKind::BuiltinOperator, "not"));
+    CHECK(has(word_tokens, words, grove::CodeTokenKind::Variable, "n"));
+    grove::highlight_code_line(grove::CodeLanguage::Walnut, "extern \"C++\" code {", wn);
+    CHECK(wn.embedded == 2);
+    const std::string native_line = "    std::string name() { return \"x\"; }";
+    CHECK(has(grove::highlight_code_line(grove::CodeLanguage::Walnut, native_line, wn), native_line, grove::CodeTokenKind::Namespace, "std"));
+    const std::string native_end = "} end extern";
+    CHECK(has(grove::highlight_code_line(grove::CodeLanguage::Walnut, native_end, wn), native_end, grove::CodeTokenKind::ControlKeyword, "end") && wn.embedded == 0);
+
     grove::CodeLineState cm;
     const std::string line = "if(NOT WIN32) message(STATUS \"${PROJECT_NAME} ok\") # note";
     auto cmake = grove::highlight_code_line(grove::CodeLanguage::CMake, line, cm);

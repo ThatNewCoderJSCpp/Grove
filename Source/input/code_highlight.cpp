@@ -60,7 +60,7 @@ const std::set<std::string>& cpp_keywords() {
         "mutable", "lazy", "module", "namespace", "new", "noexcept", "operator", "override", "private", "public", "protected", "repeat",
         "reinterpret_cast", "return", "requires", "static", "static_cast", "static_assert", "struct", "switch", "then", "this", "self",
         "throw", "try", "typedef", "template", "typename", "union", "using", "variant", "virtual", "abstract", "volatile", "while",
-        "invalidate", "threadsafe", "typeof", "countof", "sizeof", "const",
+        "invalidate", "threadsafe", "typeof", "countof", "sizeof", "const", "safe", "match",
     };
     return k;
 }
@@ -77,7 +77,7 @@ const std::set<std::string>& c_types() {
 [[maybe_unused]] const std::set<std::string>& walnut_types() {
     static const std::set<std::string> k = {
         "void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "bool", "string", "text", "auto", "let",
-        "def", "var", "any", "arr", "txt", "str", "special", "List", "function",
+        "def", "var", "any", "arr", "txt", "str", "special", "List", "function", "dec",
     };
     return k;
 }
@@ -386,8 +386,8 @@ std::vector<CodeToken> highlight_c_like(CodeLanguage language, std::string_view 
 
 const std::set<std::string>& walnut_control() {
     static const std::set<std::string> k = {
-        "fallthrough", "co_return", "co_yield", "continue", "default", "repeat", "return", "switch", "await", "break", "catch", "label",
-        "throw", "while", "case", "down", "else", "goto", "then", "end", "for", "try", "as", "do", "if", "in", "is",
+        "fallthrough", "co_return", "co_yield", "co_await", "continue", "default", "repeat", "return", "switch", "await", "break", "catch",
+        "label", "throw", "while", "case", "down", "else", "goto", "then", "from", "end", "for", "try", "as", "do", "if", "in", "is",
     };
     return k;
 }
@@ -407,7 +407,7 @@ const std::set<std::string>& walnut_storage() {
 const std::set<std::string>& walnut_primitives() {
     static const std::set<std::string> k = {
         "character", "unsigned", "variable", "boolean", "decimal", "dynamic", "floater", "integer", "special", "variant", "double", "string",
-        "array", "float", "short", "auto", "bool", "char", "long", "text", "void", "any", "arr", "int", "str", "txt", "var",
+        "array", "float", "short", "auto", "bool", "char", "long", "text", "void", "any", "arr", "dec", "int", "str", "txt", "var",
     };
     return k;
 }
@@ -616,10 +616,50 @@ std::size_t walnut_operator_end(std::string_view line, std::size_t i) {
     return std::string_view::npos;
 }
 
+std::size_t walnut_native_close(std::string_view line) {
+    for (std::size_t at = line.find('}'); at != std::string_view::npos; at = line.find('}', at + 1)) {
+        std::size_t k = skip_spaces(line, at + 1);
+        if (line.compare(k, 3, "end") != 0) continue;
+        k += 3;
+        const std::size_t name = skip_spaces(line, k);
+        if (name == k || line.compare(name, 6, "extern") != 0) continue;
+        if (name + 6 < line.size() && ascii_ident_char(line[name + 6])) continue;
+        return at;
+    }
+    return std::string_view::npos;
+}
+
+std::size_t walnut_native_code(std::vector<CodeToken>& out, std::string_view line, std::size_t from, CodeLineState& state) {
+    const CodeLanguage language = state.embedded == 1 ? CodeLanguage::C : CodeLanguage::Cpp;
+    const std::string_view rest = line.substr(from);
+    const std::size_t close = walnut_native_close(rest);
+    const std::string_view piece = close == std::string_view::npos ? rest : rest.substr(0, close);
+    for (const CodeToken& t : highlight_c_like(language, piece, state)) push(out, t.begin + from, t.end + from, t.kind);
+    if (close == std::string_view::npos) return line.size();
+    state.embedded = 0;
+    state.block_comment = false;
+    state.raw_string = false;
+    state.string_open = false;
+    state.raw_delimiter.clear();
+    return from + close;
+}
+
+bool walnut_declaration_word(std::string_view w) {
+    static const std::set<std::string_view> k = {
+        "class", "struct", "union", "function", "namespace", "template", "operator", "static", "inline", "constexpr", "hidden", "local",
+        "global", "hoist", "virtual", "friend",
+    };
+    return k.count(w) != 0;
+}
+
 std::vector<CodeToken> highlight_walnut(std::string_view line, CodeLineState& state) {
     std::vector<CodeToken> out;
     const std::size_t n = line.size();
     std::size_t i = 0;
+    if (state.embedded == 1 || state.embedded == 2) {
+        i = walnut_native_code(out, line, 0, state);
+        if (i >= n) return out;
+    }
     if (state.comment_depth > 0) {
         i = walnut_block_comment(line, 0, state.comment_depth);
         push(out, 0, i, CodeTokenKind::Comment);
@@ -691,6 +731,13 @@ std::vector<CodeToken> highlight_walnut(std::string_view line, CodeLineState& st
                 const bool fn = what == "function";
                 const bool type = what == "class" || what == "struct" || what == "union" || what == "enum" || what == "concept";
                 const bool space = what == "namespace" || what == "module" || what == "extern";
+                if (what == "safe") {
+                    push(out, i, end, CodeTokenKind::ControlKeyword);
+                    push(out, end, b, CodeTokenKind::Plain);
+                    push(out, b, e, CodeTokenKind::Keyword);
+                    i = e;
+                    continue;
+                }
                 if (fn || type || space) {
                     push(out, i, end, CodeTokenKind::ControlKeyword);
                     push(out, end, b, CodeTokenKind::Plain);
@@ -724,6 +771,90 @@ std::vector<CodeToken> highlight_walnut(std::string_view line, CodeLineState& st
                     push(out, open, close + 1, CodeTokenKind::OverloadedOperator);
                     i = close + 1;
                     continue;
+                }
+            }
+            if (word == "extern") {
+                const std::size_t quote = skip_spaces(line, end);
+                const std::size_t close = quote < n && line[quote] == '"' ? line.find('"', quote + 1) : std::string_view::npos;
+                if (close != std::string_view::npos) {
+                    const std::string_view abi = line.substr(quote + 1, close - quote - 1);
+                    const std::size_t code = skip_spaces(line, close + 1);
+                    const bool code_word = line.compare(code, 4, "code") == 0 && (code + 4 >= n || !ascii_ident_char(line[code + 4]));
+                    const std::size_t brace = code_word ? skip_spaces(line, code + 4) : std::string_view::npos;
+                    if ((abi == "C" || abi == "C++") && brace != std::string_view::npos && brace < n && line[brace] == '{') {
+                        push(out, i, end, CodeTokenKind::Keyword);
+                        push(out, end, quote, CodeTokenKind::Plain);
+                        push(out, quote, close + 1, CodeTokenKind::String);
+                        push(out, close + 1, code, CodeTokenKind::Plain);
+                        push(out, code, code + 4, CodeTokenKind::Keyword);
+                        push(out, code + 4, brace + 1, CodeTokenKind::Plain);
+                        state.embedded = abi == "C" ? 1 : 2;
+                        i = walnut_native_code(out, line, brace + 1, state);
+                        continue;
+                    }
+                }
+            }
+            if (word == "safe") {
+                const std::size_t after = skip_spaces(line, end);
+                if (after < n && line[after] == '(') {
+                    const std::size_t inner = skip_spaces(line, after + 1);
+                    const bool compile = line.compare(inner, 7, "compile") == 0 && (inner + 7 >= n || !ascii_ident_char(line[inner + 7]));
+                    const std::size_t close = compile ? skip_spaces(line, inner + 7) : std::string_view::npos;
+                    if (close != std::string_view::npos && close < n && line[close] == ')') {
+                        push(out, i, end, CodeTokenKind::Keyword);
+                        push(out, end, inner, CodeTokenKind::Plain);
+                        push(out, inner, inner + 7, CodeTokenKind::Keyword);
+                        push(out, inner + 7, close + 1, CodeTokenKind::Plain);
+                        i = close + 1;
+                        continue;
+                    }
+                }
+                const bool block = after < n && line[after] == '{';
+                const bool declares = after < n && ascii_ident_start(line[after]) && walnut_declaration_word(line.substr(after, word_end(line, after) - after));
+                if (block || declares) {
+                    push(out, i, end, CodeTokenKind::Keyword);
+                    i = end;
+                    continue;
+                }
+            }
+            if (word == "not" && spaced_word(end, b, e, false)) {
+                const std::string_view next = line.substr(b, e - b);
+                if (next == "in" || next == "has") {
+                    push(out, i, end, CodeTokenKind::BuiltinOperator);
+                    i = end;
+                    continue;
+                }
+            }
+            if (word == "has" && i > 0 && end < n && (line[end] == ' ' || line[end] == '\t')) {
+                std::size_t before = i;
+                while (before > 0 && (line[before - 1] == ' ' || line[before - 1] == '\t')) --before;
+                const char prev = before > 0 ? line[before - 1] : '\0';
+                const bool after_value = (before < i && (ascii_ident_char(prev) || prev == ')' || prev == ']' || prev == '}' || prev == '"' || prev == '\'' || prev == '`'))
+                                      || prev == '!';
+                const std::size_t next = skip_spaces(line, end);
+                const bool value_next = next < n && std::string_view("=;,:)(").find(line[next]) == std::string_view::npos;
+                const bool after_not = before >= 3 && line.substr(before - 3, 3) == "not" && (before == 3 || !ascii_ident_char(line[before - 4]));
+                if ((after_value || after_not) && value_next) {
+                    push(out, i, end, CodeTokenKind::BuiltinOperator);
+                    i = end;
+                    continue;
+                }
+            }
+            if (word == "match") {
+                const std::size_t open = skip_spaces(line, end);
+                if (open < n && line[open] == '(') {
+                    int depth = 0;
+                    std::size_t k = open;
+                    for (; k < n; ++k) {
+                        if (line[k] == '(') ++depth;
+                        else if (line[k] == ')' && --depth == 0) break;
+                    }
+                    const std::size_t brace = k < n ? skip_spaces(line, k + 1) : n;
+                    if (brace < n && line[brace] == '{') {
+                        push(out, i, end, CodeTokenKind::ControlKeyword);
+                        i = end;
+                        continue;
+                    }
                 }
             }
             CodeTokenKind kind = CodeTokenKind::Plain;
@@ -767,7 +898,8 @@ std::vector<CodeToken> highlight_walnut(std::string_view line, CodeLineState& st
                     "catch", "repeat", "fallthrough", "in", "is", "as", "end", "co_return", "co_yield", "await",
                 };
                 const std::size_t after = skip_spaces(line, end);
-                if (!blocked.count(word) && (after >= n || line[after] != '(')) {
+                const bool slice = after < n && (line[after] == ']' || line[after] == ':');
+                if (!blocked.count(word) && !slice && (after >= n || line[after] != '(')) {
                     push(out, i, name, CodeTokenKind::Plain);
                     push(out, name, end, CodeTokenKind::Declaration);
                     i = end;
