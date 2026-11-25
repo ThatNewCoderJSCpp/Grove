@@ -1051,6 +1051,24 @@ void test_multi_cursor() {
     buf.clear_extra_cursors();
     CHECK(buf.cursor_count() == 1);
 
+    grove::CodeBuffer blocks_src("safe(compile) {\nnamespace std {\n    function f() -> int {\n        string: s = \"}{\";\n        // }\n        return 1;\n    } end function f\n} end namespace std\n} end safe");
+    const std::vector<grove::CodeBlock> blocks = grove::code_blocks(blocks_src, grove::CodeLanguage::Walnut, 4);
+    CHECK(blocks.size() == 3);
+    CHECK(blocks[0].header == 0 && blocks[0].close == 8);
+    CHECK(blocks[2].header == 2 && blocks[2].close == 6);
+    const std::vector<std::size_t> pinned = grove::code_sticky_lines(blocks, 3, 5);
+    CHECK(pinned.size() == 3 && pinned[0] == 0 && pinned[1] == 1 && pinned[2] == 2);
+    CHECK(grove::code_sticky_lines(blocks, 1, 5).size() == 3);
+    CHECK(grove::code_sticky_lines(blocks, 0, 5).empty());
+    CHECK(grove::code_sticky_lines(blocks, 7, 5).size() == 1);
+    CHECK(grove::code_sticky_lines(blocks, 3, 2).size() == 2);
+    grove::CodeBuffer allman("void f()\n{\n    x();\n    y();\n}");
+    const std::vector<grove::CodeBlock> allman_blocks = grove::code_blocks(allman, grove::CodeLanguage::Cpp, 4);
+    CHECK(allman_blocks.size() == 1 && allman_blocks[0].header == 0 && allman_blocks[0].open == 1);
+    grove::CodeBuffer py("def f():\n    a = 1\n\n    b = 2\nx = 3");
+    const std::vector<grove::CodeBlock> py_blocks = grove::code_blocks(py, grove::CodeLanguage::Python, 4);
+    CHECK(py_blocks.size() == 1 && py_blocks[0].header == 0 && py_blocks[0].close == 3);
+
     grove::CodeBuffer col("abcd\nab\nabcd");
     col.column_select(grove::CodePos{ 0, 3 }, 2);
     CHECK(col.cursor_count() == 3);
@@ -1247,6 +1265,15 @@ void test_code_highlight_languages() {
     CHECK(has(word_tokens, words, grove::CodeTokenKind::BuiltinOperator, "has"));
     CHECK(has(word_tokens, words, grove::CodeTokenKind::BuiltinOperator, "not"));
     CHECK(has(word_tokens, words, grove::CodeTokenKind::Variable, "n"));
+    const std::string literals = "long long: a = 100ll + 0x1Full + 2.5e3f + 7ss + 1'000s;";
+    auto literal_tokens = grove::highlight_code_line(grove::CodeLanguage::Walnut, literals, wn);
+    CHECK(has(literal_tokens, literals, grove::CodeTokenKind::Number, "100") && has(literal_tokens, literals, grove::CodeTokenKind::NumberSuffix, "ll"));
+    CHECK(has(literal_tokens, literals, grove::CodeTokenKind::Number, "0x1F") && has(literal_tokens, literals, grove::CodeTokenKind::NumberSuffix, "ull"));
+    CHECK(has(literal_tokens, literals, grove::CodeTokenKind::Number, "2.5e3") && has(literal_tokens, literals, grove::CodeTokenKind::NumberSuffix, "f"));
+    CHECK(has(literal_tokens, literals, grove::CodeTokenKind::NumberSuffix, "ss") && has(literal_tokens, literals, grove::CodeTokenKind::NumberSuffix, "s"));
+    const std::string cpp_literals = "auto n = 10ULL + 1.5f;";
+    auto cpp_literal_tokens = grove::highlight_code_line(grove::CodeLanguage::Cpp, cpp_literals, st);
+    CHECK(has(cpp_literal_tokens, cpp_literals, grove::CodeTokenKind::Number, "10") && has(cpp_literal_tokens, cpp_literals, grove::CodeTokenKind::NumberSuffix, "ULL"));
     grove::highlight_code_line(grove::CodeLanguage::Walnut, "extern \"C++\" code {", wn);
     CHECK(wn.embedded == 2);
     const std::string native_line = "    std::string name() { return \"x\"; }";
@@ -1272,7 +1299,7 @@ void test_code_highlight_languages() {
     CHECK(grove::code_language_from_name("cmake") == grove::CodeLanguage::CMake);
     CHECK(grove::code_token_kind_from_name("namespace") == grove::CodeTokenKind::Namespace);
     CHECK(!grove::code_token_kind_from_name("nope"));
-    CHECK(grove::code_token_kinds().size() == 27 && grove::code_languages().size() == 20);
+    CHECK(grove::code_token_kinds().size() == 28 && grove::code_languages().size() == 20);
     CHECK(grove::bark::is_known_property("code-keyword") && grove::bark::is_known_property("code-mark"));
 }
 
@@ -1326,7 +1353,7 @@ void test_walnut_highlight_detail() {
     CHECK(grove::code_token_fallback(K::ControlKeyword) == K::Keyword && grove::code_token_fallback(K::EnumMember) == K::Constant);
     CHECK(grove::code_token_kind_from_name("built-in type") == K::BuiltinType);
     CHECK(grove::code_token_kind_from_name("control keyword") == K::ControlKeyword);
-    CHECK(grove::code_token_kinds_for(grove::CodeLanguage::Walnut).size() == 23);
+    CHECK(grove::code_token_kinds_for(grove::CodeLanguage::Walnut).size() == 24);
 
     const std::vector<std::string> lines = { "int: a = b;", "", "int: a = b;" };
     const std::string spans = grove::code_spans_text(lines, { { 0, 5, 1, K::Declaration }, { 0, 9, 1, K::Unresolved }, { 2, 9, 1, K::EnumMember } });

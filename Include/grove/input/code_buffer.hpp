@@ -73,7 +73,8 @@ enum class CodeTokenKind {
     EnumMember,
     TemplateScope,
     VariableTemplate,
-    Unresolved
+    Unresolved,
+    Inactive
 };
 
 struct CodeToken {

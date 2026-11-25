@@ -45,6 +45,7 @@ constexpr const char* k_inherited[] = {
     "code-template-scope",
     "code-this",
     "code-unresolved",
+    "code-inactive",
     "code-variable-template",
     "code-warning-underline",
     "code-hover",

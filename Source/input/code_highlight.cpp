@@ -2781,6 +2781,7 @@ const char* to_string(CodeTokenKind kind) noexcept {
         case CodeTokenKind::TemplateScope: return "template-scope";
         case CodeTokenKind::VariableTemplate: return "variable-template";
         case CodeTokenKind::Unresolved: return "unresolved";
+        case CodeTokenKind::Inactive: return "inactive";
     }
     return "plain";
 }
@@ -2892,6 +2893,7 @@ const std::vector<CodeTokenKind>& code_token_kinds() noexcept {
         CodeTokenKind::ControlKeyword, CodeTokenKind::BuiltinType, CodeTokenKind::Declaration, CodeTokenKind::SelfKeyword,
         CodeTokenKind::ThisKeyword, CodeTokenKind::Cast, CodeTokenKind::BuiltinOperator, CodeTokenKind::OverloadedOperator,
         CodeTokenKind::EnumMember, CodeTokenKind::TemplateScope, CodeTokenKind::VariableTemplate, CodeTokenKind::Unresolved,
+        CodeTokenKind::Inactive,
     };
     return all;
 }
@@ -2923,6 +2925,7 @@ CodeTokenKind code_token_fallback(CodeTokenKind kind) noexcept {
         case CodeTokenKind::OverloadedOperator: return CodeTokenKind::Function;
         case CodeTokenKind::EnumMember: return CodeTokenKind::Constant;
         case CodeTokenKind::Unresolved: return CodeTokenKind::Plain;
+        case CodeTokenKind::Inactive: return CodeTokenKind::Comment;
         default: return kind;
     }
 }
@@ -2930,13 +2933,13 @@ CodeTokenKind code_token_fallback(CodeTokenKind kind) noexcept {
 const std::vector<CodeTokenKind>& code_token_kinds_for(CodeLanguage language) noexcept {
     using K = CodeTokenKind;
     static const std::vector<K> c = { K::Keyword, K::ControlKeyword, K::Type, K::BuiltinType, K::Function, K::Constant, K::String, K::Escape,
-                                      K::Number, K::Comment, K::Preprocessor, K::Operator, K::Attribute };
+                                      K::Number, K::Comment, K::Preprocessor, K::Inactive, K::Operator, K::Attribute };
     static const std::vector<K> cpp = { K::Keyword, K::ControlKeyword, K::Type, K::BuiltinType, K::Function, K::Namespace, K::ThisKeyword, K::Cast,
-                                        K::Constant, K::String, K::Escape, K::Number, K::Comment, K::Preprocessor, K::Operator, K::Attribute };
+                                        K::Constant, K::String, K::Escape, K::Number, K::Comment, K::Preprocessor, K::Inactive, K::Operator, K::Attribute };
     static const std::vector<K> walnut = { K::Declaration, K::Variable, K::VariableTemplate, K::Unresolved, K::SelfKeyword, K::Cast, K::ThisKeyword,
                                            K::BuiltinOperator, K::OverloadedOperator, K::Function, K::TemplateScope, K::Type, K::BuiltinType,
                                            K::Namespace, K::EnumMember, K::Keyword, K::ControlKeyword, K::Constant, K::String, K::Escape, K::Number,
-                                           K::Comment, K::Preprocessor };
+                                           K::Comment, K::Preprocessor, K::Inactive };
     static const std::vector<K> grove = { K::Tag, K::Attribute, K::String, K::Constant, K::Comment, K::Operator };
     static const std::vector<K> bark = { K::Tag, K::Attribute, K::Property, K::Keyword, K::Function, K::Constant, K::Number, K::String, K::Comment, K::Operator };
     static const std::vector<K> cmake = { K::Function, K::Keyword, K::Variable, K::Attribute, K::Constant, K::String, K::Escape, K::Number, K::Comment };

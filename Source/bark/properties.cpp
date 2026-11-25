@@ -35,6 +35,7 @@ const std::vector<std::string_view>& known_properties() noexcept {
         "code-find-current",
         "code-function",
         "code-hover",
+        "code-inactive",
         "code-keyword",
         "code-mark",
         "code-namespace",

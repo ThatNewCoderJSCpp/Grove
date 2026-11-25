@@ -1194,4 +1194,203 @@ bool CodeBuffer::redo() {
     return true;
 }
 
+namespace {
+
+bool braced_language(CodeLanguage language) {
+    switch (language) {
+        case CodeLanguage::C:
+        case CodeLanguage::Cpp:
+        case CodeLanguage::Walnut:
+        case CodeLanguage::Bark:
+        case CodeLanguage::Css:
+        case CodeLanguage::JavaScript:
+        case CodeLanguage::Json:
+        case CodeLanguage::Rust:
+        case CodeLanguage::Zig:
+        case CodeLanguage::Java:
+        case CodeLanguage::CSharp:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool indented_language(CodeLanguage language) {
+    switch (language) {
+        case CodeLanguage::Grove:
+        case CodeLanguage::Html:
+        case CodeLanguage::CMake:
+        case CodeLanguage::Python:
+        case CodeLanguage::Lua:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool blank_line(std::string_view line) {
+    return line.find_first_not_of(" \t\r") == std::string_view::npos;
+}
+
+std::size_t header_line_for(const CodeBuffer& buffer, std::size_t open) {
+    const std::string& line = buffer.line(open);
+    const std::size_t lead = line.find_first_not_of(" \t");
+    if (open == 0 || lead == std::string::npos || line[lead] != '{') return open;
+    std::size_t up = open;
+    while (up > 0) {
+        --up;
+        if (!blank_line(buffer.line(up))) return up;
+    }
+    return open;
+}
+
+std::vector<CodeBlock> brace_blocks(const CodeBuffer& buffer, CodeLanguage language) {
+    std::vector<CodeBlock> out;
+    std::vector<std::size_t> open;
+    const bool backticks = language == CodeLanguage::JavaScript || language == CodeLanguage::Walnut;
+    const bool char_quotes = language != CodeLanguage::Json;
+    bool in_block_comment = false;
+    char in_string = 0;
+    std::string raw_end;
+    for (std::size_t li = 0; li < buffer.line_count(); ++li) {
+        const std::string& line = buffer.line(li);
+        const std::size_t n = line.size();
+        std::size_t i = 0;
+        while (i < n) {
+            if (in_block_comment) {
+                const std::size_t end = line.find("*/", i);
+                if (end == std::string::npos) { i = n; break; }
+                in_block_comment = false;
+                i = end + 2;
+                continue;
+            }
+            if (!raw_end.empty()) {
+                const std::size_t end = line.find(raw_end, i);
+                if (end == std::string::npos) { i = n; break; }
+                i = end + raw_end.size();
+                raw_end.clear();
+                continue;
+            }
+            if (in_string) {
+                while (i < n && line[i] != in_string) i += line[i] == '\\' ? 2 : 1;
+                if (i < n) {
+                    ++i;
+                    in_string = 0;
+                }
+                continue;
+            }
+            const char c = line[i];
+            if (c == '/' && i + 1 < n && line[i + 1] == '/') break;
+            if (c == '/' && i + 1 < n && line[i + 1] == '*') {
+                in_block_comment = true;
+                i += 2;
+                continue;
+            }
+            if (c == '"' && i > 0 && line[i - 1] == 'R' && (language == CodeLanguage::Cpp || language == CodeLanguage::C)) {
+                const std::size_t paren = line.find('(', i + 1);
+                if (paren != std::string::npos && paren - i <= 17) {
+                    raw_end = ")" + line.substr(i + 1, paren - i - 1) + "\"";
+                    i = paren + 1;
+                    continue;
+                }
+            }
+            if (c == '"' || (c == '`' && backticks)) {
+                in_string = c;
+                ++i;
+                continue;
+            }
+            if (c == '\'' && char_quotes) {
+                std::size_t k = i + 1;
+                if (k < n && line[k] == '\\') k += 2;
+                else ++k;
+                while (k < n && k <= i + 10 && line[k] != '\'') ++k;
+                if (k < n && line[k] == '\'') {
+                    i = k + 1;
+                    continue;
+                }
+                ++i;
+                continue;
+            }
+            if (c == '{') open.push_back(li);
+            else if (c == '}' && !open.empty()) {
+                const std::size_t from = open.back();
+                open.pop_back();
+                if (li > from) out.push_back(CodeBlock{ header_line_for(buffer, from), from, li });
+            }
+            ++i;
+        }
+        if (in_string == '"') in_string = 0;
+    }
+    return out;
+}
+
+std::vector<CodeBlock> indent_blocks(const CodeBuffer& buffer, std::size_t tab_size) {
+    std::vector<CodeBlock> out;
+    struct Open {
+        std::size_t indent;
+        std::size_t line;
+    };
+    std::vector<Open> open;
+    auto indent_of = [&](const std::string& line) {
+        const std::size_t lead = line.find_first_not_of(" \t");
+        return code_display_column(line, lead == std::string::npos ? line.size() : lead, tab_size);
+    };
+    std::size_t previous = 0;
+    bool any = false;
+    const std::size_t count = buffer.line_count();
+    for (std::size_t li = 0; li < count; ++li) {
+        const std::string& line = buffer.line(li);
+        if (blank_line(line)) continue;
+        const std::size_t indent = indent_of(line);
+        while (!open.empty() && open.back().indent >= indent) {
+            if (any && previous > open.back().line) out.push_back(CodeBlock{ open.back().line, open.back().line, previous });
+            open.pop_back();
+        }
+        std::size_t next = li + 1;
+        while (next < count && blank_line(buffer.line(next))) ++next;
+        if (next < count && indent_of(buffer.line(next)) > indent) open.push_back(Open{ indent, li });
+        previous = li;
+        any = true;
+    }
+    while (!open.empty()) {
+        if (previous > open.back().line) out.push_back(CodeBlock{ open.back().line, open.back().line, previous });
+        open.pop_back();
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<CodeBlock> code_blocks(const CodeBuffer& buffer, CodeLanguage language, std::size_t tab_size) {
+    std::vector<CodeBlock> blocks;
+    if (braced_language(language)) blocks = brace_blocks(buffer, language);
+    else if (indented_language(language)) blocks = indent_blocks(buffer, tab_size);
+    std::sort(blocks.begin(), blocks.end(), [](const CodeBlock& a, const CodeBlock& b) {
+        if (a.header != b.header) return a.header < b.header;
+        return a.close > b.close;
+    });
+    return blocks;
+}
+
+std::vector<std::size_t> code_sticky_lines(const std::vector<CodeBlock>& blocks, std::size_t first, std::size_t max_lines) {
+    std::vector<std::size_t> shown;
+    std::size_t from = 0;
+    while (shown.size() < max_lines) {
+        const std::size_t at = first + shown.size();
+        bool found = false;
+        for (std::size_t k = from; k < blocks.size(); ++k) {
+            const CodeBlock& b = blocks[k];
+            if (b.header >= at) break;
+            if (!shown.empty() && b.header <= shown.back()) continue;
+            if (b.close < at) continue;
+            shown.push_back(b.header);
+            from = k + 1;
+            found = true;
+            break;
+        }
+        if (!found) break;
+    }
+    return shown;
+}
+
 } // namespace grove

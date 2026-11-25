@@ -427,6 +427,7 @@ CodeTokenLook code_token_look(const bark::ComputedStyle& style, CodeTokenKind ki
         case CodeTokenKind::Namespace: look.color = palette.name_space; break;
         case CodeTokenKind::Variable: look.color = palette.variable; break;
         case CodeTokenKind::Escape: look.color = palette.escape; break;
+        case CodeTokenKind::Inactive: look.color = Color{ palette.comment.red(), palette.comment.green(), palette.comment.blue(), 150 }; break;
         case CodeTokenKind::Plain:
         case CodeTokenKind::ControlKeyword:
         case CodeTokenKind::BuiltinType:
