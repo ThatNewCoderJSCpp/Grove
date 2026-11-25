@@ -415,7 +415,8 @@ CodeTokenLook code_token_look(const bark::ComputedStyle& style, CodeTokenKind ki
         case CodeTokenKind::Keyword: look.color = palette.keyword; break;
         case CodeTokenKind::Type: look.color = palette.type; break;
         case CodeTokenKind::String: look.color = palette.string; break;
-        case CodeTokenKind::Number: look.color = palette.number; break;
+        case CodeTokenKind::Number:
+        case CodeTokenKind::NumberSuffix: look.color = palette.number; break;
         case CodeTokenKind::Comment: look.color = palette.comment; look.italic = true; break;
         case CodeTokenKind::Preprocessor: look.color = palette.preprocessor; break;
         case CodeTokenKind::Function: look.color = palette.function; break;
@@ -461,7 +462,7 @@ CodeTokenLook code_token_look(const bark::ComputedStyle& style, CodeTokenKind ki
 
 std::vector<CodeTokenLook> code_token_looks(const bark::ComputedStyle& style) {
     std::vector<CodeTokenLook> looks;
-    for (std::size_t k = 0; k <= static_cast<std::size_t>(CodeTokenKind::Unresolved); ++k) {
+    for (std::size_t k = 0; k <= static_cast<std::size_t>(CodeTokenKind::NumberSuffix); ++k) {
         const CodeTokenKind kind = static_cast<CodeTokenKind>(k);
         const CodeTokenKind base = code_token_fallback(kind);
         const bark::ValueList* own = style.get(std::string("code-") + to_string(kind));

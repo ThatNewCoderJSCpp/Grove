@@ -109,6 +109,59 @@ std::size_t skip_string(std::string_view line, std::size_t i, char quote) {
     return line.size();
 }
 
+std::size_t number_body_end(std::string_view line, std::size_t begin, std::size_t end) {
+    auto hexd = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); };
+    auto sep = [](char c) { return c == '\'' || c == '_'; };
+    std::size_t j = begin;
+    if (end - begin > 2 && line[j] == '0') {
+        const char p = line[j + 1];
+        if (p == 'x' || p == 'X') {
+            j += 2;
+            while (j < end && (hexd(line[j]) || sep(line[j]) || line[j] == '.')) ++j;
+            if (j < end && (line[j] == 'p' || line[j] == 'P')) {
+                std::size_t k = j + 1;
+                if (k < end && (line[k] == '+' || line[k] == '-')) ++k;
+                if (k < end && digit(line[k])) {
+                    while (k < end && (digit(line[k]) || sep(line[k]))) ++k;
+                    j = k;
+                }
+            }
+            return j;
+        }
+        if (p == 'b' || p == 'B' || p == 'o' || p == 'O') {
+            j += 2;
+            while (j < end && (digit(line[j]) || sep(line[j]))) ++j;
+            return j;
+        }
+    }
+    while (j < end && (digit(line[j]) || sep(line[j]))) ++j;
+    if (j < end && line[j] == '.') {
+        ++j;
+        while (j < end && (digit(line[j]) || sep(line[j]))) ++j;
+    }
+    if (j < end && (line[j] == 'e' || line[j] == 'E')) {
+        std::size_t k = j + 1;
+        if (k < end && (line[k] == '+' || line[k] == '-')) ++k;
+        if (k < end && digit(line[k])) {
+            while (k < end && (digit(line[k]) || sep(line[k]))) ++k;
+            j = k;
+        }
+    }
+    return j;
+}
+
+void push_number(std::vector<CodeToken>& out, std::string_view line, std::size_t begin, std::size_t end) {
+    const std::size_t body = number_body_end(line, begin, end);
+    const bool suffix = body > begin && body < end &&
+                        ((line[body] >= 'a' && line[body] <= 'z') || (line[body] >= 'A' && line[body] <= 'Z'));
+    if (!suffix) {
+        push(out, begin, end, CodeTokenKind::Number);
+        return;
+    }
+    push(out, begin, body, CodeTokenKind::Number);
+    push(out, body, end, CodeTokenKind::NumberSuffix);
+}
+
 std::size_t skip_number(std::string_view line, std::size_t i) {
     while (i < line.size() && (ident_char(line[i]) || line[i] == '.' || line[i] == '\'' ||
                                ((line[i] == '+' || line[i] == '-') && i > 0 && (line[i - 1] == 'e' || line[i - 1] == 'E' || line[i - 1] == 'p' || line[i - 1] == 'P')))) {
@@ -293,7 +346,7 @@ std::vector<CodeToken> highlight_c_like(CodeLanguage language, std::string_view 
         }
         if (digit(c) || (c == '.' && i + 1 < line.size() && digit(line[i + 1]))) {
             const std::size_t end = skip_number(line, i);
-            push(out, i, end, CodeTokenKind::Number);
+            push_number(out, line, i, end);
             i = end;
             continue;
         }
@@ -717,7 +770,7 @@ std::vector<CodeToken> highlight_walnut(std::string_view line, CodeLineState& st
         }
         if (digit(c) && boundary) {
             const std::size_t end = walnut_number_end(line, i);
-            push(out, i, end, CodeTokenKind::Number);
+            push_number(out, line, i, end);
             i = end;
             continue;
         }
@@ -2782,6 +2835,7 @@ const char* to_string(CodeTokenKind kind) noexcept {
         case CodeTokenKind::VariableTemplate: return "variable-template";
         case CodeTokenKind::Unresolved: return "unresolved";
         case CodeTokenKind::Inactive: return "inactive";
+        case CodeTokenKind::NumberSuffix: return "number-suffix";
     }
     return "plain";
 }
@@ -2926,6 +2980,7 @@ CodeTokenKind code_token_fallback(CodeTokenKind kind) noexcept {
         case CodeTokenKind::EnumMember: return CodeTokenKind::Constant;
         case CodeTokenKind::Unresolved: return CodeTokenKind::Plain;
         case CodeTokenKind::Inactive: return CodeTokenKind::Comment;
+        case CodeTokenKind::NumberSuffix: return CodeTokenKind::Number;
         default: return kind;
     }
 }

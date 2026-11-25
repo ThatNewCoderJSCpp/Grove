@@ -74,7 +74,8 @@ enum class CodeTokenKind {
     TemplateScope,
     VariableTemplate,
     Unresolved,
-    Inactive
+    Inactive,
+    NumberSuffix
 };
 
 struct CodeToken {
@@ -311,6 +312,15 @@ private:
     EditKind m_last_edit = EditKind::None;
     std::size_t m_revision = 0;
 };
+
+struct CodeBlock {
+    std::size_t header = 0;
+    std::size_t open = 0;
+    std::size_t close = 0;
+};
+
+std::vector<CodeBlock> code_blocks(const CodeBuffer& buffer, CodeLanguage language, std::size_t tab_size);
+std::vector<std::size_t> code_sticky_lines(const std::vector<CodeBlock>& blocks, std::size_t first, std::size_t max_lines);
 
 } // namespace grove
 
