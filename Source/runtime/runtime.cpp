@@ -1784,6 +1784,24 @@ private:
             std::size_t at;
             Rect clip;
             bool fits;
+            bool drawn = false;
+            Rect bounds;
+        };
+        const float slack = 1.5f;
+        auto inside = [slack](const Rect& r, const Rect& c) {
+            return r.x + slack >= c.x && r.y + slack >= c.y && r.x + r.w - slack <= c.x + c.w && r.y + r.h - slack <= c.y + c.h;
+        };
+        auto grow = [](Open& o, const Rect& r) {
+            if (!o.drawn) {
+                o.bounds = r;
+                o.drawn = true;
+                return;
+            }
+            const float l = std::min(o.bounds.x, r.x);
+            const float t = std::min(o.bounds.y, r.y);
+            const float rr = std::max(o.bounds.x + o.bounds.w, r.x + r.w);
+            const float b = std::max(o.bounds.y + o.bounds.h, r.y + r.h);
+            o.bounds = Rect{ l, t, rr - l, b - t };
         };
         std::vector<Open> open;
         for (std::size_t i = 0; i < m_ops.size(); ++i) {
@@ -1799,6 +1817,12 @@ private:
                 if (done.fits) {
                     m_redundant_clip[done.at] = 1;
                     m_redundant_clip[i] = 1;
+                    if (!open.empty() && done.drawn) {
+                        Open& parent = open.back();
+                        if (!parent.fits) continue;
+                        if (inside(done.bounds, parent.clip)) grow(parent, done.bounds);
+                        else parent.fits = false;
+                    }
                 } else if (!open.empty()) {
                     open.back().fits = false;
                 }
@@ -1808,8 +1832,8 @@ private:
             Open& top = open.back();
             if (!top.fits) continue;
             const Rect r = op.kind == DrawOp::Kind::Stroke || op.kind == DrawOp::Kind::Circle || op.kind == DrawOp::Kind::CircleStroke ? op_rect(op) : Rect{ op.x, op.y, op.w, op.h };
-            const float slack = 1.5f;
-            if (op.kind == DrawOp::Kind::Math || r.x + slack < top.clip.x || r.y + slack < top.clip.y || r.x + r.w - slack > top.clip.x + top.clip.w || r.y + r.h - slack > top.clip.y + top.clip.h) top.fits = false;
+            if (op.kind == DrawOp::Kind::Math || !inside(r, top.clip)) top.fits = false;
+            else grow(top, r);
         }
         for (const Open& o : open) m_redundant_clip[o.at] = 0;
     }
